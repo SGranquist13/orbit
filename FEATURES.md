@@ -159,13 +159,13 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Rust unit tests incl. recorded agent fixtures | P1 | ✅ | 30 passing + 3 opt-in live tests |
 | macOS / Linux | P3 | 💭 | Tauri supports them; untested |
 
-## Mobile bridge (phone app, branch feat/mobile-bridge)
+## Mobile bridge (phone app: `ide_mobile`)
 
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
-| Encrypted WebSocket bridge (`src-tauri/src/remote/`): handshake, NaCl box frames, RPC allowlist (snapshot, events, send, interrupt, markSeen, registerPush), live event + workspace mirroring | P2 | 🟢 | Protocol in `ide_mobile/docs/protocol.md`. Tested with a fake backend and real WebSocket clients (pair, auth, bad/expired/replayed code, unknown device, revoke) and a tweetnacl vector; not yet run against the real phone app |
-| Settings > Mobile: allow connections, port, status + addresses (Tailscale first), pairing QR with countdown, paired phones + Revoke, push toggle; palette "Pair a phone" | P2 | 🟢 | Verified in mock UI; `remote_status` / `remote_pairing` / `remote_devices` / `remote_revoke` not yet exercised in the real app |
-| Push notification on finished turn (Expo; name + status only) | P3 | 🟢 | Body builder unit-tested; real delivery needs the phone app and an Expo token |
+| Encrypted WebSocket bridge (`src-tauri/src/remote/`): handshake, NaCl box frames, RPC allowlist (snapshot, events, send, interrupt, markSeen, registerPush), live event + workspace mirroring | P2 | ✅ | Protocol in `ide_mobile/docs/protocol.md`. Verified 2026-10-09 by hand on an iPhone (Expo Go) against the real app: pair, inbox, send from phone, live streaming, stop. Cargo tests: fake backend + real WebSocket clients (pair, auth, bad/expired/replayed code, unknown device, revoke), tweetnacl vector; opt-in `interop_server` test runs the phone app's own client against the real server. No `scripts/e2e.mjs` step yet |
+| Settings > Mobile: allow connections, port, status + addresses (Tailscale first), pairing QR with countdown, paired phones + Revoke, push toggle; palette "Pair a phone" | P2 | ✅ | Allow, status, pairing QR and paired list used for real on 2026-10-09. Revoke not yet tried in the real app |
+| Push notification on finished turn (Expo; name + status only) | P3 | 🟢 | Body builder unit-tested; EAS project linked in the phone app, real delivery not yet confirmed |
 
 ## Mock vs real
 
