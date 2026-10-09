@@ -42,6 +42,19 @@ export type AgentEvent =
   | { type: "toolCall"; id: string; name: string; input: unknown }
   | { type: "toolResult"; id: string; output: string; isError: boolean }
   | { type: "turnCompleted"; durationMs: number | null; costUsd: number | null; isError: boolean; error: string | null; interrupted?: boolean }
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheWriteTokens: number;
+      /** Current context size, not the turn total. */
+      contextTokens: number | null;
+      contextWindow: number | null;
+      costUsd: number | null;
+      model: string | null;
+    }
+  | { type: "sessionReset" }
   | { type: "error"; message: string }
   | { type: "exited"; code: number | null; stderr: string };
 
@@ -171,6 +184,40 @@ export interface Summary {
   lastUserText: string | null;
 }
 
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  turns: number;
+}
+
+/** Token/cost digest of one workspace: lifetime, since the last "New session", and live context. */
+export interface WorkspaceUsage {
+  workspaceId: string;
+  total: UsageTotals;
+  session: UsageTotals;
+  contextTokens: number | null;
+  contextWindow: number | null;
+  model: string | null;
+}
+
+export interface UsageReport {
+  totals: UsageTotals;
+  byWorkspace: {
+    workspaceId: string;
+    name: string;
+    agent: AgentKind;
+    total: UsageTotals;
+    contextTokens: number | null;
+    contextWindow: number | null;
+  }[];
+  byAgent: { agent: AgentKind; total: UsageTotals }[];
+  /** Last 14 local days, oldest first. */
+  byDay: { day: string; tokens: number; costUsd: number }[];
+}
+
 export interface CreateWorkspaceArgs {
   repoId: string;
   name: string;
@@ -189,6 +236,13 @@ export const api = {
   sendMessage: (id: string, text: string) => invoke<void>("send_message", { id, text }),
   interrupt: (id: string) => invoke<void>("interrupt", { id }),
   stopSession: (id: string) => invoke<void>("stop_session", { id }),
+  /** Summarise the conversation to free context (`/compact`). */
+  compactSession: (id: string) => invoke<void>("compact_session", { id }),
+  /** Fresh agent session in the same worktree; the old context is dropped. */
+  newSession: (id: string) => invoke<void>("new_session", { id }),
+  workspaceUsage: (id: string) => invoke<WorkspaceUsage>("workspace_usage", { id }),
+  allWorkspaceUsage: () => invoke<WorkspaceUsage[]>("all_workspace_usage"),
+  usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
   archiveWorkspace: (id: string, removeWorktree: boolean) =>

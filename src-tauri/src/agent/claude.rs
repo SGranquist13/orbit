@@ -76,62 +76,125 @@ fn interrupt_line(request_id: u64) -> String {
     .to_string()
 }
 
-/// Maps one stream-json line to normalized events. Pure, so it is fixture-testable.
+/// Maps one stream-json line to normalized events without cross-line state (no context size).
 pub fn parse_line(line: &str) -> Vec<AgentEvent> {
-    let Ok(v) = serde_json::from_str::<Value>(line) else {
-        return vec![];
-    };
-    // Subagent chatter (Task tool) is noise in the main transcript.
-    if v.get("parent_tool_use_id").is_some_and(|p| !p.is_null()) {
-        return vec![];
-    }
-    match v["type"].as_str() {
-        Some("system") if v["subtype"] == "init" => vec![AgentEvent::SessionStarted {
-            session_id: v["session_id"].as_str().unwrap_or_default().to_string(),
-            model: v["model"].as_str().map(String::from),
-        }],
-        Some("stream_event") => {
-            let ev = &v["event"];
-            if ev["type"] == "content_block_delta" && ev["delta"]["type"] == "text_delta" {
-                let text = ev["delta"]["text"].as_str().unwrap_or_default();
-                return vec![AgentEvent::TextDelta { text: text.to_string() }];
+    ClaudeParser::default().parse(line)
+}
+
+/// Stateful line parser. A `result` line only carries per-turn totals (a turn makes several API
+/// calls), so the context size comes from the last `assistant` message's usage seen before it.
+#[derive(Default)]
+pub struct ClaudeParser {
+    /// input + cache read + cache creation of the latest assistant message this turn.
+    last_context: Option<u64>,
+    /// A `/compact` happened this turn, so the context shrank without an assistant message.
+    compacted: Option<u64>,
+    model: Option<String>,
+}
+
+impl ClaudeParser {
+    pub fn parse(&mut self, line: &str) -> Vec<AgentEvent> {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            return vec![];
+        };
+        // Subagent chatter (Task tool) is noise in the main transcript.
+        if v.get("parent_tool_use_id").is_some_and(|p| !p.is_null()) {
+            return vec![];
+        }
+        match v["type"].as_str() {
+            Some("system") if v["subtype"] == "init" => {
+                self.model = v["model"].as_str().map(String::from);
+                vec![AgentEvent::SessionStarted {
+                    session_id: v["session_id"].as_str().unwrap_or_default().to_string(),
+                    model: self.model.clone(),
+                }]
             }
-            vec![]
+            Some("system") if v["subtype"] == "compact_boundary" => {
+                self.compacted = Some(v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0));
+                vec![]
+            }
+            Some("stream_event") => {
+                let ev = &v["event"];
+                if ev["type"] == "content_block_delta" && ev["delta"]["type"] == "text_delta" {
+                    let text = ev["delta"]["text"].as_str().unwrap_or_default();
+                    return vec![AgentEvent::TextDelta { text: text.to_string() }];
+                }
+                vec![]
+            }
+            Some("assistant") => {
+                let u = &v["message"]["usage"];
+                if u.is_object() {
+                    let n = |k: &str| u[k].as_u64().unwrap_or(0);
+                    self.last_context =
+                        Some(n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"));
+                }
+                content(&v)
+                    .iter()
+                    .filter_map(|block| match block["type"].as_str()? {
+                        "text" => Some(AgentEvent::Message { text: block["text"].as_str()?.to_string() }),
+                        "tool_use" => Some(AgentEvent::ToolCall {
+                            id: block["id"].as_str()?.to_string(),
+                            name: block["name"].as_str()?.to_string(),
+                            input: block["input"].clone(),
+                        }),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            Some("user") => content(&v)
+                .iter()
+                .filter(|b| b["type"] == "tool_result")
+                .map(|b| AgentEvent::ToolResult {
+                    id: b["tool_use_id"].as_str().unwrap_or_default().to_string(),
+                    output: tool_result_text(&b["content"]),
+                    is_error: b["is_error"].as_bool().unwrap_or(false),
+                })
+                .collect(),
+            Some("result") => {
+                let is_error = v["is_error"].as_bool().unwrap_or(false) || v["subtype"] != "success";
+                let mut out = Vec::new();
+                if let Some(usage) = self.usage(&v) {
+                    out.push(usage);
+                }
+                out.push(AgentEvent::TurnCompleted {
+                    duration_ms: v["duration_ms"].as_u64(),
+                    cost_usd: v["total_cost_usd"].as_f64(),
+                    is_error,
+                    error: is_error.then(|| v["result"].as_str().unwrap_or("turn failed").to_string()),
+                    interrupted: false,
+                });
+                out
+            }
+            _ => vec![],
         }
-        Some("assistant") => content(&v)
-            .iter()
-            .filter_map(|block| match block["type"].as_str()? {
-                "text" => Some(AgentEvent::Message {
-                    text: block["text"].as_str()?.to_string(),
-                }),
-                "tool_use" => Some(AgentEvent::ToolCall {
-                    id: block["id"].as_str()?.to_string(),
-                    name: block["name"].as_str()?.to_string(),
-                    input: block["input"].clone(),
-                }),
-                _ => None,
-            })
-            .collect(),
-        Some("user") => content(&v)
-            .iter()
-            .filter(|b| b["type"] == "tool_result")
-            .map(|b| AgentEvent::ToolResult {
-                id: b["tool_use_id"].as_str().unwrap_or_default().to_string(),
-                output: tool_result_text(&b["content"]),
-                is_error: b["is_error"].as_bool().unwrap_or(false),
-            })
-            .collect(),
-        Some("result") => {
-            let is_error = v["is_error"].as_bool().unwrap_or(false) || v["subtype"] != "success";
-            vec![AgentEvent::TurnCompleted {
-                duration_ms: v["duration_ms"].as_u64(),
-                cost_usd: v["total_cost_usd"].as_f64(),
-                is_error,
-                error: is_error.then(|| v["result"].as_str().unwrap_or("turn failed").to_string()),
-                interrupted: false,
-            }]
+    }
+
+    /// `Usage` for a `result` line, consuming this turn's tracked context state.
+    fn usage(&mut self, v: &Value) -> Option<AgentEvent> {
+        let context_tokens = self.last_context.take().or(self.compacted);
+        self.compacted = None;
+        let u = &v["usage"];
+        let n = |k: &str| u[k].as_u64().unwrap_or(0);
+        let (input_tokens, output_tokens) = (n("input_tokens"), n("output_tokens"));
+        let (cache_read_tokens, cache_write_tokens) = (n("cache_read_input_tokens"), n("cache_creation_input_tokens"));
+        let cost_usd = v["total_cost_usd"].as_f64();
+        if input_tokens + output_tokens + cache_read_tokens + cache_write_tokens == 0 && cost_usd.is_none() {
+            return None;
         }
-        _ => vec![],
+        // modelUsage is keyed by model; prefer the session's model, else the first entry.
+        let models = v["modelUsage"].as_object();
+        let entry = models.and_then(|m| self.model.as_ref().and_then(|k| m.get(k)).or_else(|| m.values().next()));
+        let model = self.model.clone().or_else(|| models.and_then(|m| m.keys().next().cloned()));
+        Some(AgentEvent::Usage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            context_tokens,
+            context_window: entry.and_then(|e| e["contextWindow"].as_u64()),
+            cost_usd,
+            model,
+        })
     }
 }
 
@@ -177,8 +240,9 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
     let pending = interrupt_pending.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
+        let mut parser = ClaudeParser::default();
         while let Ok(Some(line)) = lines.next_line().await {
-            for ev in parse_line(&line) {
+            for ev in parser.parse(&line) {
                 out_sink(relabel_interrupted(ev, &pending));
             }
         }
@@ -202,6 +266,7 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
                 cmd = rx.recv() => {
                     let line = match cmd {
                         Some(Command::User(text)) => user_line(&text),
+                        Some(Command::Compact) => user_line("/compact"),
                         Some(Command::Interrupt) => {
                             interrupts += 1;
                             interrupt_pending.store(true, Ordering::SeqCst);
@@ -233,7 +298,8 @@ mod tests {
 
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(path).unwrap().lines().flat_map(parse_line).collect()
+        let mut parser = ClaudeParser::default();
+        std::fs::read_to_string(path).unwrap().lines().flat_map(|l| parser.parse(l)).collect()
     }
 
     #[test]
@@ -344,6 +410,39 @@ mod tests {
         ));
         // Flag is consumed: a later real failure stays a failure.
         assert!(matches!(relabel_interrupted(failed(), &pending), AgentEvent::TurnCompleted { is_error: true, .. }));
+    }
+
+    #[test]
+    fn real_turn_usage_uses_last_message_for_context() {
+        let evs = parse_fixture("claude_real_turn.jsonl");
+        let i = evs.iter().position(|e| matches!(e, AgentEvent::Usage { .. })).expect("usage event");
+        // Turn totals come from `result.usage`; context is the LAST assistant message
+        // (2 + 24278 read + 2659 written), not the sum over the turn's API calls.
+        assert_eq!(
+            evs[i],
+            AgentEvent::Usage {
+                input_tokens: 4,
+                output_tokens: 395,
+                cache_read_tokens: 37963,
+                cache_write_tokens: 13252,
+                context_tokens: Some(2 + 24278 + 2659),
+                context_window: Some(1_000_000),
+                cost_usd: Some(0.00322793),
+                model: Some("claude-haiku-5-5".into()),
+            }
+        );
+        // Usage precedes the turn's TurnCompleted.
+        assert!(matches!(evs[i + 1], AgentEvent::TurnCompleted { .. }));
+    }
+
+    #[test]
+    fn compact_boundary_resets_context_when_no_assistant_message() {
+        let mut p = ClaudeParser::default();
+        p.parse(r#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"post_tokens":4200}}"#);
+        let evs = p.parse(
+            r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"usage":{"input_tokens":10,"output_tokens":5}}"#,
+        );
+        assert!(matches!(evs[0], AgentEvent::Usage { context_tokens: Some(4200), .. }));
     }
 
     #[test]

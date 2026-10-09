@@ -63,7 +63,10 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Host env scrubbing (launching from inside Claude Code) | P1 | ✅ | |
 | Approve or deny tool calls interactively | P3 | 💭 | Agents currently run unattended in worktrees |
 | Image / file attachments in the composer | P3 | ⬜ | |
-| Per-workspace and total cost tracking | P3 | 🟡 | Per-turn cost/duration shown for Claude only |
+| Per-workspace and total cost tracking | P3 | 🟢 | Per-turn `tok · $` line, per-workspace and overall totals. Claude parser fixture-tested; Codex has tokens only (plan billing, no cost). Verified in mock |
+| Context-window meter in the composer footer | P2 | 🟢 | Bar + `% · used / window`, warn at 70%, bad at 90%; click for the session's tokens and cost. Claude and Codex parsers fixture-tested (`codex_usage_turn.jsonl` recorded from codex-cli 0.162); verified in mock |
+| Compact context / New session | P2 | 🟢 | Popover buttons and palette entries. Claude sends `/compact`; Codex `thread/compact/start`; New session clears the stored session id and adds a divider. Verified in mock, not against real agents |
+| Usage report (Settings > Usage) | P3 | 🟢 | Today/7d/30d/All totals, 14-day chart, by workspace and agent. `UsageSection` is ready to mount; aggregation unit-tested; verified in mock |
 | Full diff viewer / code review | P3 | 💭 | Deliberately deprioritised; the Changes list exists |
 
 ## Skills

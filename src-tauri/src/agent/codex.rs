@@ -41,6 +41,74 @@ pub fn parse_notification(method: &str, p: &Value) -> Vec<AgentEvent> {
     }
 }
 
+/// Stateful wrapper over `parse_notification` that adds `Usage`. Codex streams
+/// `thread/tokenUsage/updated` after each API call of a turn (`last` = that call, `total` =
+/// whole thread), so a turn's usage is the sum of `last` across its updates; the context size
+/// is the latest call's total. `Usage` is emitted just before the turn's `TurnCompleted`.
+#[derive(Default)]
+pub struct CodexParser {
+    in_turn: bool,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    context: Option<u64>,
+    window: Option<u64>,
+    pub model: Option<String>,
+}
+
+impl CodexParser {
+    pub fn parse(&mut self, method: &str, p: &Value) -> Vec<AgentEvent> {
+        match method {
+            "turn/started" => {
+                self.in_turn = true;
+                (self.input, self.output, self.cache_read, self.cache_write) = (0, 0, 0, 0);
+            }
+            "thread/tokenUsage/updated" => {
+                let usage = &p["tokenUsage"];
+                let last = &usage["last"];
+                let n = |k: &str| last[k].as_u64().unwrap_or(0);
+                // OpenAI counts cached/written tokens inside `inputTokens`; report them separately.
+                let (cached, written) = (n("cachedInputTokens"), n("cacheWriteInputTokens"));
+                let (input, output) = (n("inputTokens").saturating_sub(cached + written), n("outputTokens"));
+                self.context = last["totalTokens"].as_u64().or(self.context);
+                self.window = usage["modelContextWindow"].as_u64().or(self.window);
+                if self.in_turn {
+                    self.input += input;
+                    self.output += output;
+                    self.cache_read += cached;
+                    self.cache_write += written;
+                } else {
+                    // Outside a turn (e.g. after a compaction): only the context size changed.
+                    return vec![self.usage_event(0, 0, 0, 0)];
+                }
+            }
+            "turn/completed" => {
+                self.in_turn = false;
+                let mut out = vec![self.usage_event(self.input, self.output, self.cache_read, self.cache_write)];
+                out.extend(parse_notification(method, p));
+                return out;
+            }
+            _ => {}
+        }
+        parse_notification(method, p)
+    }
+
+    fn usage_event(&self, input: u64, output: u64, cache_read: u64, cache_write: u64) -> AgentEvent {
+        AgentEvent::Usage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_write_tokens: cache_write,
+            context_tokens: self.context,
+            context_window: self.window,
+            // Codex runs on the ChatGPT plan, so there is no per-token cost.
+            cost_usd: None,
+            model: self.model.clone(),
+        }
+    }
+}
+
 fn item_started(item: &Value) -> Option<AgentEvent> {
     let id = item["id"].as_str()?.to_string();
     let (name, input) = match item["type"].as_str()? {
@@ -138,6 +206,7 @@ struct State {
     /// A turn/start was sent but its id is not known yet.
     turn_starting: bool,
     queued: Vec<String>,
+    parser: CodexParser,
 }
 
 pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceiver<Command>) -> anyhow::Result<()> {
@@ -156,7 +225,7 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
 
     tokio::spawn(async move {
         let mut rpc = Rpc { stdin, next_id: 0, pending: HashMap::new() };
-        let mut st = State { cfg, thread_id: None, turn_id: None, turn_starting: false, queued: vec![] };
+        let mut st = State { cfg, thread_id: None, turn_id: None, turn_starting: false, queued: vec![], parser: CodexParser::default() };
         let mut tail = Vec::new();
 
         rpc.request(
@@ -177,6 +246,11 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
                 }
                 cmd = rx.recv() => match cmd {
                     Some(Command::User(text)) => send_user(&mut rpc, &mut st, text).await,
+                    Some(Command::Compact) => {
+                        if let Some(thread) = &st.thread_id {
+                            rpc.request("thread/compact/start", json!({ "threadId": thread }), Pending::Other).await;
+                        }
+                    }
                     Some(Command::Interrupt) => {
                         if let (Some(thread), Some(turn)) = (&st.thread_id, &st.turn_id) {
                             let params = json!({ "threadId": thread, "turnId": turn });
@@ -262,6 +336,7 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                 Pending::Thread => {
                     let id = result["thread"]["id"].as_str().unwrap_or_default().to_string();
                     st.thread_id = Some(id.clone());
+                    st.parser.model = result["model"].as_str().map(String::from);
                     sink(AgentEvent::SessionStarted { session_id: id, model: result["model"].as_str().map(String::from) });
                     flush_queue(rpc, st).await;
                 }
@@ -283,7 +358,7 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                 "turn/completed" => st.turn_id = None,
                 _ => {}
             }
-            for ev in parse_notification(method, params) {
+            for ev in st.parser.parse(method, params) {
                 sink(ev);
             }
             if method == "turn/completed" {
@@ -307,14 +382,65 @@ mod tests {
     use super::*;
 
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
+        let mut parser = CodexParser::default();
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(path)
             .unwrap()
             .lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .filter(|m| m.get("id").is_none())
-            .flat_map(|m| parse_notification(m["method"].as_str().unwrap_or_default(), &m["params"]))
+            .flat_map(|m| parser.parse(m["method"].as_str().unwrap_or_default(), &m["params"]))
             .collect()
+    }
+
+    #[test]
+    fn usage_turn_reports_tokens_and_context() {
+        // Recorded from codex-cli 0.162 (`Reply with: pong`). inputTokens (20235) includes the
+        // 13440 cached tokens, which we report separately.
+        let mut parser = CodexParser { model: Some("gpt-6.1-sol".into()), ..Default::default() };
+        let path = format!("{}/tests/fixtures/codex_usage_turn.jsonl", env!("CARGO_MANIFEST_DIR"));
+        let evs: Vec<AgentEvent> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|m| m.get("id").is_none())
+            .flat_map(|m| parser.parse(m["method"].as_str().unwrap(), &m["params"]))
+            .collect();
+        let n = evs.len();
+        assert_eq!(
+            evs[n - 2],
+            AgentEvent::Usage {
+                input_tokens: 20235 - 13440,
+                output_tokens: 5,
+                cache_read_tokens: 13440,
+                cache_write_tokens: 0,
+                context_tokens: Some(20240),
+                context_window: Some(258_400),
+                cost_usd: None,
+                model: Some("gpt-6.1-sol".into()),
+            }
+        );
+        assert!(matches!(evs[n - 1], AgentEvent::TurnCompleted { is_error: false, .. }));
+        assert!(evs.contains(&AgentEvent::Message { text: "pong".into() }));
+    }
+
+    #[test]
+    fn usage_sums_api_calls_within_a_turn() {
+        let mut p = CodexParser::default();
+        p.parse("turn/started", &json!({}));
+        let upd = |input: u64, cached: u64, out: u64| {
+            json!({ "tokenUsage": { "last": { "totalTokens": input + out, "inputTokens": input, "cachedInputTokens": cached,
+                "cacheWriteInputTokens": 0, "outputTokens": out }, "modelContextWindow": 1000 } })
+        };
+        p.parse("thread/tokenUsage/updated", &upd(100, 40, 10));
+        p.parse("thread/tokenUsage/updated", &upd(150, 100, 20));
+        let evs = p.parse("turn/completed", &json!({ "turn": { "status": "completed" } }));
+        assert!(matches!(
+            evs[0],
+            AgentEvent::Usage {
+                input_tokens: 110, output_tokens: 30, cache_read_tokens: 140, context_tokens: Some(170), ..
+            }
+        ));
     }
 
     /// Drives the real `codex` binary through handshake + one turn: `cargo test -- --ignored`.
