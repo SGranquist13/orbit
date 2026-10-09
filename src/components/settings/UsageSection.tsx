@@ -47,11 +47,8 @@ export function UsageSection() {
   return (
     <section data-usage-section className="flex flex-col gap-5">
       <header className="flex items-end justify-between gap-4">
-        <div>
-          <h2 className="text-[15px] font-semibold text-fg">Usage</h2>
-          <p className="mt-0.5 text-[12px] text-mute">Tokens, cost and context across all workspaces.</p>
-        </div>
-        <div role="tablist" className="flex rounded-[4px] border-[1.5px] border-line-strong p-0.5">
+        <p className="text-[12px] text-mute">Tokens added (input, output, cache writes), cost and context across all workspaces.</p>
+        <div role="tablist" className="flex shrink-0 rounded-[4px] border-[1.5px] border-line-strong p-0.5">
           {PERIODS.map((p) => (
             <button
               key={p.id}
@@ -59,7 +56,7 @@ export function UsageSection() {
               aria-selected={period === p.id}
               onClick={() => setPeriod(p.id)}
               className={cn(
-                "h-6 rounded-[3px] px-2.5 text-[11.5px] font-medium",
+                "h-6 whitespace-nowrap rounded-[3px] px-2.5 text-[11.5px] font-medium",
                 period === p.id ? "bg-accent text-accent-fg" : "text-dim hover:bg-hover hover:text-fg",
               )}
             >

@@ -36,8 +36,11 @@ impl Totals {
         }
     }
 
+    /// Tokens the work actually added: input + output + cache writes. Cache reads are excluded:
+    /// every API call re-reads the whole cached conversation, so counting them makes a short turn
+    /// look like hundreds of thousands of tokens. They stay available separately.
     pub fn tokens(&self) -> u64 {
-        self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
+        self.input_tokens + self.output_tokens + self.cache_write_tokens
     }
 }
 
@@ -249,8 +252,8 @@ mod tests {
         let r7 = report(&rows, &ws, Some(now - 7 * day), now);
         assert_eq!(r7.totals.turns, 2);
         assert_eq!(r7.by_day.len(), 14);
-        assert_eq!(r7.by_day[13].tokens, 10 + 10 + 100 + 5);
+        assert_eq!(r7.by_day[13].tokens, 10 + 10 + 5); // cache reads (100) excluded
         assert_eq!(r7.by_day[12].cost_usd, 0.5);
-        assert_eq!(r7.by_day.iter().map(|d| d.tokens).sum::<u64>(), 155 + 125);
+        assert_eq!(r7.by_day.iter().map(|d| d.tokens).sum::<u64>(), 55 + 25);
     }
 }

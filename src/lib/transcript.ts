@@ -92,9 +92,9 @@ export function fold(events: StoredEvent[]): Block[] {
   return blocks;
 }
 
-/** Everything a turn consumed: input + output + cache reads and writes. */
+/** Tokens a turn added: input + output + cache writes (cache re-reads excluded, see lib/usage.ts). */
 export function turnUsageTokens(u: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) {
-  return u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens;
+  return u.inputTokens + u.outputTokens + u.cacheWriteTokens;
 }
 
 /** 12400 -> "12.4k", 1_500_000 -> "1.5M". */

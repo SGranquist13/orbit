@@ -11,7 +11,8 @@ export const emptyTotals = (): UsageTotals => ({
 });
 
 export function totalTokens(t: Pick<UsageTotals, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens">) {
-  return t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+  // Cache reads excluded: each API call re-reads the cached conversation (see usage.rs tokens()).
+  return t.inputTokens + t.outputTokens + t.cacheWriteTokens;
 }
 
 function addTurn(t: UsageTotals, e: Extract<AgentEvent, { type: "usage" }>): UsageTotals {

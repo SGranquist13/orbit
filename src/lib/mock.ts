@@ -169,7 +169,7 @@ const usageByWs: Record<string, WorkspaceUsage> = {
   w2: { workspaceId: "w2", total: totals(61_000, 9_800, 410_000, 0, 0, 4), session: totals(61_000, 9_800, 410_000, 0, 0, 4), contextTokens: 98_000, contextWindow: 258_400, model: "gpt-6.1-sol" },
   w3: { workspaceId: "w3", total: totals(90, 6_100, 380_000, 41_000, 0.61, 3), session: totals(90, 6_100, 380_000, 41_000, 0.61, 3), contextTokens: 44_000, contextWindow: 200_000, model: "claude-opus-4" },
 };
-const sumTokens = (t: UsageTotals) => t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+const sumTokens = (t: UsageTotals) => t.inputTokens + t.outputTokens + t.cacheWriteTokens;
 
 function mockReport(sinceMs: number | null): UsageReport {
   const span = sinceMs === null ? 1 : Math.min(1, Math.max(0.1, (now - sinceMs) / (30 * 86_400_000)) * 3);
