@@ -1,0 +1,283 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "tailwindcss";
+
+/* Components use these semantic tokens; the raw values live per theme below. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-dim: var(--dim);
+  --color-mute: var(--mute);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-run: var(--run);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-merged: var(--merged);
+  --color-overlay: var(--overlay);
+
+  --shadow-hard: var(--hard-shadow);
+  --shadow-hard-sm: var(--hard-shadow-sm);
+  --shadow-pop: var(--pop-shadow);
+
+  --font-sans: "Inter Variable", "Segoe UI Variable Text", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Code", Consolas, ui-monospace, monospace;
+}
+
+/* Colour rule: chrome is greyscale. Hue only ever means something:
+   run (working), ok (done / additions), bad (error / deletions), warn, info, merged.
+   `accent` is the neutral emphasis colour (the brightest ink), not a brand hue. */
+
+/* ── Void (dark) ───────────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #050506;
+  --panel: #0b0b0d;
+  --raised: #121215;
+  --hover: #19191d;
+  --line: #1f1f24;
+  --line-strong: #34343b;
+  --fg: #ececef;
+  --dim: #a2a2aa;
+  --mute: #63636c;
+  --ink: #050506;
+  --paper: #ececef;
+  --accent: #ececef;
+  --accent-fg: #050506;
+
+  --run: #f2b53a;
+  --ok: #3fd88a;
+  --warn: #f2b53a;
+  --bad: #ff5468;
+  --info: #72a2ff;
+  --merged: #b28cff;
+
+  --overlay: rgb(0 0 0 / 0.7);
+  --hard-shadow: 4px 4px 0 0 #000, 4px 4px 0 1px var(--line-strong);
+  --hard-shadow-sm: 2px 2px 0 0 #000, 2px 2px 0 1px var(--line-strong);
+  --pop-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.85), 0 0 0 1px var(--line-strong);
+}
+
+/* ── Paper (light) ─────────────────────────────────────────── */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f3f1;
+  --panel: #eaeae7;
+  --raised: #fbfbfa;
+  --hover: #e0e0dc;
+  --line: #d4d4cf;
+  --line-strong: #111113;
+  --fg: #111113;
+  --dim: #46464c;
+  --mute: #84848a;
+  --ink: #111113;
+  --paper: #fbfbfa;
+  --accent: #111113;
+  --accent-fg: #fbfbfa;
+
+  --run: #b57900;
+  --ok: #0b8a4a;
+  --warn: #b57900;
+  --bad: #d4183c;
+  --info: #2a55e8;
+  --merged: #7440e6;
+
+  --overlay: rgb(243 243 241 / 0.75);
+  --hard-shadow: 4px 4px 0 0 var(--ink);
+  --hard-shadow-sm: 2px 2px 0 0 var(--ink);
+  --pop-shadow: 6px 6px 0 0 var(--ink), 0 0 0 1.5px var(--ink);
+}
+
+/* The black-hole art is white-on-black: screen it onto dark, invert + multiply onto light. */
+.orbit-art {
+  mix-blend-mode: screen;
+}
+[data-theme="light"] .orbit-art {
+  filter: invert(1);
+  mix-blend-mode: multiply;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: -0.006em;
+  font-feature-settings: "cv11", "ss03"; /* Inter: single-storey a, rounded quotes */
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+  transition: background-color 0.2s ease;
+}
+
+h1, h2, h3, strong, b {
+  font-weight: 600;
+}
+
+/* Text the user reads or copies stays selectable. */
+.selectable,
+.prose-chat {
+  user-select: text;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Text fields sit inside bordered containers that show focus themselves. */
+textarea:focus-visible,
+input:focus-visible {
+  outline: none;
+}
+
+/* Small uppercase labels for section headings and metadata. */
+.label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Dither ────────────────────────────────────────────────────
+   1-bit ordered-dither textures. They are masks, so the element's
+   background colour (usually bg-current / a token) shows through.
+   Gradient masks (--dither-*) are generated at boot by lib/dither.ts. */
+.dither-12 {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='4' y='4' width='2' height='2'/%3E%3C/svg%3E");
+  mask-size: 8px 8px;
+}
+.dither-25 {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3C/svg%3E");
+  mask-size: 4px 4px;
+}
+.dither-50 {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3C/svg%3E");
+  mask-size: 4px 4px;
+}
+.dither-fade-x {
+  mask-image: var(--dither-fade-x);
+  mask-size: 96px 32px;
+  mask-repeat: repeat-y;
+}
+/* Two-row checkerboard rule; tiles so pixels stay crisp at any width. */
+.dither-rule {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3C/svg%3E");
+  mask-size: 4px 4px;
+  height: 4px;
+  flex-shrink: 0;
+}
+
+/* A dithered comet sweeping across a running element. */
+.dither-sweep {
+  position: absolute;
+  inset-block: 0;
+  width: 140px;
+  mask-image: var(--dither-comet);
+  mask-size: 140px 32px;
+  mask-repeat: repeat-y;
+  animation: sweep 1.8s linear infinite;
+  pointer-events: none;
+}
+@keyframes sweep {
+  from { left: -140px; }
+  to { left: 100%; }
+}
+
+/* Dithered progress band: chunky pixels marching left to right. */
+.dither-march {
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4' shape-rendering='crispEdges'%3E%3Crect width='2' height='2'/%3E%3Crect x='2' y='2' width='2' height='2'/%3E%3Crect x='4' width='2' height='2'/%3E%3C/svg%3E");
+  mask-size: 8px 4px;
+  animation: march 0.6s steps(4) infinite;
+}
+@keyframes march {
+  to { mask-position: 8px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dither-sweep, .dither-march, .animate-pulse-dot, .streaming-caret::after { animation: none; }
+}
+
+/* ── Markdown in assistant messages ─────────────────────────── */
+.prose-chat {
+  line-height: 1.65;
+  font-size: 14px;
+  font-weight: 400;
+}
+.prose-chat > * + * { margin-top: 0.7em; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; margin-top: 1.1em; letter-spacing: -0.01em; }
+.prose-chat h1 { font-size: 1.3em; }
+.prose-chat h2 { font-size: 1.15em; }
+.prose-chat ul { list-style: square; padding-left: 1.3em; }
+.prose-chat ul li::marker { color: var(--accent); }
+.prose-chat ol { list-style: decimal; padding-left: 1.4em; }
+.prose-chat ol li::marker { color: var(--mute); font-variant-numeric: tabular-nums; }
+.prose-chat li + li { margin-top: 0.25em; }
+.prose-chat a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.prose-chat strong { color: var(--fg); }
+.prose-chat code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  font-weight: 600;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+.prose-chat pre {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.prose-chat pre code { background: none; border: 0; padding: 0; font-size: 12px; font-weight: 500; }
+.prose-chat table { border-collapse: collapse; }
+.prose-chat th, .prose-chat td { border: 1px solid var(--line-strong); padding: 4px 8px; }
+.prose-chat blockquote { border-left: 3px solid var(--accent); padding-left: 0.8em; color: var(--dim); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+@keyframes caret { 50% { opacity: 0; } }
+.streaming-caret::after {
+  content: "";
+  display: inline-block;
+  width: 0.55em;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: caret 1s steps(1) infinite;
+}

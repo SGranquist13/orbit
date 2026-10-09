@@ -1,0 +1,407 @@
+import { create } from "zustand";
+import {
+  api,
+  events,
+  type AgentEvent,
+  type AgentEventPayload,
+  type Attachment,
+  type FileChange,
+  type Pack,
+  type PrStatus,
+  type Profile,
+  type Related,
+  type Repo,
+  type Skill,
+  type StoredEvent,
+  type Summary,
+  type Workspace,
+} from "../lib/ipc";
+
+interface AppState {
+  repos: Repo[];
+  workspaces: Workspace[];
+  selectedId: string | null;
+  /** Persisted transcript per workspace, loaded lazily on first open. */
+  transcripts: Record<string, StoredEvent[]>;
+  /** In-flight streamed text per workspace, cleared when the final message lands. */
+  live: Record<string, string>;
+  changes: Record<string, FileChange[]>;
+  /** Live digest of each workspace's event log; drives unread dots and the inbox. */
+  summaries: Record<string, Summary>;
+  view: "workspace" | "inbox";
+  /** undefined = not fetched yet, null = no PR for the branch. */
+  prs: Record<string, PrStatus | null | undefined>;
+  /** Folders attached to each workspace (loaded when it is selected, refetched after changes). */
+  attachments: Record<string, Attachment[]>;
+  /** Unattached related projects found per workspace; a cache, never blocks the UI. */
+  related: Record<string, Related[]>;
+  /** "Always attach" folders per repo. */
+  relatedDefaults: Record<string, string[]>;
+  /** Related-projects popover in the chat header. */
+  relatedOpen: boolean;
+  packs: Pack[];
+  skills: Skill[];
+  profiles: Profile[];
+  pins: string[];
+  newWorkspaceOpen: boolean;
+  packsOpen: boolean;
+  paletteOpen: boolean;
+  /** Ship panel (changes, PR, checks). Hidden until asked for; never opens on its own. */
+  shipOpen: boolean;
+  sidebarCollapsed: boolean;
+  /** Chat only: hides the sidebar and Ship panel. Not persisted. */
+  focusMode: boolean;
+  error: string | null;
+
+  init: () => Promise<void>;
+  select: (id: string | null) => void;
+  setView: (view: "workspace" | "inbox") => void;
+  dismiss: (id: string) => Promise<void>;
+  addRepo: (path: string) => Promise<Repo>;
+  refreshChanges: (id: string) => Promise<void>;
+  refreshPr: (id: string) => Promise<void>;
+  refreshAttachments: (workspaceId: string) => Promise<void>;
+  refreshRelated: (workspaceId: string) => Promise<void>;
+  attachFolder: (workspaceId: string, path: string) => Promise<void>;
+  detachFolder: (workspaceId: string, id: string) => Promise<void>;
+  setAttachmentEditable: (workspaceId: string, id: string, editable: boolean) => Promise<void>;
+  setRelatedDefault: (repoId: string, path: string, enabled: boolean) => Promise<void>;
+  setRelatedOpen: (open: boolean) => void;
+  loadSkills: () => Promise<void>;
+  /** Switch a workspace's profile; resolves false (and sets the error) on failure. */
+  setProfile: (workspaceId: string, profile: string) => Promise<boolean>;
+  togglePin: (skillId: string) => Promise<void>;
+  runSkill: (workspaceId: string, skillId: string, args?: string) => Promise<void>;
+  setPacksOpen: (open: boolean) => void;
+  setNewWorkspaceOpen: (open: boolean) => void;
+  setPaletteOpen: (open: boolean) => void;
+  setShipOpen: (open: boolean) => void;
+  setSidebarCollapsed: (collapsed: boolean) => void;
+  setFocusMode: (on: boolean) => void;
+  setError: (error: string | null) => void;
+  upsertWorkspace: (ws: Workspace) => void;
+  removeWorkspace: (id: string) => void;
+}
+
+let initialized = false;
+
+function readFlag(key: string) {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? "1" : "0");
+  } catch {
+    // Storage unavailable: the preference just won't survive a restart.
+  }
+}
+
+const changeTimers: Record<string, number> = {};
+
+export const useApp = create<AppState>((set, get) => ({
+  repos: [],
+  workspaces: [],
+  selectedId: null,
+  transcripts: {},
+  live: {},
+  changes: {},
+  summaries: {},
+  view: "workspace",
+  prs: {},
+  attachments: {},
+  related: {},
+  relatedDefaults: {},
+  relatedOpen: false,
+  packs: [],
+  skills: [],
+  profiles: [],
+  pins: [],
+  newWorkspaceOpen: false,
+  packsOpen: false,
+  paletteOpen: false,
+  shipOpen: readFlag("shipOpen"),
+  sidebarCollapsed: readFlag("sidebarCollapsed"),
+  focusMode: false,
+  error: null,
+
+  init: async () => {
+    if (initialized) return;
+    initialized = true;
+    const [repos, workspaces, sums] = await Promise.all([api.listRepos(), api.listWorkspaces(), api.workspaceSummaries()]);
+    set({ repos, workspaces, summaries: Object.fromEntries(sums.map((x) => [x.workspaceId, x])) });
+    await events.onWorkspace((ws) => get().upsertWorkspace(ws));
+    await events.onAgentEvent(onAgentEvent);
+    for (const ws of workspaces) void get().refreshChanges(ws.id);
+    void get().loadSkills();
+    const last = localStorage.getItem("selectedWorkspace");
+    if (last && workspaces.some((w) => w.id === last)) get().select(last);
+  },
+
+  select: (id) => {
+    set({ selectedId: id, view: "workspace" });
+    if (!id) return;
+    void markSeen(id);
+    localStorage.setItem("selectedWorkspace", id);
+    if (!get().transcripts[id]) {
+      api.loadEvents(id).then((evs) => set((s) => ({ transcripts: { ...s.transcripts, [id]: evs } })));
+    }
+    void get().refreshChanges(id);
+    void get().refreshPr(id);
+    void get().refreshAttachments(id);
+    void get().refreshRelated(id);
+    const repoId = get().workspaces.find((w) => w.id === id)?.repoId;
+    if (repoId && !get().relatedDefaults[repoId]) {
+      api
+        .getRelatedDefaults(repoId)
+        .then((paths) => set((s) => ({ relatedDefaults: { ...s.relatedDefaults, [repoId]: paths } })))
+        .catch(() => {});
+    }
+  },
+
+  setView: (view) => set({ view }),
+
+  dismiss: async (id) => {
+    try {
+      const dismissedSeq = await api.dismissWorkspace(id);
+      patchWorkspace(id, { dismissedSeq });
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  addRepo: async (path) => {
+    const repo = await api.addRepo(path);
+    set((s) => ({
+      repos: s.repos.some((r) => r.id === repo.id)
+        ? s.repos
+        : [...s.repos, repo].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+    return repo;
+  },
+
+  refreshChanges: async (id) => {
+    try {
+      const files = await api.workspaceChanges(id);
+      set((s) => ({ changes: { ...s.changes, [id]: files } }));
+    } catch {
+      // Worktree may have been removed outside the app; keep the last known state.
+    }
+  },
+
+  refreshPr: async (id) => {
+    try {
+      const pr = await api.prStatus(id);
+      set((s) => ({ prs: { ...s.prs, [id]: pr } }));
+    } catch {
+      // gh missing/unauthenticated or no remote: leave the PR section empty.
+      set((s) => ({ prs: { ...s.prs, [id]: null } }));
+    }
+  },
+
+  refreshAttachments: async (workspaceId) => {
+    try {
+      const list = await api.listAttachments(workspaceId);
+      set((s) => ({ attachments: { ...s.attachments, [workspaceId]: list } }));
+    } catch {
+      // Keep the last known chips; the next change refetches.
+    }
+  },
+
+  refreshRelated: async (workspaceId) => {
+    try {
+      const found = await api.discoverRelated(workspaceId);
+      set((s) => ({ related: { ...s.related, [workspaceId]: found } }));
+    } catch {
+      // Discovery is a nicety: no suggestions beats an error toast.
+    }
+  },
+
+  attachFolder: async (workspaceId, path) => {
+    try {
+      await api.attachFolder(workspaceId, path);
+      await get().refreshAttachments(workspaceId);
+      void get().refreshRelated(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  detachFolder: async (workspaceId, id) => {
+    try {
+      await api.detachFolder(id);
+      await get().refreshAttachments(workspaceId);
+      void get().refreshRelated(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  setAttachmentEditable: async (workspaceId, id, editable) => {
+    try {
+      await api.setAttachmentEditable(id, editable);
+    } catch (e) {
+      get().setError(String(e));
+    }
+    await get().refreshAttachments(workspaceId);
+  },
+
+  setRelatedDefault: async (repoId, path, enabled) => {
+    try {
+      await api.setRelatedDefault(repoId, path, enabled);
+      const paths = await api.getRelatedDefaults(repoId);
+      set((s) => ({ relatedDefaults: { ...s.relatedDefaults, [repoId]: paths } }));
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  setRelatedOpen: (open) => set({ relatedOpen: open }),
+
+  loadSkills: async () => {
+    const [packs, skills, pins, profiles] = await Promise.all([
+      api.listPacks(),
+      api.listSkills(),
+      api.getPins(),
+      api.listProfiles(),
+    ]);
+    set({ packs, skills, pins, profiles });
+  },
+
+  setProfile: async (workspaceId, profile) => {
+    try {
+      get().upsertWorkspace(await api.setWorkspaceProfile(workspaceId, profile));
+      return true;
+    } catch (e) {
+      get().setError(String(e));
+      return false;
+    }
+  },
+
+  togglePin: async (skillId) => {
+    const pins = get().pins.includes(skillId) ? get().pins.filter((p) => p !== skillId) : [...get().pins, skillId];
+    set({ pins });
+    await api.setPins(pins);
+  },
+
+  runSkill: async (workspaceId, skillId, args = "") => {
+    try {
+      await api.runSkill(workspaceId, skillId, args);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  setPacksOpen: (open) => set({ packsOpen: open }),
+  setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open }),
+  setPaletteOpen: (open) => set({ paletteOpen: open }),
+  setShipOpen: (open) => {
+    writeFlag("shipOpen", open);
+    set({ shipOpen: open });
+  },
+  setSidebarCollapsed: (collapsed) => {
+    writeFlag("sidebarCollapsed", collapsed);
+    set({ sidebarCollapsed: collapsed });
+  },
+  setFocusMode: (on) => set({ focusMode: on }),
+  setError: (error) => set({ error }),
+
+  upsertWorkspace: (ws) =>
+    set((s) => {
+      const exists = s.workspaces.some((w) => w.id === ws.id);
+      return {
+        workspaces: exists ? s.workspaces.map((w) => (w.id === ws.id ? ws : w)) : [ws, ...s.workspaces],
+      };
+    }),
+
+  removeWorkspace: (id) =>
+    set((s) => ({
+      workspaces: s.workspaces.filter((w) => w.id !== id),
+      selectedId: s.selectedId === id ? null : s.selectedId,
+    })),
+}));
+
+function patchWorkspace(id: string, patch: Partial<Workspace>) {
+  useApp.setState((s) => ({ workspaces: s.workspaces.map((w) => (w.id === id ? { ...w, ...patch } : w)) }));
+}
+
+async function markSeen(id: string) {
+  try {
+    patchWorkspace(id, { seenSeq: await api.markSeen(id) });
+  } catch {
+    // Non-critical: the dot just stays until the next open.
+  }
+}
+
+/** Apply one event to a workspace's summary without another IPC round trip. */
+function foldSummary(prev: Summary | undefined, id: string, seq: number | null, ts: number, event: AgentEvent): Summary {
+  const next: Summary = prev
+    ? { ...prev }
+    : {
+        workspaceId: id,
+        lastSeq: 0,
+        lastActivityTs: ts,
+        lastTurnSeq: 0,
+        lastTurnError: null,
+        lastTurnInterrupted: false,
+        lastAssistantText: null,
+        lastUserText: null,
+      };
+  if (seq !== null) {
+    next.lastSeq = Math.max(next.lastSeq, seq);
+    next.lastActivityTs = ts;
+  }
+  if (event.type === "message") next.lastAssistantText = event.text;
+  else if (event.type === "userMessage") next.lastUserText = event.skill ? `/${event.skill} ${event.text}`.trim() : event.text;
+  else if (event.type === "turnCompleted") {
+    if (seq !== null) next.lastTurnSeq = seq;
+    next.lastTurnError = event.isError ? (event.error ?? "Turn failed") : null;
+    next.lastTurnInterrupted = !!event.interrupted;
+  }
+  return next;
+}
+
+function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
+  const { getState: get, setState: set } = useApp;
+  if (event.type === "textDelta") {
+    set((s) => ({ live: { ...s.live, [id]: (s.live[id] ?? "") + event.text } }));
+    return;
+  }
+  const clearsLive = event.type === "message" || event.type === "turnCompleted" || event.type === "exited";
+  set((s) => {
+    const loaded = s.transcripts[id];
+    return {
+      // Only append to transcripts already loaded; unloaded ones fetch the full history on open.
+      transcripts: loaded && seq !== null ? { ...s.transcripts, [id]: [...loaded, { seq, ts, event }] } : s.transcripts,
+      live: clearsLive ? { ...s.live, [id]: "" } : s.live,
+      summaries: { ...s.summaries, [id]: foldSummary(s.summaries[id], id, seq, ts, event) },
+    };
+  });
+  // The workspace the user is looking at never counts as unread.
+  if (
+    event.type === "turnCompleted" &&
+    get().selectedId === id &&
+    get().view === "workspace" &&
+    document.visibilityState === "visible"
+  ) {
+    void markSeen(id);
+  }
+  // File edits land via tool results; debounce the git query.
+  if (event.type === "toolResult" || event.type === "turnCompleted") {
+    clearTimeout(changeTimers[id]);
+    changeTimers[id] = window.setTimeout(() => void get().refreshChanges(id), 400);
+  }
+  // Agents open and update PRs from inside turns.
+  if (event.type === "turnCompleted") void get().refreshPr(id);
+}
+
+export function diffTotals(files: FileChange[] | undefined) {
+  return (files ?? []).reduce(
+    (acc, f) => ({ additions: acc.additions + f.additions, deletions: acc.deletions + f.deletions }),
+    { additions: 0, deletions: 0 },
+  );
+}

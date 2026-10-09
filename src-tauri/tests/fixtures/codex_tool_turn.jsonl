@@ -1,0 +1,13 @@
+{"id":3,"result":{"turn":{"id":"turn_1","items":[],"status":"inProgress","error":null}}}
+{"method":"turn/started","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"status":"inProgress","error":null}}}
+{"method":"item/started","params":{"item":{"type":"userMessage","id":"u1","content":[{"type":"text","text":"Run cat a.txt then create b.txt","text_elements":[]}]},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/started","params":{"item":{"type":"commandExecution","id":"call_1","command":"cat a.txt","cwd":"/repo","processId":null,"status":"inProgress","commandActions":[],"aggregatedOutput":null,"exitCode":null,"durationMs":null},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/commandExecution/outputDelta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"call_1","delta":"hello world\n"}}
+{"method":"item/completed","params":{"item":{"type":"commandExecution","id":"call_1","command":"cat a.txt","cwd":"/repo","processId":null,"status":"completed","commandActions":[],"aggregatedOutput":"hello world\n","exitCode":0,"durationMs":40},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/started","params":{"item":{"type":"fileChange","id":"patch_1","changes":[{"path":"b.txt","kind":{"type":"add"},"diff":"+bye\n"}],"status":"inProgress"},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/completed","params":{"item":{"type":"fileChange","id":"patch_1","changes":[{"path":"b.txt","kind":{"type":"add"},"diff":"+bye\n"}],"status":"completed"},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/started","params":{"item":{"type":"agentMessage","id":"m1","text":"","phase":null},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"item/agentMessage/delta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"m1","delta":"Done"}}
+{"method":"item/agentMessage/delta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"m1","delta":": read a.txt and created b.txt."}}
+{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"m1","text":"Done: read a.txt and created b.txt.","phase":null},"threadId":"thr_1","turnId":"turn_1"}}
+{"method":"turn/completed","params":{"threadId":"thr_1","turn":{"id":"turn_1","items":[],"status":"completed","error":null}}}

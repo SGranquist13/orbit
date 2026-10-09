@@ -1,0 +1,212 @@
+// Typed wrappers over the Rust commands and events in src-tauri/src/lib.rs.
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+export type AgentKind = "claude" | "codex";
+export type WorkspaceStatus = "idle" | "running" | "done" | "error";
+
+export interface Repo {
+  id: string;
+  name: string;
+  path: string;
+  baseBranch: string;
+}
+
+export interface Workspace {
+  id: string;
+  repoId: string;
+  name: string;
+  branch: string;
+  path: string;
+  agent: AgentKind;
+  model: string | null;
+  status: WorkspaceStatus;
+  agentSessionId: string | null;
+  issueNumber: number | null;
+  createdAt: number;
+  updatedAt: number;
+  seenSeq: number;
+  dismissedSeq: number;
+  /** Profile id (`<plugin>:<name>`); null = Builder. */
+  profile: string | null;
+}
+
+export type AgentEvent =
+  | { type: "sessionStarted"; sessionId: string; model: string | null }
+  | { type: "userMessage"; text: string; skill?: string }
+  | { type: "turnStarted" }
+  | { type: "textDelta"; text: string }
+  | { type: "message"; text: string }
+  | { type: "toolCall"; id: string; name: string; input: unknown }
+  | { type: "toolResult"; id: string; output: string; isError: boolean }
+  | { type: "turnCompleted"; durationMs: number | null; costUsd: number | null; isError: boolean; error: string | null; interrupted?: boolean }
+  | { type: "error"; message: string }
+  | { type: "exited"; code: number | null; stderr: string };
+
+export interface StoredEvent {
+  seq: number;
+  ts: number;
+  event: AgentEvent;
+}
+
+export interface AgentEventPayload {
+  workspaceId: string;
+  seq: number | null;
+  ts: number;
+  event: AgentEvent;
+}
+
+export interface FileChange {
+  path: string;
+  additions: number;
+  deletions: number;
+  untracked: boolean;
+}
+
+export interface Pack {
+  name: string;
+  plugin: string;
+  description: string | null;
+  path: string;
+  source: string | null;
+  builtin: boolean;
+  enabled: boolean;
+  skillCount: number;
+  commandCount: number;
+}
+
+export interface Skill {
+  id: string;
+  pack: string;
+  kind: "command" | "skill";
+  name: string;
+  description: string;
+  argumentHint: string | null;
+  path: string;
+}
+
+/** A workspace role ("coworker"): instructions, optional agent/model preference, read-only flag, pinned skills. */
+export interface Profile {
+  id: string;
+  pack: string;
+  name: string;
+  description: string;
+  model: string | null;
+  agent: AgentKind | null;
+  readonly: boolean;
+  skills: string[];
+  instructions: string;
+  path: string;
+}
+
+export const DEFAULT_PROFILE = "shipkit:builder";
+
+/** The workspace's active profile: its stored one, else (or if it vanished) Builder. */
+export function activeProfile(profiles: Profile[], ws: Pick<Workspace, "profile">): Profile | undefined {
+  return profiles.find((p) => p.id === ws.profile) ?? profiles.find((p) => p.id === DEFAULT_PROFILE);
+}
+
+export interface PrStatus {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  mergeable: string;
+  reviewDecision: string;
+  checks: { passed: number; failed: number; pending: number; failing: string[] };
+}
+
+/** Another project folder attached to a workspace; editable ones live in their own worktree. */
+export interface Attachment {
+  id: string;
+  workspaceId: string;
+  path: string;
+  name: string;
+  editable: boolean;
+  worktreePath: string | null;
+  branch: string | null;
+}
+
+/** A project found by manifest scanning that uses ("dependent") or is used by ("dependency") the repo. */
+export interface Related {
+  path: string;
+  name: string;
+  relation: "dependent" | "dependency";
+  evidence: string;
+}
+
+/** Per-workspace digest of the event log, used by the attention inbox. */
+export interface Summary {
+  workspaceId: string;
+  lastSeq: number;
+  lastActivityTs: number;
+  lastTurnSeq: number;
+  lastTurnError: string | null;
+  lastTurnInterrupted: boolean;
+  lastAssistantText: string | null;
+  lastUserText: string | null;
+}
+
+export interface CreateWorkspaceArgs {
+  repoId: string;
+  name: string;
+  agent: AgentKind;
+  model?: string | null;
+  prompt?: string | null;
+  issueNumber?: number | null;
+  profile?: string | null;
+}
+
+export const api = {
+  listRepos: () => invoke<Repo[]>("list_repos"),
+  addRepo: (path: string) => invoke<Repo>("add_repo", { path }),
+  listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
+  createWorkspace: (args: CreateWorkspaceArgs) => invoke<Workspace>("create_workspace", { ...args }),
+  sendMessage: (id: string, text: string) => invoke<void>("send_message", { id, text }),
+  interrupt: (id: string) => invoke<void>("interrupt", { id }),
+  stopSession: (id: string) => invoke<void>("stop_session", { id }),
+  loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
+  workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
+  archiveWorkspace: (id: string, removeWorktree: boolean) =>
+    invoke<void>("archive_workspace", { id, removeWorktree }),
+  getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
+  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+  runSkill: (id: string, skillId: string, args: string) => invoke<void>("run_skill", { id, skillId, args }),
+  getPins: () => invoke<string[]>("get_pins"),
+  setPins: (pins: string[]) => invoke<void>("set_pins", { pins }),
+  listPacks: () => invoke<Pack[]>("list_packs"),
+  listSkills: () => invoke<Skill[]>("list_skills"),
+  listProfiles: () => invoke<Profile[]>("list_profiles"),
+  setWorkspaceProfile: (id: string, profile: string) => invoke<Workspace>("set_workspace_profile", { id, profile }),
+  installPack: (url: string) => invoke<Pack>("install_pack", { url }),
+  updatePack: (name: string) => invoke<void>("update_pack", { name }),
+  removePack: (name: string) => invoke<void>("remove_pack", { name }),
+  setPackEnabled: (name: string, enabled: boolean) => invoke<void>("set_pack_enabled", { name, enabled }),
+  prStatus: (id: string) => invoke<PrStatus | null>("pr_status", { id }),
+  mergePr: (id: string, number: number) => invoke<void>("merge_pr", { id, number }),
+  markPrReady: (id: string, number: number) => invoke<void>("mark_pr_ready", { id, number }),
+  listAttachments: (workspaceId: string) => invoke<Attachment[]>("list_attachments", { workspaceId }),
+  attachFolder: (workspaceId: string, path: string) => invoke<Attachment>("attach_folder", { workspaceId, path }),
+  detachFolder: (id: string) => invoke<void>("detach_folder", { id }),
+  setAttachmentEditable: (id: string, editable: boolean) =>
+    invoke<Attachment>("set_attachment_editable", { id, editable }),
+  discoverRelated: (workspaceId: string) => invoke<Related[]>("discover_related", { workspaceId }),
+  getRelatedDefaults: (repoId: string) => invoke<string[]>("get_related_defaults", { repoId }),
+  setRelatedDefault: (repoId: string, path: string, enabled: boolean) =>
+    invoke<void>("set_related_default", { repoId, path, enabled }),
+  workspaceSummaries: () => invoke<Summary[]>("workspace_summaries"),
+  workspaceSummary: (id: string) => invoke<Summary>("workspace_summary", { id }),
+  markSeen: (id: string) => invoke<number>("mark_seen", { id }),
+  dismissWorkspace: (id: string) => invoke<number>("dismiss_workspace", { id }),
+  /** AI-generated follow-ups; slow (3-5s) and may reject. */
+  suggestPrompts: (id: string, reason: string, offered: string[] = []) =>
+    invoke<string[]>("suggest_prompts", { id, reason, offered }),
+};
+
+export const events = {
+  onAgentEvent: (cb: (p: AgentEventPayload) => void): Promise<UnlistenFn> =>
+    listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),
+  onWorkspace: (cb: (w: Workspace) => void): Promise<UnlistenFn> =>
+    listen<Workspace>("workspace", (e) => cb(e.payload)),
+};

@@ -1,0 +1,5 @@
+{
+  "name": "shipkit",
+  "version": "0.1.0",
+  "description": "Ship work from an Orbit workspace: commit, push, PRs, CI fixes, review comments, tickets."
+}

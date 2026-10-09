@@ -1,0 +1,318 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { activeProfile } from "../lib/ipc";
+import { attentionReason, reasonMeta, ruleSuggestions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
+import { api, type Summary, type Workspace } from "../lib/ipc";
+import { useApp } from "../stores/app";
+import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
+
+type Tab = "needs" | "all";
+interface Row {
+  ws: Workspace;
+  summary: Summary | undefined;
+  reason: Reason | null;
+}
+interface Chips {
+  items: Suggestion[];
+  loading: boolean;
+}
+
+const MAX_CHIPS = 6;
+/** AI suggestions by `${id}:${lastSeq}`; an empty array means the call failed. */
+const aiCache = new Map<string, string[]>();
+const aiInflight = new Set<string>();
+
+export function Inbox() {
+  const workspaces = useApp((s) => s.workspaces);
+  const repos = useApp((s) => s.repos);
+  const summaries = useApp((s) => s.summaries);
+  const prs = useApp((s) => s.prs);
+  const changes = useApp((s) => s.changes);
+  const [tab, setTab] = useState<Tab>("needs");
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [, bump] = useState(0);
+
+  // PR state drives two of the reasons, so keep it fresh while the inbox is open.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAll = async () => {
+      for (const w of useApp.getState().workspaces) {
+        if (cancelled) return;
+        await useApp.getState().refreshPr(w.id);
+      }
+    };
+    void refreshAll();
+    const t = window.setInterval(() => void refreshAll(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const all: Row[] = useMemo(
+    () =>
+      workspaces
+        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id]) }))
+        .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
+    [workspaces, summaries, prs],
+  );
+  const needs = useMemo(() => all.filter((r) => r.reason), [all]);
+  const rows = tab === "needs" ? needs : all;
+  const focused = rows.find((r) => r.ws.id === focusedId) ?? rows[0] ?? null;
+  const fid = focused?.ws.id ?? "";
+
+  const chips = useChips(focused, changes[fid]?.length ?? 0, !!prs[fid], () => bump((n) => n + 1));
+
+  const move = useCallback(
+    (delta: number) => {
+      if (!rows.length) return;
+      const i = Math.max(0, rows.findIndex((r) => r.ws.id === focused?.ws.id));
+      setFocusedId(rows[Math.min(rows.length - 1, Math.max(0, i + delta))].ws.id);
+    },
+    [rows, focused],
+  );
+
+  const send = useCallback(
+    async (row: Row, chip: Suggestion | string) => {
+      const id = row.ws.id;
+      // Hand focus to the next row first: this one leaves "Needs you" once the agent starts.
+      const i = rows.findIndex((r) => r.ws.id === id);
+      setFocusedId((rows[i + 1] ?? rows[i - 1])?.ws.id ?? null);
+      try {
+        if (typeof chip === "string") await api.sendMessage(id, chip);
+        else if (chip.kind === "skill") await api.runSkill(id, chip.skillId, "");
+        else if (chip.kind === "handoff") {
+          if (await useApp.getState().setProfile(id, chip.profileId)) await api.sendMessage(id, chip.text);
+        }
+        else await api.sendMessage(id, chip.text);
+      } catch (e) {
+        useApp.getState().setError(String(e));
+      }
+    },
+    [rows],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const s = useApp.getState();
+      if (s.paletteOpen || s.newWorkspaceOpen || s.packsOpen) return;
+      if (e.key === "j" || e.key === "ArrowDown") move(1);
+      else if (e.key === "k" || e.key === "ArrowUp") move(-1);
+      else if (/^[1-6]$/.test(e.key) && focused) {
+        const chip = chips.items[Number(e.key) - 1];
+        if (!chip) return;
+        void send(focused, chip);
+      } else if (e.key === "Enter" && focused) s.select(focused.ws.id);
+      else if (e.key.toLowerCase() === "e" && focused) void s.dismiss(focused.ws.id);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [move, send, focused, chips]);
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col bg-bg">
+      <header className="relative flex h-12 shrink-0 items-center gap-5 px-6" data-tauri-drag-region>
+        <h1 className="text-[15px] font-semibold tracking-[-0.02em]">Inbox</h1>
+        <div className="flex items-center gap-1">
+          <TabButton active={tab === "needs"} onClick={() => setTab("needs")}>
+            Needs you
+            <span className="tabular-nums text-mute">{needs.length}</span>
+          </TabButton>
+          <TabButton active={tab === "all"} onClick={() => setTab("all")}>
+            All
+          </TabButton>
+        </div>
+      </header>
+      <div className="dither-rule bg-line-strong" />
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {rows.length === 0 ? (
+          <div className="grid h-full place-items-center">
+            <div className="text-center">
+              <p className="label text-mute">Nothing needs you</p>
+              <p className="mt-1.5 text-[12.5px] text-mute">Agents that finish, fail, or ask something show up here.</p>
+            </div>
+          </div>
+        ) : (
+          <ul className="mx-auto max-w-[880px] space-y-1 px-6 py-4">
+            {rows.map((r) => (
+              <InboxRow
+                key={r.ws.id}
+                row={r}
+                repo={repos.find((x) => x.id === r.ws.repoId)?.name}
+                focused={r.ws.id === focused?.ws.id}
+                chips={r.ws.id === focused?.ws.id ? chips : null}
+                onFocus={() => setFocusedId(r.ws.id)}
+                onSend={(c) => void send(r, c)}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex h-7 items-center gap-1.5 rounded-[4px] px-2.5 text-[12.5px] font-medium transition-colors",
+        active ? "bg-raised text-fg" : "text-dim hover:bg-hover hover:text-fg",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Rule suggestions first, then (lazily fetched, cached) AI ones, de-duplicated and capped. */
+function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh: () => void): Chips {
+  const id = row?.ws.id;
+  const reason = row?.reason ?? null;
+  const key = `${id}:${row?.summary?.lastSeq ?? 0}`;
+  const cached = aiCache.get(key);
+  const profiles = useApp((s) => s.profiles);
+  const profile = row ? activeProfile(profiles, row.ws) : undefined;
+  const planner = !!profile?.readonly && profile.id.endsWith(":planner");
+
+  useEffect(() => {
+    if (!id || aiCache.has(key) || aiInflight.has(key)) return;
+    aiInflight.add(key);
+    // Tell the model what the rule chips already offer so it suggests something new.
+    const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner }) : []).map((c) => c.label);
+    api
+      .suggestPrompts(id, reason ?? "idle", offered)
+      .then((r) => aiCache.set(key, r))
+      .catch(() => aiCache.set(key, []))
+      .finally(() => {
+        aiInflight.delete(key);
+        refresh();
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return useMemo(() => {
+    if (!id) return { items: [], loading: false };
+    const rules = reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner }) : [];
+    const ai = (cached ?? []).map((text): Suggestion => ({ label: text, kind: "text", text }));
+    const seen = new Set<string>();
+    const items = [...rules, ...ai]
+      .filter((c) => {
+        const k = c.label.toLowerCase();
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, MAX_CHIPS);
+    return { items, loading: !cached };
+  }, [id, reason, hasPr, changedFiles, planner, cached]);
+}
+
+function InboxRow({
+  row,
+  repo,
+  focused,
+  chips,
+  onFocus,
+  onSend,
+}: {
+  row: Row;
+  repo: string | undefined;
+  focused: boolean;
+  chips: Chips | null;
+  onFocus: () => void;
+  onSend: (chip: Suggestion | string) => void;
+}) {
+  const { ws, summary, reason } = row;
+  const running = ws.status === "running";
+  const snippet = reason === "error" ? (summary?.lastTurnError ?? summary?.lastAssistantText) : summary?.lastAssistantText;
+
+  return (
+    <li
+      onMouseEnter={onFocus}
+      className={cn(
+        "relative rounded-[5px] border-[1.5px] px-4 py-3 transition-colors",
+        focused ? "border-line-strong bg-panel" : "border-transparent",
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <StatusDot status={ws.status} />
+        <span className="truncate text-[13px] font-medium">{ws.name}</span>
+        {repo && <span className="truncate text-[12px] text-mute">{repo}</span>}
+        <span className="ml-auto flex shrink-0 items-center gap-3">
+          {reason ? (
+            <span className={cn("text-[11.5px] font-medium", reasonMeta(reason).tone)}>{reasonMeta(reason).label}</span>
+          ) : (
+            <span className={cn("text-[11.5px] font-medium", running ? "text-run" : "text-mute")}>
+              {running ? "Working…" : "Idle"}
+            </span>
+          )}
+          {summary && <span className="text-[11.5px] tabular-nums text-mute">{timeAgo(summary.lastActivityTs)}</span>}
+          <AgentIcon agent={ws.agent} className="size-3 opacity-70" />
+        </span>
+      </div>
+      {snippet && (
+        <p className={cn("mt-1 truncate pl-[18px] text-[12.5px]", reason === "error" ? "text-bad" : "text-dim")}>
+          {snippet.replace(/\s+/g, " ")}
+        </p>
+      )}
+      {focused && chips && <Expanded row={row} chips={chips} onSend={onSend} />}
+    </li>
+  );
+}
+
+function Expanded({ row, chips, onSend }: { row: Row; chips: Chips; onSend: (chip: Suggestion | string) => void }) {
+  const { ws } = row;
+  const [text, setText] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="mt-3 space-y-3 pl-[18px]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {chips.items.map((c, i) => (
+          <button
+            key={c.label}
+            onClick={() => onSend(c)}
+            className="flex h-7 items-center gap-2 rounded-[4px] border-[1.5px] border-line-strong px-2 text-[12px] font-medium text-fg transition-colors hover:bg-fg hover:text-bg"
+          >
+            <Kbd>{i + 1}</Kbd>
+            {c.label}
+          </button>
+        ))}
+        {chips.loading && (
+          <span className="flex items-center gap-2 pl-1 text-[11.5px] text-mute">
+            <span className="dither-march h-2 w-10 bg-run" />
+            Thinking of suggestions
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          ref={inputRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") inputRef.current?.blur();
+            else if (e.key === "Enter" && text.trim()) {
+              onSend(text.trim());
+              setText("");
+            }
+          }}
+          placeholder={`Reply to ${agentLabel[ws.agent]}…`}
+          className="h-8 min-w-0 flex-1 rounded-[4px] border-[1.5px] border-line bg-bg px-2.5 text-[12.5px] placeholder:text-mute focus:border-line-strong focus:outline-none"
+        />
+        <Button variant="ghost" onClick={() => useApp.getState().select(ws.id)}>
+          Open <Kbd>Enter</Kbd>
+        </Button>
+        <Button variant="ghost" onClick={() => void useApp.getState().dismiss(ws.id)}>
+          Dismiss <Kbd>E</Kbd>
+        </Button>
+      </div>
+    </div>
+  );
+}
