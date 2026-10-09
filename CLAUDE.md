@@ -2,6 +2,27 @@
 
 Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Code + Codex) in parallel git worktrees, focused on shipping: skills, PRs, tickets. Plan/roadmap: see "Milestones" below.
 
+## Start here (status as of 2026-10-09)
+- **What's built and how well it's proven: [FEATURES.md](FEATURES.md)**. Read its "Real vs mock" ledger first. ✅ = proven in the real app by e2e; 🟢 = built, only verified in the mock UI / unit tests. Everything built on 2026-10-09 (Settings page, usage/context meter, Compact / New session, archive restore, worktree cleanup) is 🟢 and **still needs its first real-app e2e run**; the ledger lists the steps to add.
+- **Ideas under discussion: [PLANNING.md](PLANNING.md)** (#1–#5 are built; new ideas go to its Inbox).
+- **Last full runs:** `bun run e2e` 16/16 and `bun run e2e:github` 7/7, both before the 2026-10-09 settings/usage work. `cargo test`: 47 pass + 3 opt-in live tests (pass against real Claude/Codex).
+- **Git:** everything is committed on `main` (local only, no remote). Commit as you go with conventional messages and the Co-Authored-By trailer.
+- **How the user likes to work:** dark, greyscale UI with colour only for meaning; ideas get noted in PLANNING.md before building; build with Sonnet subagents (in isolated worktrees, merged by the orchestrator) to save usage, the orchestrator reviews; verify UI in the mock (`bun run dev`) while iterating and save full real-app e2e runs for checkpoints.
+
+## Known traps (each cost real debugging time)
+- **Toolchain:** Rust must build with VS 2022 (`scripts/cargo.cmd`, `scripts/tauri.cmd`); VS 2026 on this machine lacks the x64 libs.
+- **e2e needs Vite on :1420** (`bun run dev` or the `ui-mock` launch config) because the debug build loads its UI from it. New npm imports make Vite re-optimise and force-reload the page on first load: rerun if the first e2e step dies with "Execution context was destroyed".
+- **Native dialogs can't be clicked over CDP and Tauri's `invoke` is non-writable**, so confirmations in e2e go through `window.__ORBIT_AUTOCONFIRM__` (harness `autoConfirm()`, honoured by `src/lib/confirm.ts`).
+- **UI state persists between e2e runs** (WebView2 localStorage, e.g. Ship panel open). Use the harness helpers (`ui.openShip()`, race-free `ui.newWorkspace()` that waits for the new workspace) instead of toggles.
+- **GitHub checks:** the user's account adds a CodeRabbit status (a `StatusContext` with `state`, not `status`/`conclusion`). Judge CI by the sandbox's own `check` job.
+- **Agents use judgement:** asking an agent to create a CI-breaking file and then "fix CI" fails because it rightly refuses to undo its own requested work. Simulate breakage from a teammate commit instead.
+- **Ctrl+Shift+I opens WebView2 DevTools** in dev builds, so it can't be an app shortcut (Issues uses Ctrl+Shift+G).
+- **Token counts exclude cache reads** (every API call re-reads the cached conversation). "Tokens" = input + output + cache writes.
+- **Sessions carry a generation** (`SessionHandle.generation`); an `Exited` event only forgets its own session. Keep that invariant when touching session lifecycle.
+- **Read-only must be enforced, not prompted.** Claude read-only = `--permission-mode default` + allowlist (a denylist alone lets `echo > file` through Bash). New sessions after a profile switch need the `role_notices` hand-over note or the resumed agent keeps its old role.
+- **Merge resolution:** parallel agents in worktrees conflict mostly on `mock.ts`, `Palette.tsx` imports, and placeholder files; both sides are usually wanted (union).
+- Shell scripting from bash: apostrophes and backticks inside `node -e '…'` break quoting. Write a temp .cjs script instead.
+
 ## Stack
 - **Tauri 2** — Rust core in `src-tauri/`, React 19 + TypeScript + Tailwind v4 UI in `src/`.
 - State: zustand (`src/stores/app.ts`). Persistence: SQLite at `~/.orbit/state.db`. Worktrees: `~/.orbit/worktrees/<repo>/<slug>`. (Pre-rename `~/.agentic-ide` is migrated on first launch.)
@@ -28,6 +49,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - Attachments (`related.rs`, `attachments` table): extra folders passed to Claude as `--add-dir` and listed in the context prompt; editable ones get their own worktree.
 - **Never call a helper that locks `db()` inside an expression that already holds `state.db()`.** `std::sync::Mutex` isn't reentrant, so the command deadlocks. Bind the result first.
 - `settings.rs` — typed app settings, one JSON blob under `settings.app_settings` (`get_settings` / `update_settings`; Ctrl+, opens the page). Add a field there, in `ipc.ts`, and in `src/components/settings/`; wire it to behaviour (no dead toggles). `maintenance.rs` holds `environment_info` and merged-worktree cleanup.
+- Usage: `AgentEvent::Usage` (emitted just before `TurnCompleted`; Claude from the `result` line + last assistant usage, `compact_boundary` resets context; Codex from `thread/tokenUsage/updated`), aggregated in `usage.rs`; UI in `ContextMeter.tsx` and `settings/UsageSection.tsx`. `compact_session` / `new_session` free context (`AgentEvent::SessionReset` marks a new session).
 - `gh.rs` — PR status/checks/merge via the `gh` CLI.
 - `lib.rs` — Tauri commands + `on_agent_event` (persist → update status → notify → emit `agent-event` / `workspace`).
 - `src/lib/ipc.ts` mirrors the Rust types; keep them in sync (serde uses camelCase).
@@ -42,11 +64,12 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - Dither (`src/lib/dither.tsx` + `.dither-*` utilities in `index.css`) is a 1-bit Bayer mask; colour comes from the element's background (`bg-run` for running sweeps/progress, `bg-line-strong` for rules). Use it for rules, the selected-row fade, running sweeps, and progress, never behind body text.
 - Brand mark: `src/assets/orbit.png` (the user's dithered black hole). `OrbitMark` (ui.tsx) for small sizes, `OrbitHero` for the start page (planet orbiting, passes behind the horizon). `.orbit-art` blends it onto either theme. App icons: `bunx tauri icon src/assets/orbit.png -o src-tauri/icons`.
 - Every new action gets a palette entry (`Palette.tsx`); frequent ones get a shortcut.
-- Agents run unattended in their worktree (Claude `bypassPermissions`, Codex `never`/`danger-full-access`).
+- Agents run unattended in their worktree by default (Claude `bypassPermissions`, Codex `never`/`danger-full-access`); Settings > Agents can tighten this to Accept edits / workspace-write. Read-only profiles are always enforced regardless.
 
 ## Milestones
 1. ✅ Scaffold, 2. ✅ Claude/Codex chat with streaming, interrupt, resume, 3. 🟡 Fleet (worktrees, sidebar, notifications, palette ✅; fleet board replaced by inbox ✅)
 4. ✅ Codex adapter (model picker ✅)
 5. ✅ Skill packs (install any pack by git URL, enable/update/remove; only shipkit is bundled), `/` autocomplete, pinned skill chips, palette skills, bundled `shipkit`, Ship panel (PR state, checks, fix CI / address comments / ready / merge). Next: per-workspace pack toggles.
-6. 🟡 GitHub Issues panel, start-from-issue (built; GitHub verification pending)
-7. ⬜ Polish: settings UI, worktree cleanup
+6. ✅ GitHub Issues panel, start-from-issue, write-ticket (verified on real GitHub)
+7. 🟢 Polish: settings page, usage/context tracking, archive restore, worktree cleanup (built, mock-verified; real-app e2e pending)
+8. ⬜ Next candidates: real-app e2e for milestone 7, linked PRs across repos (second sandbox repo), per-workspace pack toggles, plugin commands in autocomplete, installer build

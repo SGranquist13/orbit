@@ -13,6 +13,22 @@ What you want the IDE to do, and the honest state of each feature. **Edit the Pr
 
 _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
 
+## Real vs mock: verification ledger (2026-10-09)
+
+**Totals:** 100 features: ✅ 49 · 🟢 36 · 🟡 5 · ⬜ 7 · 💭 3.
+
+**Proven in the real app (✅)** by `bun run e2e` (16 steps, real Claude + Codex, local repo) and `bun run e2e:github` (7 steps, real PRs/CI/issues in the sandbox): worktree workspaces, Claude + Codex chat, streaming, tool groups, follow-ups, interrupt, resume after restart, inbox (reasons, AI suggestions, send, dismiss, snooze), profiles with enforced read-only + switching, skills (`/` autocomplete, pinned chips, native Claude skills), attached folders + discovery, Ship → draft PR → checks → ready → merge, Fix CI from the inbox, Issues panel Start/Plan, write-ticket, preflight, themes, Inter, greyscale UI, Ship panel toggle.
+
+**Built but only verified in the mock UI / unit tests (🟢): needs its first real-app run.** Everything added on 2026-10-09 after the last full run is in this group:
+- **Settings page** (all sections), and the wiring behind it: permission mode / sandbox, merge method + delete branch, notification toggles, default agent/model, AI-suggestion toggle and model.
+- **Usage**: context meter, per-turn tokens, Usage report, **Compact context** and **New session** (Claude `/compact` parsing is fixture-tested against a real recording; the buttons haven't driven a real agent).
+- **Data**: archived workspaces + Restore, merged-worktree cleanup, environment diagnostics.
+- Earlier leftovers: OS notifications, archive workspace, New ticket dialog, `#n` issue chip, Codex mid-turn steer, Claude mid-turn queue, "Build this plan" hand-off, install pack by URL, per-repo always-attach, user plugins in workspaces, focus mode, start-page animation, app icon in the taskbar, installer build.
+
+**Partial (🟡):** editable attached folders (worktree verified; shipping them as linked PRs across two repos is untested and needs a second sandbox repo), Address comments button, sidebar collapse-to-rail (mock only), model lists are hardcoded, folder picker (native dialog, can't be automated).
+
+**Next full e2e run should add steps for:** settings round-trip (change prefix → new workspace branch uses it; switch Claude to Accept edits → a Bash write is denied), compact + new session against a real Claude turn (meter drops; new session forgets context), archive → restore, cleanup dry-run on a merged branch, New ticket → issue filed, Address comments on a PR with a review comment, linked PRs with a second sandbox repo.
+
 ## Fleet & workspaces
 
 | Feature | Priority | Status | Notes |
