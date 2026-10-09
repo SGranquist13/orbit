@@ -436,6 +436,25 @@ mod tests {
     }
 
     #[test]
+    fn real_compact_drops_context_to_post_tokens() {
+        // Recorded from claude 2.1.x: one turn, then `/compact` (pre 24871 -> post 2266 tokens).
+        let path = format!("{}/tests/fixtures/claude_compact.jsonl", env!("CARGO_MANIFEST_DIR"));
+        let mut p = ClaudeParser::default();
+        let usages: Vec<Option<u64>> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .flat_map(|l| p.parse(l))
+            .filter_map(|e| match e {
+                AgentEvent::Usage { context_tokens, .. } => Some(context_tokens),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(usages.len(), 2, "one Usage per result line");
+        assert!(usages[0].is_some_and(|t| t > 20_000), "first turn carries the full context: {usages:?}");
+        assert_eq!(usages[1], Some(2266), "after /compact the context is the boundary's post_tokens");
+    }
+
+    #[test]
     fn compact_boundary_resets_context_when_no_assistant_message() {
         let mut p = ClaudeParser::default();
         p.parse(r#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"post_tokens":4200}}"#);
