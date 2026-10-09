@@ -316,6 +316,7 @@ async fn create_workspace(
         seen_seq: 0,
         dismissed_seq: 0,
         profile: profile.filter(|p| !p.is_empty()),
+        snoozed_until: 0,
     };
     state.db().insert_workspace(&ws).map_err(err)?;
     // The repo's "always attach" folders (read-only); skip ones that have since disappeared.
@@ -332,6 +333,47 @@ async fn create_workspace(
         send(&app, &state, &ws.id, p.clone(), None, p).map_err(err)?;
     }
     Ok(ws)
+}
+
+/// Creates a workspace for a GitHub issue (no prompt) and runs `shipkit:start-issue` on it,
+/// so the agent reads the issue itself via `gh`.
+#[tauri::command]
+async fn start_issue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    number: i64,
+    title: String,
+    profile: Option<String>,
+    agent: String,
+    model: Option<String>,
+) -> CmdResult<Workspace> {
+    let profile = profile.filter(|p| !p.is_empty()).or_else(|| Some(DEFAULT_PROFILE.to_string()));
+    let ws = create_workspace(app.clone(), state.clone(), repo_id, title, agent, model, None, Some(number), profile).await?;
+    run_skill(app, state.clone(), ws.id.clone(), "shipkit:start-issue".into(), String::new()).await?;
+    // Re-read so the returned status is "running".
+    let latest = state.db().workspace(&ws.id).unwrap_or(ws);
+    Ok(latest)
+}
+
+#[tauri::command]
+async fn list_issues(state: State<'_, AppState>, repo_id: String) -> CmdResult<Vec<gh::Issue>> {
+    let repo = state.db().repo(&repo_id).map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || gh::list_issues(Path::new(&repo.path)))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
+/// URL of the GitHub issue linked to the workspace.
+#[tauri::command]
+async fn issue_url(state: State<'_, AppState>, workspace_id: String) -> CmdResult<String> {
+    let ws = state.db().workspace(&workspace_id).map_err(err)?;
+    let n = ws.issue_number.ok_or("This workspace has no linked issue")?;
+    tauri::async_runtime::spawn_blocking(move || gh::issue_url(Path::new(&ws.path), n))
+        .await
+        .map_err(err)?
+        .map_err(err)
 }
 
 /// Switches the workspace's role. An idle session restarts so the new instructions and
@@ -674,6 +716,14 @@ fn dismiss_workspace(state: State<AppState>, id: String) -> CmdResult<i64> {
     state.db().dismiss(&id).map_err(err)
 }
 
+/// Hides the workspace from the inbox until `until` (ms epoch); 0 clears the snooze.
+#[tauri::command]
+fn snooze_workspace(app: AppHandle, state: State<AppState>, id: String, until: i64) -> CmdResult<Workspace> {
+    let ws = state.db().set_snoozed(&id, until).map_err(err)?;
+    emit_workspace(&app, &ws);
+    Ok(ws)
+}
+
 /// Up to 3 next-prompt ideas for the inbox, from a one-shot Haiku call (no tools, ~$0.0002).
 #[tauri::command]
 async fn suggest_prompts(
@@ -784,6 +834,10 @@ pub fn run() {
             workspace_summary,
             mark_seen,
             dismiss_workspace,
+            snooze_workspace,
+            start_issue,
+            list_issues,
+            issue_url,
             suggest_prompts,
             set_setting,
             run_skill,

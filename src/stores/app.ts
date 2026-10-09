@@ -17,6 +17,8 @@ import {
   type Workspace,
 } from "../lib/ipc";
 
+export type View = "workspace" | "inbox" | "issues";
+
 interface AppState {
   repos: Repo[];
   workspaces: Workspace[];
@@ -28,7 +30,7 @@ interface AppState {
   changes: Record<string, FileChange[]>;
   /** Live digest of each workspace's event log; drives unread dots and the inbox. */
   summaries: Record<string, Summary>;
-  view: "workspace" | "inbox";
+  view: View;
   /** undefined = not fetched yet, null = no PR for the branch. */
   prs: Record<string, PrStatus | null | undefined>;
   /** Folders attached to each workspace (loaded when it is selected, refetched after changes). */
@@ -44,6 +46,8 @@ interface AppState {
   profiles: Profile[];
   pins: string[];
   newWorkspaceOpen: boolean;
+  /** "New ticket" dialog (Issues view). */
+  ticketOpen: boolean;
   packsOpen: boolean;
   paletteOpen: boolean;
   /** Ship panel (changes, PR, checks). Hidden until asked for; never opens on its own. */
@@ -55,7 +59,7 @@ interface AppState {
 
   init: () => Promise<void>;
   select: (id: string | null) => void;
-  setView: (view: "workspace" | "inbox") => void;
+  setView: (view: View) => void;
   dismiss: (id: string) => Promise<void>;
   addRepo: (path: string) => Promise<Repo>;
   refreshChanges: (id: string) => Promise<void>;
@@ -74,6 +78,8 @@ interface AppState {
   runSkill: (workspaceId: string, skillId: string, args?: string) => Promise<void>;
   setPacksOpen: (open: boolean) => void;
   setNewWorkspaceOpen: (open: boolean) => void;
+  setTicketOpen: (open: boolean) => void;
+  snooze: (id: string, until: number) => Promise<void>;
   setPaletteOpen: (open: boolean) => void;
   setShipOpen: (open: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -122,6 +128,7 @@ export const useApp = create<AppState>((set, get) => ({
   profiles: [],
   pins: [],
   newWorkspaceOpen: false,
+  ticketOpen: false,
   packsOpen: false,
   paletteOpen: false,
   shipOpen: readFlag("shipOpen"),
@@ -298,6 +305,14 @@ export const useApp = create<AppState>((set, get) => ({
 
   setPacksOpen: (open) => set({ packsOpen: open }),
   setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open }),
+  setTicketOpen: (open) => set({ ticketOpen: open }),
+  snooze: async (id, until) => {
+    try {
+      get().upsertWorkspace(await api.snoozeWorkspace(id, until));
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setShipOpen: (open) => {
     writeFlag("shipOpen", open);

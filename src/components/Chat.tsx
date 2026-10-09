@@ -1,9 +1,11 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
   Check,
   ChevronRight,
   CircleAlert,
+  CircleDot,
   FilePen,
   FileText,
   Folder,
@@ -46,6 +48,20 @@ export function Chat({ ws }: { ws: Workspace }) {
           <GitBranch className="size-3" strokeWidth={2.5} />
           {ws.branch}
         </span>
+        {ws.issueNumber != null && (
+          <button
+            onClick={() =>
+              api
+                .issueUrl(ws.id)
+                .then((url) => openUrl(url))
+                .catch((e) => useApp.getState().setError(String(e)))
+            }
+            title="Open the linked issue on GitHub"
+            className="relative flex shrink-0 items-center gap-1 rounded-[3px] border border-line px-1.5 py-px text-[10.5px] font-medium tabular-nums text-mute hover:text-fg"
+          >
+            <CircleDot className="size-3" strokeWidth={2.5} />#{ws.issueNumber}
+          </button>
+        )}
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />

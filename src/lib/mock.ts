@@ -2,7 +2,7 @@
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AgentEvent, Attachment, FileChange, Pack, PrStatus, Profile, Related, Repo, Skill, StoredEvent, Summary, Workspace } from "./ipc";
+import type { AgentEvent, Attachment, FileChange, Issue, Pack, PrStatus, Profile, Related, Repo, Skill, StoredEvent, Summary, Workspace } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -26,6 +26,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   seenSeq: 0,
   dismissedSeq: 0,
   profile: null,
+  snoozedUntil: 0,
 });
 
 const workspaces: Workspace[] = [
@@ -40,6 +41,7 @@ const seenSeq: Record<string, number> = { w1: 40, w2: 6, w3: 5, w4: 3 };
 workspaces[1].profile = "shipkit:reviewer";
 workspaces[2].profile = "shipkit:planner";
 workspaces[3].profile = "shipkit:debugger";
+workspaces[0].issueNumber = 398;
 for (const w of workspaces) w.seenSeq = seenSeq[w.id] ?? 0;
 
 const min = 60_000;
@@ -128,6 +130,19 @@ const pr: PrStatus = {
   checks: { passed: 5, failed: 1, pending: 1, failing: ["test (ubuntu)"] },
 };
 
+const ago = (h: number) => new Date(now - h * 3_600_000).toISOString();
+const issue = (number: number, title: string, labels: string[], author: string, hoursAgo: number, comments: number): Issue => ({
+  number, title, labels, author, comments, state: "OPEN", url: `https://github.com/acme/superset/issues/${number}`, updatedAt: ago(hoursAgo),
+});
+const issues: Issue[] = [
+  issue(412, "Dark mode flashes white on first paint", ["bug", "ui"], "ada", 2, 3),
+  issue(409, "Support SSO login via SAML", ["feature", "auth", "enterprise"], "grace", 20, 11),
+  issue(398, "Onboarding crashes when the org name is empty", ["bug", "p1"], "linus", 30, 5),
+  issue(391, "Export billing history as CSV", ["feature"], "ada", 96, 0),
+  issue(377, "Webhook retries should back off exponentially", ["enhancement", "billing"], "margaret", 200, 2),
+  issue(352, "Docs: document the self-hosting env vars", ["documentation", "good first issue"], "dennis", 600, 1),
+];
+
 const attachments: Attachment[] = [
   { id: "a1", workspaceId: "w1", path: "C:/code/shared-ui", name: "shared-ui", editable: false, worktreePath: null, branch: null },
   {
@@ -164,6 +179,27 @@ export function installMockBackend() {
         case "set_workspace_profile": {
           const w = workspaces.find((x) => x.id === id)!;
           w.profile = (args as { profile: string }).profile;
+          return { ...w };
+        }
+        case "list_issues":
+          // r2 stands in for a repo without a GitHub remote.
+          if (a.repoId === "r2") throw "No GitHub remote found for this repo";
+          await new Promise((r) => setTimeout(r, 300));
+          return issues;
+        case "issue_url":
+          return `https://github.com/acme/superset/issues/${workspaces.find((x) => x.id === a.workspaceId)?.issueNumber ?? 0}`;
+        case "create_workspace":
+        case "start_issue": {
+          const n = args as { repoId: string; name?: string; title?: string; agent: "claude" | "codex"; number?: number; issueNumber?: number; profile?: string | null };
+          const w = ws(`w${workspaces.length + 1}`, n.repoId, n.title ?? n.name ?? "New workspace", n.agent, cmd === "start_issue" ? "running" : "idle");
+          w.issueNumber = n.number ?? n.issueNumber ?? null;
+          w.profile = n.profile ?? null;
+          workspaces.unshift(w);
+          return { ...w };
+        }
+        case "snooze_workspace": {
+          const w = workspaces.find((x) => x.id === id)!;
+          w.snoozedUntil = (args as { until: number }).until;
           return { ...w };
         }
         case "get_pins":

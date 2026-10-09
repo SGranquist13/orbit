@@ -42,8 +42,8 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - Agents run unattended in their worktree (Claude `bypassPermissions`, Codex `never`/`danger-full-access`).
 
 ## Milestones
-1. ✅ Scaffold, 2. ✅ Claude/Codex chat with streaming, interrupt, resume, 3. 🟡 Fleet (worktrees, sidebar, notifications, palette ✅; fleet board ⬜)
+1. ✅ Scaffold, 2. ✅ Claude/Codex chat with streaming, interrupt, resume, 3. 🟡 Fleet (worktrees, sidebar, notifications, palette ✅; fleet board replaced by inbox ✅)
 4. ✅ Codex adapter (model picker ✅)
 5. ✅ Skill packs (install any pack by git URL, enable/update/remove; only shipkit is bundled), `/` autocomplete, pinned skill chips, palette skills, bundled `shipkit`, Ship panel (PR state, checks, fix CI / address comments / ready / merge). Next: per-workspace pack toggles.
-6. ⬜ GitHub Issues panel, start-from-issue
+6. 🟡 GitHub Issues panel, start-from-issue (built; GitHub verification pending)
 7. ⬜ Polish: settings UI, worktree cleanup

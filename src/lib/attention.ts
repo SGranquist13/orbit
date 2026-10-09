@@ -9,6 +9,33 @@ export type Suggestion =
   /** Switch the workspace to another profile, then send `text`. */
   | { label: string; kind: "handoff"; profileId: string; text: string };
 
+export function isSnoozed(ws: Pick<Workspace, "snoozedUntil">, now = Date.now()) {
+  return now < ws.snoozedUntil;
+}
+
+/** Snooze choices relative to `now`: an hour, tomorrow 9:00, next Monday 9:00. */
+export function snoozeOptions(now = new Date()): { label: string; until: number }[] {
+  const at9 = (daysAhead: number) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + daysAhead);
+    d.setHours(9, 0, 0, 0);
+    return d.getTime();
+  };
+  const toMonday = ((8 - now.getDay()) % 7) || 7;
+  return [
+    { label: "1 hour", until: now.getTime() + 3_600_000 },
+    { label: "Until tomorrow 9:00", until: at9(1) },
+    { label: "Next week", until: at9(toMonday) },
+  ];
+}
+
+/** "3:40 PM" for today, "Tue 9:00 AM" otherwise. */
+export function formatSnooze(until: number, now = new Date()) {
+  const d = new Date(until);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
+
 /** Unread = a turn finished since the user last looked at the workspace. */
 export function isUnread(ws: Workspace, summary: Summary | undefined) {
   return !!summary && summary.lastTurnSeq > ws.seenSeq;
@@ -25,6 +52,7 @@ function asksQuestion(text: string | null) {
 
 export function attentionReason(ws: Workspace, summary: Summary | undefined, pr: PrStatus | null | undefined): Reason | null {
   if (!summary || ws.status === "running") return null;
+  if (isSnoozed(ws)) return null;
   if (ws.dismissedSeq >= summary.lastSeq) return null;
   const unseen = summary.lastSeq > ws.seenSeq;
   const failed = ws.status === "error" || (!!summary.lastTurnError && !summary.lastTurnInterrupted);

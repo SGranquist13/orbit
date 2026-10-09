@@ -1,5 +1,6 @@
 import { Command } from "cmdk";
-import { Focus, UserRound, FolderPlus, FolderSymlink, Inbox, Package, PanelLeft, Plus, Rocket, Sparkles, Zap } from "lucide-react";
+import { AlarmClock, CircleDot, Focus, UserRound, FolderPlus, FolderSymlink, Inbox, Package, PanelLeft, Plus, Rocket, Sparkles, Zap } from "lucide-react";
+import { snoozeOptions } from "../lib/attention";
 import { activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
@@ -44,6 +45,18 @@ export function Palette() {
             <Command.Item className={item} onSelect={run(() => useApp.getState().setView("inbox"))}>
               <Inbox className="size-3.5" /> Open inbox
             </Command.Item>
+            <Command.Item className={item} onSelect={run(() => useApp.getState().setView("issues"))}>
+              <CircleDot className="size-3.5" /> Open issues
+            </Command.Item>
+            <Command.Item
+              className={item}
+              onSelect={run(() => {
+                useApp.getState().setView("issues");
+                useApp.getState().setTicketOpen(true);
+              })}
+            >
+              <Plus className="size-3.5" /> New ticket
+            </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setNewWorkspaceOpen(true))}>
               <Plus className="size-3.5" /> New workspace
             </Command.Item>
@@ -52,6 +65,13 @@ export function Palette() {
             </Command.Item>
             {selectedId && (
               <>
+                <Command.Item
+                  className={item}
+                  value="Snooze this workspace for 1 hour"
+                  onSelect={run(() => void useApp.getState().snooze(selectedId, snoozeOptions()[0].until))}
+                >
+                  <AlarmClock className="size-3.5" /> Snooze this workspace for 1 hour
+                </Command.Item>
                 <Command.Item className={item} onSelect={run(() => void pickAttachFolder(selectedId))}>
                   <FolderSymlink className="size-3.5" /> Attach folder…
                 </Command.Item>

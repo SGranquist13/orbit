@@ -1,6 +1,7 @@
+import { Clock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeProfile } from "../lib/ipc";
-import { attentionReason, reasonMeta, ruleSuggestions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
+import { attentionReason, formatSnooze, isSnoozed, reasonMeta, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
 import { api, type Summary, type Workspace } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
@@ -57,7 +58,15 @@ export function Inbox() {
   );
   const needs = useMemo(() => all.filter((r) => r.reason), [all]);
   const rows = tab === "needs" ? needs : all;
-  const focused = rows.find((r) => r.ws.id === focusedId) ?? rows[0] ?? null;
+  // When the focused row leaves the list (dismissed, snoozed, sent), focus the row that now sits
+  // at the same index (the next one, or the previous if it was last) instead of jumping to the top.
+  const lastIndex = useRef(0);
+  const found = rows.findIndex((r) => r.ws.id === focusedId);
+  const focused = rows[found >= 0 ? found : Math.min(lastIndex.current, rows.length - 1)] ?? null;
+  useEffect(() => {
+    const i = rows.findIndex((r) => r.ws.id === focused?.ws.id);
+    if (i >= 0) lastIndex.current = i;
+  }, [rows, focused]);
   const fid = focused?.ws.id ?? "";
 
   const chips = useChips(focused, changes[fid]?.length ?? 0, !!prs[fid], () => bump((n) => n + 1));
@@ -70,6 +79,11 @@ export function Inbox() {
     },
     [rows, focused],
   );
+
+  // Dismissing or snoozing drops the row from "Needs you" once the call lands; focus then falls
+  // through to the same index via `lastIndex` above.
+  const dismiss = useCallback((row: Row) => void useApp.getState().dismiss(row.ws.id), []);
+  const snooze = useCallback((row: Row, until: number) => void useApp.getState().snooze(row.ws.id, until), []);
 
   const send = useCallback(
     async (row: Row, chip: Suggestion | string) => {
@@ -97,7 +111,7 @@ export function Inbox() {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const s = useApp.getState();
-      if (s.paletteOpen || s.newWorkspaceOpen || s.packsOpen) return;
+      if (s.paletteOpen || s.newWorkspaceOpen || s.packsOpen || s.ticketOpen) return;
       if (e.key === "j" || e.key === "ArrowDown") move(1);
       else if (e.key === "k" || e.key === "ArrowUp") move(-1);
       else if (/^[1-6]$/.test(e.key) && focused) {
@@ -105,13 +119,14 @@ export function Inbox() {
         if (!chip) return;
         void send(focused, chip);
       } else if (e.key === "Enter" && focused) s.select(focused.ws.id);
-      else if (e.key.toLowerCase() === "e" && focused) void s.dismiss(focused.ws.id);
+      else if (e.key.toLowerCase() === "e" && focused) dismiss(focused);
+      else if (e.key.toLowerCase() === "s" && focused) snooze(focused, snoozeOptions()[0].until);
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [move, send, focused, chips]);
+  }, [move, send, dismiss, snooze, focused, chips]);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-bg">
@@ -148,6 +163,8 @@ export function Inbox() {
                 chips={r.ws.id === focused?.ws.id ? chips : null}
                 onFocus={() => setFocusedId(r.ws.id)}
                 onSend={(c) => void send(r, c)}
+                onDismiss={() => dismiss(r)}
+                onSnooze={(until) => snooze(r, until)}
               />
             ))}
           </ul>
@@ -221,6 +238,8 @@ function InboxRow({
   chips,
   onFocus,
   onSend,
+  onDismiss,
+  onSnooze,
 }: {
   row: Row;
   repo: string | undefined;
@@ -228,8 +247,11 @@ function InboxRow({
   chips: Chips | null;
   onFocus: () => void;
   onSend: (chip: Suggestion | string) => void;
+  onDismiss: () => void;
+  onSnooze: (until: number) => void;
 }) {
   const { ws, summary, reason } = row;
+  const snoozed = isSnoozed(ws);
   const running = ws.status === "running";
   const snippet = reason === "error" ? (summary?.lastTurnError ?? summary?.lastAssistantText) : summary?.lastAssistantText;
 
@@ -248,6 +270,11 @@ function InboxRow({
         <span className="ml-auto flex shrink-0 items-center gap-3">
           {reason ? (
             <span className={cn("text-[11.5px] font-medium", reasonMeta(reason).tone)}>{reasonMeta(reason).label}</span>
+          ) : snoozed ? (
+            <span className="flex items-center gap-1 text-[11.5px] font-medium text-mute">
+              <Clock className="size-3" />
+              Snoozed until {formatSnooze(ws.snoozedUntil)}
+            </span>
           ) : (
             <span className={cn("text-[11.5px] font-medium", running ? "text-run" : "text-mute")}>
               {running ? "Working…" : "Idle"}
@@ -262,14 +289,27 @@ function InboxRow({
           {snippet.replace(/\s+/g, " ")}
         </p>
       )}
-      {focused && chips && <Expanded row={row} chips={chips} onSend={onSend} />}
+      {focused && chips && <Expanded row={row} chips={chips} onSend={onSend} onDismiss={onDismiss} onSnooze={onSnooze} />}
     </li>
   );
 }
 
-function Expanded({ row, chips, onSend }: { row: Row; chips: Chips; onSend: (chip: Suggestion | string) => void }) {
+function Expanded({
+  row,
+  chips,
+  onSend,
+  onDismiss,
+  onSnooze,
+}: {
+  row: Row;
+  chips: Chips;
+  onSend: (chip: Suggestion | string) => void;
+  onDismiss: () => void;
+  onSnooze: (until: number) => void;
+}) {
   const { ws } = row;
   const [text, setText] = useState("");
+  const [menu, setMenu] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="mt-3 space-y-3 pl-[18px]">
@@ -309,9 +349,36 @@ function Expanded({ row, chips, onSend }: { row: Row; chips: Chips; onSend: (chi
         <Button variant="ghost" onClick={() => useApp.getState().select(ws.id)}>
           Open <Kbd>Enter</Kbd>
         </Button>
-        <Button variant="ghost" onClick={() => void useApp.getState().dismiss(ws.id)}>
+        <Button variant="ghost" onClick={onDismiss}>
           Dismiss <Kbd>E</Kbd>
         </Button>
+        <div className="relative">
+          <Button variant="ghost" onClick={() => setMenu((m) => !m)}>
+            Snooze <Kbd>S</Kbd>
+          </Button>
+          {menu && (
+            <>
+              <div className="fixed inset-0 z-10" onMouseDown={() => setMenu(false)} />
+              <div
+                className="absolute bottom-full right-0 z-20 mb-1 w-[176px] rounded-[4px] border-[1.5px] border-line-strong bg-raised p-1 shadow-hard-sm"
+                onKeyDown={(e) => e.key === "Escape" && setMenu(false)}
+              >
+                {snoozeOptions().map((o) => (
+                  <button
+                    key={o.label}
+                    onClick={() => {
+                      setMenu(false);
+                      onSnooze(o.until);
+                    }}
+                    className="flex h-7 w-full items-center rounded-[3px] px-2 text-left text-[12px] font-medium text-dim hover:bg-hover hover:text-fg"
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

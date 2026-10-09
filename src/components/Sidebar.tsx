@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, FolderPlus, Inbox, PanelLeft, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDot, FolderPlus, Inbox, PanelLeft, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import type { Repo, Workspace } from "../lib/ipc";
@@ -61,6 +61,13 @@ export function Sidebar() {
           count={needsYou}
           onClick={() => useApp.getState().setView(view === "inbox" ? "workspace" : "inbox")}
         />
+        <NavItem
+          icon={<CircleDot className="size-3.5" strokeWidth={2.5} />}
+          label="Issues"
+          kbd="Ctrl Shift I"
+          active={view === "issues"}
+          onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
+        />
         <NavItem icon={<Plus className="size-3.5" strokeWidth={2.5} />} label="New workspace" kbd="Ctrl N" onClick={() => useApp.getState().setNewWorkspaceOpen(true)} />
         <NavItem icon={<Search className="size-3.5" strokeWidth={2.5} />} label="Command palette" kbd="Ctrl K" onClick={() => useApp.getState().setPaletteOpen(true)} />
       </nav>
@@ -117,6 +124,13 @@ function Rail({ workspaces, needsYou }: { workspaces: Workspace[]; needsYou: num
               {needsYou}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
+          title="Issues (Ctrl Shift I)"
+          className={cn(btn, view === "issues" && "bg-raised text-fg")}
+        >
+          <CircleDot className="size-3.5" strokeWidth={2.5} />
         </button>
         <button onClick={() => useApp.getState().setNewWorkspaceOpen(true)} title="New workspace (Ctrl N)" className={btn}>
           <Plus className="size-3.5" strokeWidth={2.5} />

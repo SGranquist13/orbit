@@ -39,6 +39,8 @@ pub struct Workspace {
     pub dismissed_seq: i64,
     /// Profile id (`<plugin>:<name>`); None = builder.
     pub profile: Option<String>,
+    /// Hidden from the inbox until this time (ms epoch); 0 = not snoozed.
+    pub snoozed_until: i64,
 }
 
 /// What the inbox needs to know about a workspace's recent activity.
@@ -151,6 +153,7 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         seen_seq: r.get("seen_seq")?,
         dismissed_seq: r.get("dismissed_seq")?,
         profile: r.get("profile")?,
+        snoozed_until: r.get("snoozed_until")?,
     })
 }
 
@@ -181,6 +184,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("seen_seq", "ALTER TABLE workspaces ADD COLUMN seen_seq INTEGER NOT NULL DEFAULT 0"),
         ("dismissed_seq", "ALTER TABLE workspaces ADD COLUMN dismissed_seq INTEGER NOT NULL DEFAULT 0"),
         ("profile", "ALTER TABLE workspaces ADD COLUMN profile TEXT"),
+        ("snoozed_until", "ALTER TABLE workspaces ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -282,6 +286,11 @@ impl Db {
 
     pub fn set_profile(&self, id: &str, profile: Option<&str>) -> anyhow::Result<Workspace> {
         self.conn.execute("UPDATE workspaces SET profile = ?2 WHERE id = ?1", params![id, profile])?;
+        self.workspace(id)
+    }
+
+    pub fn set_snoozed(&self, id: &str, until: i64) -> anyhow::Result<Workspace> {
+        self.conn.execute("UPDATE workspaces SET snoozed_until = ?2 WHERE id = ?1", params![id, until])?;
         self.workspace(id)
     }
 
@@ -481,6 +490,7 @@ mod tests {
             seen_seq: 0,
             dismissed_seq: 0,
             profile: None,
+            snoozed_until: 0,
         };
         db.insert_workspace(&ws).unwrap();
         db.append_event("w", &AgentEvent::UserMessage { text: "hi".into(), skill: None }).unwrap();
@@ -506,6 +516,26 @@ mod tests {
         assert_eq!(db.mark_seen("w").unwrap(), done.seq);
         assert_eq!(db.workspace("w").unwrap().seen_seq, done.seq);
         assert_eq!(db.dismiss("w").unwrap(), done.seq);
+
+        // Snooze round-trips and survives other updates.
+        assert_eq!(db.workspace("w").unwrap().snoozed_until, 0);
+        assert_eq!(db.set_snoozed("w", 1_700_000_000_000).unwrap().snoozed_until, 1_700_000_000_000);
+        assert_eq!(db.set_status("w", "done").unwrap().snoozed_until, 1_700_000_000_000);
+        assert_eq!(db.set_snoozed("w", 0).unwrap().snoozed_until, 0);
+    }
+
+    #[test]
+    fn migrate_adds_snoozed_until_to_old_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        // SCHEMA has no snoozed_until, so this is the "old database" shape.
+        let cols = |c: &Connection| -> Vec<String> {
+            c.prepare("PRAGMA table_info(workspaces)").unwrap().query_map([], |r| r.get::<_, String>(1)).unwrap().map(|r| r.unwrap()).collect()
+        };
+        assert!(!cols(&conn).contains(&"snoozed_until".to_string()));
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap(); // idempotent
+        assert!(cols(&conn).contains(&"snoozed_until".to_string()));
     }
 
     #[test]
@@ -529,6 +559,7 @@ mod tests {
             seen_seq: 0,
             dismissed_seq: 0,
             profile: None,
+            snoozed_until: 0,
         };
         db.insert_workspace(&ws).unwrap();
 
