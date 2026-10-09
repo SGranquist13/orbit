@@ -1,10 +1,11 @@
 // End-to-end test of the REAL desktop app (not the mock): launches the debug build with
 // WebView2 remote debugging, drives the UI over the Chrome DevTools Protocol, and asserts on
-// the DOM. Uses real agents (Claude haiku, Codex default) in a throwaway repo.
+// the DOM. Uses real agents (Claude haiku, Codex default) in a throwaway repo. The CDP driver is
+// shared with scripts/e2e-github.mjs (scripts/e2e-harness.mjs).
 //
 //   1. `bun run dev` (Vite on :1420; the debug build loads the UI from it)
-//   2. build once: scripts\tauri.cmd build --debug --no-bundle   (or cargo build in src-tauri)
-//   3. node scripts/e2e.mjs <scratch-dir>
+//   2. build once: cmd //c "scripts\\cargo.cmd build"
+//   3. node scripts/e2e.mjs <scratch-dir> [step]
 //
 // <scratch-dir> gets a fresh `home/` (ORBIT_HOME) and `repo/` (a local git repo, no remote),
 // so the user's real ~/.orbit state is never touched. Screenshots land in <scratch-dir>/shots.
@@ -12,152 +13,22 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { TURN_ENDS, createHarness, sleep, uiHelpers } from "./e2e-harness.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = path.resolve(process.argv[2] ?? "e2e-scratch");
 const only = process.argv[3]; // optional: run a single step by name
-const exe = path.join(root, "src-tauri", "target", "debug", "orbit.exe");
-const PORT = 9333;
-const home = path.join(scratch, "home");
+const h = createHarness({ scratch, only });
+const ui = uiHelpers(h);
+const { home, launch, quit, cdp, js, waitFor, key, type, shot, invoke, step } = h;
 const repo = path.join(scratch, "repo");
-const shots = path.join(scratch, "shots");
 
-const results = [];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ── App process ───────────────────────────────────────────────
-let app;
-async function launch() {
-  app = spawn(exe, [], {
-    env: {
-      ...process.env,
-      ORBIT_HOME: home,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}`,
-    },
-    stdio: "ignore",
-  });
-  for (let i = 0; i < 60; i++) {
-    try {
-      const pages = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json();
-      const page = pages.find((p) => p.type === "page" && p.url.includes("localhost:1420"));
-      if (page) return connect(page.webSocketDebuggerUrl);
-    } catch {}
-    await sleep(500);
-  }
-  throw new Error("app did not expose a debuggable page");
-}
-async function quit() {
-  app?.kill();
-  await sleep(1500);
-}
-
-// ── CDP ───────────────────────────────────────────────────────
-let ws, nextId = 0;
-const pageErrors = [];
-const pending = new Map();
-function connect(url) {
-  return new Promise((resolve, reject) => {
-    ws = new WebSocket(url);
-    ws.onopen = resolve;
-    ws.onerror = reject;
-    ws.onmessage = (m) => {
-      const msg = JSON.parse(m.data);
-      if (msg.id && pending.has(msg.id)) {
-        pending.get(msg.id)(msg);
-        pending.delete(msg.id);
-      }
-      // Page errors from the real app, reported with the step that fails.
-      if (msg.method === "Runtime.exceptionThrown") {
-        const d = msg.params.exceptionDetails;
-        pageErrors.push(d.exception?.description ?? d.text);
-      } else if (msg.method === "Runtime.consoleAPICalled" && msg.params.type === "error") {
-        pageErrors.push(msg.params.args.map((a) => a.value ?? a.description ?? "").join(" "));
-      }
-    };
-  });
-}
-function cdp(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    const id = ++nextId;
-    pending.set(id, (m) => (m.error ? reject(new Error(`${method}: ${m.error.message}`)) : resolve(m.result)));
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-}
-async function js(expr) {
-  const r = await cdp("Runtime.evaluate", { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true });
-  if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-  return r.result.value;
-}
-async function waitFor(desc, expr, timeoutMs = 90_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    const v = await js(expr).catch(() => null);
-    if (v) return v;
-    await sleep(400);
-  }
-  throw new Error(`timed out waiting for: ${desc}`);
-}
-async function key(k, { ctrl = false, shift = false } = {}) {
-  const codes = { Enter: 13, Escape: 27, Tab: 9 };
-  const vk = codes[k] ?? k.toUpperCase().charCodeAt(0);
-  const base = { key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, windowsVirtualKeyCode: vk, modifiers: (ctrl ? 2 : 0) | (shift ? 8 : 0) };
-  await cdp("Input.dispatchKeyEvent", { type: "keyDown", ...base });
-  await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
-}
-const type = (text) => cdp("Input.insertText", { text });
-async function shot(name) {
-  fs.mkdirSync(shots, { recursive: true });
-  const { data } = await cdp("Page.captureScreenshot", { format: "png" });
-  fs.writeFileSync(path.join(shots, `${name}.png`), Buffer.from(data, "base64"));
-}
-// Calls a Rust command in the real app; rejections become Errors carrying the backend's message.
-async function invoke(cmd, args = {}) {
-  const r = await js(`try { return { ok: await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)}) }; }
-    catch (e) { return { err: String(e) }; }`);
-  if (r && "err" in r) throw new Error(r.err);
-  return r?.ok;
-}
-
-// DOM helpers evaluated in the page.
 const DOM = `
   const text = () => document.body.innerText;
   const userBlocks = () => [...document.querySelectorAll('.bg-fg.text-bg')].map(e => e.innerText);
   const sidebarRow = (name) => [...document.querySelectorAll('aside li button')].find(b => b.innerText.includes(name));
 `;
 
-async function step(name, fn) {
-  if (only && only !== name) return;
-  const t0 = Date.now();
-  try {
-    await fn();
-    results.push({ name, ok: true, ms: Date.now() - t0 });
-    console.log(`  ✓ ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-  } catch (e) {
-    results.push({ name, ok: false, error: e.message, pageErrors: pageErrors.slice(-5) });
-    console.log(`  ✗ ${name}: ${e.message}`);
-    for (const err of pageErrors.splice(0)) console.log(`      page error: ${String(err).split("\n").slice(0, 4).join(" | ")}`);
-    await shot(`FAIL-${name}`).catch(() => {});
-  }
-}
-
-async function newWorkspace({ prompt, agent, model, profile }) {
-  await key("n", { ctrl: true });
-  await waitFor("new workspace dialog", `return !!document.querySelector('textarea[placeholder^="Describe the task"]')`, 5000);
-  await js(`document.querySelector('textarea[placeholder^="Describe the task"]').focus()`);
-  await type(prompt);
-  if (profile) await js(`document.querySelector('button[data-profile=${JSON.stringify(profile)}]').click()`);
-  await js(`
-    const btn = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === ${JSON.stringify(agent === "codex" ? "Codex" : "Claude")});
-    btn.click();`);
-  if (model) {
-    await js(`
-      const sel = [...document.querySelectorAll('select')].find(s => [...s.options].some(o => o.value === ${JSON.stringify(model)}));
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, ${JSON.stringify(model)});
-      sel.dispatchEvent(new Event('change', { bubbles: true }));`);
-  }
-  await key("Enter", { ctrl: true });
-}
+const newWorkspace = (opts) => ui.newWorkspace(opts);
 
 async function composerSend(text) {
   await js(`document.querySelector('textarea[placeholder*="Claude"], textarea[placeholder*="Codex"]').focus()`);
@@ -165,7 +36,7 @@ async function composerSend(text) {
   await key("Enter");
 }
 
-const turnEnds = `return document.querySelectorAll('.dither-rule.flex-1').length`;
+const turnEnds = TURN_ENDS;
 
 // ── Scenario ──────────────────────────────────────────────────
 fs.rmSync(scratch, { recursive: true, force: true });
@@ -229,10 +100,8 @@ await step("worktree-on-disk", async () => {
 });
 
 await step("pr-panel-without-remote", async () => {
-  const toggleShip = `[...document.querySelectorAll('header button')].find(b => /Ship/.test(b.innerText)).click()`;
-  await js(toggleShip);
+  await ui.openShip();
   await waitFor("no-PR state", `return document.body.innerText.includes('No pull request for this branch yet')`, 20_000);
-  await js(toggleShip);
 });
 
 await step("follow-up-message", async () => {
@@ -449,8 +318,4 @@ await step("resume-after-restart", async () => {
   await shot("10-resumed");
 });
 
-await quit();
-const failed = results.filter((r) => !r.ok);
-console.log(`\n${results.length - failed.length}/${results.length} steps passed`);
-fs.writeFileSync(path.join(scratch, "results.json"), JSON.stringify(results, null, 2));
-process.exit(failed.length ? 1 : 0);
+await h.finish();

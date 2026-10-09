@@ -350,7 +350,16 @@ async fn start_issue(
 ) -> CmdResult<Workspace> {
     let profile = profile.filter(|p| !p.is_empty()).or_else(|| Some(DEFAULT_PROFILE.to_string()));
     let ws = create_workspace(app.clone(), state.clone(), repo_id, title, agent, model, None, Some(number), profile).await?;
-    run_skill(app, state.clone(), ws.id.clone(), "shipkit:start-issue".into(), String::new()).await?;
+    // start-issue implements; a read-only role (e.g. Planner) is asked for a plan instead.
+    if resolve_profile(&state, &ws).is_some_and(|p| p.readonly) {
+        let text = format!(
+            "Plan GitHub issue #{number}: read it with `gh issue view {number} --comments`, explore the relevant code, \
+             and write an implementation plan. Don't change anything."
+        );
+        send(&app, &state, &ws.id, text.clone(), None, text).map_err(err)?;
+    } else {
+        run_skill(app, state.clone(), ws.id.clone(), "shipkit:start-issue".into(), String::new()).await?;
+    }
     // Re-read so the returned status is "running".
     let latest = state.db().workspace(&ws.id).unwrap_or(ws);
     Ok(latest)

@@ -141,6 +141,57 @@ await h.step("write-ticket", async () => {
   gh(["issue", "close", String(issue.number), "--reason", "not planned"]);
 });
 
+/** Waits until a workspace (on screen or not) finishes a turn newer than `afterTurnSeq`. */
+async function waitIdle(id, afterTurnSeq = 0, timeoutMs = 300_000) {
+  await h.until("turn finished", async () => {
+    const s = await h.invoke("workspace_summary", { id });
+    const w = (await h.invoke("list_workspaces")).find((x) => x.id === id);
+    return s.lastTurnSeq > afterTurnSeq && w.status !== "running";
+  }, timeoutMs, 2000);
+}
+
+await h.step("issues-start-and-plan", async () => {
+  const fileIssue = (title, body) => Number(gh(["issue", "create", "--title", title, "--body", body]).split("/").pop());
+  const nStart = fileIssue(`Add a CONTRIBUTING.md (${stamp})`, "Add a short CONTRIBUTING.md explaining how to run the project. One paragraph is enough.");
+  const nPlan = fileIssue(`Add a unit test for greet (${stamp})`, "lib.js exports greet but has no tests. Add a node:test unit test.");
+  const rowOf = (n) => `[...document.querySelectorAll('li')].find(li => li.innerText.includes('#${n}'))`;
+  const openIssues = async () => {
+    await h.key("g", { ctrl: true, shift: true });
+    await h.waitFor("Issues view", `return [...document.querySelectorAll('h1')].some(x => x.innerText === 'Issues')`, 10_000);
+  };
+  const press = async (n, label) => {
+    await h.waitFor(`issue #${n} listed`, `return !!(${rowOf(n)})`, 30_000);
+    await h.js(`(${rowOf(n)}).dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+    await h.waitFor(`${label} button`, `return !![...(${rowOf(n)}).querySelectorAll('button')].find(b => b.innerText.trim().startsWith(${JSON.stringify(label)}))`, 5000);
+    await h.js(`[...(${rowOf(n)}).querySelectorAll('button')].find(b => b.innerText.trim().startsWith(${JSON.stringify(label)})).click()`);
+    return h.until(`workspace for #${n}`, async () => (await h.invoke("list_workspaces")).find((w) => w.issueNumber === n), 60_000, 1000);
+  };
+
+  // Start: linked branch, the agent implements the issue, and Ship's PR closes it.
+  await openIssues();
+  await h.shot("gh-05-issues");
+  const built = await press(nStart, "Start");
+  if (!built.branch.includes(`${nStart}-`)) throw new Error(`branch not linked to the issue: ${built.branch}`);
+  await waitIdle(built.id);
+  await h.invoke("run_skill", { id: built.id, skillId: "shipkit:ship", args: "" });
+  await waitIdle(built.id, (await h.invoke("workspace_summary", { id: built.id })).lastTurnSeq);
+  const pr = await h.until("PR for the issue", () => gh(["pr", "view", built.branch, "--json", "body,files"]), 60_000);
+  if (!new RegExp(`(Closes|Fixes|Resolves) #${nStart}\\b`, "i").test(pr.body)) throw new Error(`PR body doesn't close #${nStart}: ${pr.body.slice(0, 200)}`);
+  if (!pr.files.some((f) => /CONTRIBUTING\.md$/i.test(f.path))) throw new Error("PR doesn't add CONTRIBUTING.md");
+
+  // Plan: read-only Planner writes a plan and changes nothing.
+  await openIssues();
+  const planned = await press(nPlan, "Plan");
+  if (planned.profile !== "shipkit:planner") throw new Error(`Plan used profile ${planned.profile}`);
+  await waitIdle(planned.id);
+  const changes = await h.invoke("workspace_changes", { id: planned.id });
+  if (changes.length) throw new Error(`Planner changed files: ${changes.map((c) => c.path)}`);
+  const plan = (await h.invoke("workspace_summary", { id: planned.id })).lastAssistantText ?? "";
+  if (plan.length < 200) throw new Error(`plan too thin: ${plan.slice(0, 200)}`);
+
+  for (const n of [nStart, nPlan]) gh(["issue", "close", String(n), "--reason", "not planned"]);
+});
+
 await h.step("preflight-flags-consumer", async () => {
   const ws = await ui.newWorkspace({ model: "haiku", prompt: "In lib.js, rename the exported function greet to welcome. Change only this repository. Do not commit." });
   await ui.waitTurn(0);

@@ -11,6 +11,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - `bun run dev` then open http://localhost:1420 — **UI-only mode with a mock backend** (`src/lib/mock.ts`). Fastest loop for UI work; verify visual changes here.
 - `bunx tsc --noEmit` — typecheck UI.
 - `bun run e2e` — drives the **real** desktop app (debug build + `bun run dev` running) via WebView2 remote debugging, with real agents in a scratch repo under `.e2e/` (isolated `ORBIT_HOME`). Add a step to `scripts/e2e.mjs` for every user-facing feature.
+- `bun run e2e:github` — opt-in GitHub e2e (Ship, CI, merge, Fix CI, issues, write-ticket, preflight) against a private sandbox repo (`ORBIT_GH_SANDBOX`, default `SGranquist13/orbit-e2e-sandbox`, whose CI fails if a `FAIL` file exists). Creates and closes real PRs/issues there.
 - **`PLANNING.md` holds feature ideas being discussed.** Record ideas there and iterate with the user; don't build them until they're agreed and moved to FEATURES.md.
 - **`FEATURES.md` is the source of truth for what's built.** Update its row when you build or verify a feature; only mark ✅ after it works in the real app.
 - Rust: `cmd //c "scripts\\cargo.cmd test"` (or `build`) from bash; it wraps the VS 2022 toolchain. Add `-- --include-ignored` for live tests against real agent CLIs.

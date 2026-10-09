@@ -64,7 +64,7 @@ export function Sidebar() {
         <NavItem
           icon={<CircleDot className="size-3.5" strokeWidth={2.5} />}
           label="Issues"
-          kbd="Ctrl Shift I"
+          kbd="Ctrl Shift G"
           active={view === "issues"}
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
         />
@@ -127,7 +127,7 @@ function Rail({ workspaces, needsYou }: { workspaces: Workspace[]; needsYou: num
         </button>
         <button
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
-          title="Issues (Ctrl Shift I)"
+          title="Issues (Ctrl Shift G)"
           className={cn(btn, view === "issues" && "bg-raised text-fg")}
         >
           <CircleDot className="size-3.5" strokeWidth={2.5} />

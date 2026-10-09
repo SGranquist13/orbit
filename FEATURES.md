@@ -11,7 +11,7 @@ What you want the IDE to do, and the honest state of each feature. **Edit the Pr
 
 **Priority:** P1 = core to "drive a fleet of agents and ship", P2 = important, P3 = nice to have.
 
-_Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex default, local repo without a remote)._
+_Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
 
 ## Fleet & workspaces
 
@@ -32,7 +32,7 @@ _Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex defa
 | Inbox: inline reply, Open (Enter), Dismiss (E; comes back on new activity), j/k navigation | P1 | ✅ | Dismiss + keys verified in e2e |
 | Inbox "All" tab: every workspace and what it is doing (replaces the planned fleet board) | P1 | 🟢 | Verified in mock UI |
 | Seen/dismissed state persisted across restarts | P1 | 🟢 | Unit-tested (`db::tests`) |
-| Inbox: snooze a row (S = 1 hour, or menu: tomorrow 9:00, next week); snoozed rows show in All | P3 | 🟢 | Unit-tested (`snoozed_until` migration + round trip); e2e step `inbox-snooze` written, not yet run |
+| Inbox: snooze a row (S = 1 hour, or menu: tomorrow 9:00, next week); snoozed rows show in All | P3 | ✅ | e2e `inbox-snooze`: snoozed row leaves Needs you, unsnoozed it returns |
 | Inbox: focus stays on the same index (next row) after dismiss / snooze / send | P3 | 🟢 | Mock UI only |
 | Archived workspaces list / restore | P3 | ⬜ | |
 | Settings UI (branch prefix, default agent/model, worktree location) | P2 | ⬜ | Stored settings exist; no UI |
@@ -93,17 +93,18 @@ _Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex defa
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Ship panel: "no PR yet" state + Ship button | P1 | ✅ | |
-| PR card: state, checks (pass/fail/pending, failing names), review decision | P1 | 🟢 | Parser unit-tested; never run against a real PR |
-| Fix CI / Address comments / Rebase / Push updates buttons | P1 | 🟢 | Each runs the matching shipkit skill; Rebase verified |
-| Ready for review / Squash & merge (with confirm, gated on green checks) | P1 | 🟢 | Not run against a real PR |
-| `/shipkit:ship` end to end: commit, push, draft PR | P1 | 🟢 | Needs a test GitHub repo to verify |
+| PR card: state, checks (pass/fail/pending, failing names), review decision | P1 | ✅ | GitHub e2e: draft PR card, green checks dot (third-party checks like CodeRabbit handled) |
+| Fix CI / Address comments / Rebase / Push updates buttons | P1 | 🟡 | Fix CI verified on real GitHub (from the inbox); Address comments not yet exercised |
+| Ready for review / Squash & merge (with confirm, gated on green checks) | P1 | ✅ | GitHub e2e: draft → ready → squash-merged through the panel buttons |
+| `/shipkit:ship` end to end: commit, push, draft PR | P1 | ✅ | GitHub e2e (~20s on haiku) |
+| `/shipkit:fix-ci`: syncs the branch, reads failing logs, fixes, pushes | P1 | ✅ | GitHub e2e: a teammate's stray commit breaks CI; one click on Fix CI in the inbox turns it green |
 | PR status auto-refresh while checks run | P2 | 🟢 | |
-| GitHub Issues panel per repo (Ctrl+Shift+I): search, labels, comment count, j/k, Start (Enter) / Plan (P) | P1 | 🟢 | `gh issue list` parser unit-tested; UI verified in mock; not run against real GitHub |
+| GitHub Issues panel per repo (Ctrl+Shift+G): search, labels, comment count, j/k, Start (Enter) / Plan (P) | P1 | ✅ | GitHub e2e lists real issues and starts/plans from them |
 | New ticket dialog (notes → Ticket writer workspace running `/shipkit:write-ticket`) | P1 | 🟢 | Mock only |
-| Start a workspace from an issue (branch `<n>-slug`, issue context, `Closes #n`); `start_issue` runs `/shipkit:start-issue` | P1 | 🟢 | Backend compiled, UI in mock; not run against real GitHub |
+| Start a workspace from an issue (branch `<n>-slug`, issue context, `Closes #n`); Start runs `/shipkit:start-issue`, Plan asks a read-only Planner for a plan | P1 | ✅ | GitHub e2e: Start → implemented + shipped PR with `Closes #n`; Plan → plan written, zero file changes |
 | `#n` chip in the workspace header opens the linked issue (`issue_url` via `gh issue view`) | P2 | 🟢 | Not run against real GitHub |
-| `/shipkit:write-ticket` (notes → formatted GH issue) | P1 | 🟢 | Skill exists; not run against GitHub |
-| `/shipkit:preflight`: pre-ship spot check of boundary changes; searches this repo and attached folders for consumers; Safe/Risky/Breaking report | P1 | 🟢 | Skill written and pinned by default; needs a real cross-project run |
+| `/shipkit:write-ticket` (notes → formatted GH issue) | P1 | ✅ | GitHub e2e files a real issue |
+| `/shipkit:preflight`: pre-ship spot check of boundary changes; searches this repo and attached folders for consumers; Safe/Risky/Breaking report | P1 | ✅ | e2e: renaming an export is reported Breaking with the consumer's file:line and an alias fix (even on haiku) |
 
 ## UI & look
 
@@ -130,7 +131,8 @@ _Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex defa
 | Windows desktop app (Tauri 2) | P1 | ✅ | Built with the VS 2022 toolchain (`bun run app`) |
 | Installer (`bun run app:build`) | P2 | 🟢 | Never run |
 | UI mock mode for design iteration (`bun run dev`) | P1 | ✅ | Same components as the real app; fake data |
-| Real-app e2e (`bun run e2e`) | P1 | ✅ | Needs `bun run dev` running and a debug build |
+| Real-app e2e (`bun run e2e`) | P1 | ✅ | Needs `bun run dev` running and a debug build; shares `scripts/e2e-harness.mjs` |
+| GitHub e2e (`bun run e2e:github`): real PRs, CI, merge, issues in a private sandbox (`ORBIT_GH_SANDBOX`) | P1 | ✅ | Opt-in; creates and closes PRs/issues in the sandbox |
 | Rust unit tests incl. recorded agent fixtures | P1 | ✅ | 28 passing + 3 opt-in live tests |
 | macOS / Linux | P3 | 💭 | Tauri supports them; untested |
 

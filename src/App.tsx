@@ -38,7 +38,8 @@ export default function App() {
       } else if (key === "k") {
         e.preventDefault();
         s.setPaletteOpen(!s.paletteOpen);
-      } else if (key === "i" && e.shiftKey) {
+      } else if (key === "g" && e.shiftKey) {
+        // Not Ctrl+Shift+I: WebView2 reserves it for DevTools in dev builds.
         e.preventDefault();
         s.setView(s.view === "issues" ? "workspace" : "issues");
       } else if (key === "i") {
