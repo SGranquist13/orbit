@@ -8,8 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "app": "scripts\\tauri.cmd dev",
-    "app:build": "scripts\\tauri.cmd build",
+    "app": "scripts/tauri.cmd dev",
+    "app:build": "scripts/tauri.cmd build",
     "e2e": "node scripts/e2e.mjs .e2e",
     "e2e:github": "node scripts/e2e-github.mjs .e2e-github"
   },
