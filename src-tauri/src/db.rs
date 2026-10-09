@@ -300,6 +300,40 @@ impl Db {
         Ok(())
     }
 
+    pub fn clear_agent_session(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE workspaces SET agent_session_id = NULL WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// `Usage` and `SessionReset` events (one workspace, or all of them), in seq order.
+    /// Payloads are serde-tagged, so a prefix LIKE finds them without parsing every event.
+    pub fn usage_rows(&self, workspace_id: Option<&str>) -> anyhow::Result<Vec<crate::usage::Row>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT workspace_id, ts, payload FROM events
+             WHERE (?1 IS NULL OR workspace_id = ?1)
+               AND (payload LIKE '{\"type\":\"usage\"%' OR payload LIKE '{\"type\":\"sessionReset\"%')
+             ORDER BY seq",
+        )?;
+        let rows = stmt.query_map([workspace_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (workspace_id, ts, payload) = row?;
+            if let Ok(event) = serde_json::from_str(&payload) {
+                out.push(crate::usage::Row { workspace_id, ts, event });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every workspace, archived or not, so usage history survives archiving.
+    pub fn all_workspaces(&self) -> anyhow::Result<Vec<Workspace>> {
+        let mut stmt = self.conn.prepare("SELECT * FROM workspaces")?;
+        let rows = stmt.query_map([], workspace_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     fn last_seq(&self, id: &str) -> anyhow::Result<i64> {
         Ok(self
             .conn
@@ -522,6 +556,55 @@ mod tests {
         assert_eq!(db.set_snoozed("w", 1_700_000_000_000).unwrap().snoozed_until, 1_700_000_000_000);
         assert_eq!(db.set_status("w", "done").unwrap().snoozed_until, 1_700_000_000_000);
         assert_eq!(db.set_snoozed("w", 0).unwrap().snoozed_until, 0);
+    }
+
+    #[test]
+    fn usage_rows_and_session_clear() {
+        let db = Db::memory();
+        db.insert_repo(&Repo { id: "r".into(), name: "r".into(), path: "/r".into(), base_branch: "main".into() })
+            .unwrap();
+        let mk = |id: &str| Workspace {
+            id: id.into(),
+            repo_id: "r".into(),
+            name: id.into(),
+            branch: "b".into(),
+            path: "/w".into(),
+            agent: "claude".into(),
+            model: None,
+            status: "idle".into(),
+            agent_session_id: None,
+            issue_number: None,
+            created_at: 0,
+            updated_at: 0,
+            seen_seq: 0,
+            dismissed_seq: 0,
+            profile: None,
+            snoozed_until: 0,
+        };
+        db.insert_workspace(&mk("w")).unwrap();
+        db.insert_workspace(&mk("x")).unwrap();
+        let usage = AgentEvent::Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_read_tokens: 3,
+            cache_write_tokens: 4,
+            context_tokens: Some(5),
+            context_window: Some(100),
+            cost_usd: Some(0.1),
+            model: None,
+        };
+        db.append_event("w", &AgentEvent::Message { text: "noise".into() }).unwrap();
+        db.append_event("w", &usage).unwrap();
+        db.append_event("w", &AgentEvent::SessionReset).unwrap();
+        db.append_event("x", &usage).unwrap();
+        assert_eq!(db.usage_rows(Some("w")).unwrap().len(), 2);
+        assert_eq!(db.usage_rows(None).unwrap().len(), 3);
+        let u = crate::usage::workspace_usage("w", &db.usage_rows(Some("w")).unwrap().iter().collect::<Vec<_>>());
+        assert_eq!((u.total.turns, u.session.turns, u.context_tokens), (1, 0, None));
+
+        db.set_agent_session("w", "s1").unwrap();
+        db.clear_agent_session("w").unwrap();
+        assert_eq!(db.workspace("w").unwrap().agent_session_id, None);
     }
 
     #[test]

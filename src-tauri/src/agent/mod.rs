@@ -53,6 +53,21 @@ pub enum AgentEvent {
         #[serde(default)]
         interrupted: bool,
     },
+    /// Tokens and cost of the turn that just ended, plus how full the context window is.
+    /// Emitted right before that turn's `TurnCompleted`.
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        /// Current context size (what the next request will carry), not the turn total.
+        context_tokens: Option<u64>,
+        context_window: Option<u64>,
+        cost_usd: Option<f64>,
+        model: Option<String>,
+    },
+    /// The user started a fresh agent session in this workspace; earlier context is gone.
+    SessionReset,
     Error { message: String },
     Exited { code: Option<i32>, stderr: String },
 }
@@ -82,6 +97,9 @@ pub struct SessionConfig {
 
 pub enum Command {
     User(String),
+    /// Summarise the conversation to free context. Claude takes the `/compact` slash command
+    /// as a user message; Codex has a dedicated JSON-RPC method.
+    Compact,
     Interrupt,
     Shutdown,
 }

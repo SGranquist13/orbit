@@ -4,6 +4,7 @@ mod gh;
 mod git;
 mod related;
 mod skills;
+mod usage;
 
 use agent::{AgentEvent, AgentKind, Command, SessionConfig, SessionHandle};
 use db::{Attachment, Db, Repo, StoredEvent, Workspace};
@@ -663,6 +664,84 @@ fn interrupt(state: State<AppState>, id: String) {
     }
 }
 
+/// Frees context by summarising the conversation (Claude: `/compact`; Codex: `thread/compact/start`).
+#[tauri::command]
+async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
+    let ws = state.db().workspace(&id).map_err(err)?;
+    if ws.status == "running" {
+        return Err("Wait for the current turn to finish before compacting".into());
+    }
+    if ws.agent_session_id.is_none() {
+        return Err("Nothing to compact yet".into());
+    }
+    on_agent_event(&app, &state, &id, AgentEvent::UserMessage { text: "/compact".into(), skill: None });
+    let handle = ensure_session(&app, &state, &ws).map_err(err)?;
+    if !handle.send(Command::Compact) {
+        state.sessions.lock().unwrap().remove(&id);
+        ensure_session(&app, &state, &ws).map_err(err)?.send(Command::Compact);
+    }
+    // Claude runs `/compact` as a turn (status follows its events); Codex's compaction has no
+    // turn/started, so only mark Claude as running.
+    if ws.agent == "claude" {
+        let ws = state.db().set_status(&id, "running").map_err(err)?;
+        emit_workspace(&app, &ws);
+    }
+    Ok(())
+}
+
+/// Drops the agent session so the next message starts from a clean context in the same worktree.
+#[tauri::command]
+fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
+    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+        h.send(Command::Shutdown);
+    }
+    let ws = {
+        let db = state.db();
+        db.clear_agent_session(&id).map_err(err)?;
+        db.set_status(&id, "idle").map_err(err)?
+    };
+    state.role_notices.lock().unwrap().remove(&id);
+    on_agent_event(&app, &state, &id, AgentEvent::SessionReset);
+    emit_workspace(&app, &ws);
+    Ok(())
+}
+
+#[tauri::command]
+fn workspace_usage(state: State<AppState>, id: String) -> CmdResult<usage::WorkspaceUsage> {
+    let rows = state.db().usage_rows(Some(&id)).map_err(err)?;
+    Ok(usage::workspace_usage(&id, &rows.iter().collect::<Vec<_>>()))
+}
+
+/// Usage of every workspace in one call, so the app can seed its live map at startup.
+#[tauri::command]
+fn all_workspace_usage(state: State<AppState>) -> CmdResult<Vec<usage::WorkspaceUsage>> {
+    let (rows, workspaces) = {
+        let db = state.db();
+        (db.usage_rows(None).map_err(err)?, db.all_workspaces().map_err(err)?)
+    };
+    Ok(workspaces
+        .iter()
+        .map(|w| {
+            let mine: Vec<&usage::Row> = rows.iter().filter(|r| r.workspace_id == w.id).collect();
+            usage::workspace_usage(&w.id, &mine)
+        })
+        .filter(|u| u.total.turns > 0)
+        .collect())
+}
+
+#[tauri::command]
+fn usage_report(state: State<AppState>, since_ms: Option<i64>) -> CmdResult<usage::Report> {
+    let (rows, workspaces) = {
+        let db = state.db();
+        (db.usage_rows(None).map_err(err)?, db.all_workspaces().map_err(err)?)
+    };
+    let infos: Vec<usage::WorkspaceInfo> = workspaces
+        .into_iter()
+        .map(|w| usage::WorkspaceInfo { id: w.id, name: w.name, agent: w.agent })
+        .collect();
+    Ok(usage::report(&rows, &infos, since_ms, db::now()))
+}
+
 #[tauri::command]
 fn stop_session(state: State<AppState>, id: String) {
     if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
@@ -835,6 +914,11 @@ pub fn run() {
             send_message,
             interrupt,
             stop_session,
+            compact_session,
+            new_session,
+            workspace_usage,
+            all_workspace_usage,
+            usage_report,
             load_events,
             workspace_changes,
             archive_workspace,

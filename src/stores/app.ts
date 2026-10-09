@@ -15,7 +15,9 @@ import {
   type StoredEvent,
   type Summary,
   type Workspace,
+  type WorkspaceUsage,
 } from "../lib/ipc";
+import { applyUsage } from "../lib/usage";
 
 export type View = "workspace" | "inbox" | "issues";
 
@@ -30,6 +32,8 @@ interface AppState {
   changes: Record<string, FileChange[]>;
   /** Live digest of each workspace's event log; drives unread dots and the inbox. */
   summaries: Record<string, Summary>;
+  /** Token/cost/context digest per workspace, kept current from `usage` events. */
+  usage: Record<string, WorkspaceUsage>;
   view: View;
   /** undefined = not fetched yet, null = no PR for the branch. */
   prs: Record<string, PrStatus | null | undefined>;
@@ -61,6 +65,10 @@ interface AppState {
   select: (id: string | null) => void;
   setView: (view: View) => void;
   dismiss: (id: string) => Promise<void>;
+  /** Summarise the conversation to free context. */
+  compactSession: (id: string) => Promise<void>;
+  /** Start a fresh agent session (same worktree); the old context is dropped. */
+  newSession: (id: string) => Promise<void>;
   addRepo: (path: string) => Promise<Repo>;
   refreshChanges: (id: string) => Promise<void>;
   refreshPr: (id: string) => Promise<void>;
@@ -117,6 +125,7 @@ export const useApp = create<AppState>((set, get) => ({
   live: {},
   changes: {},
   summaries: {},
+  usage: {},
   view: "workspace",
   prs: {},
   attachments: {},
@@ -141,6 +150,10 @@ export const useApp = create<AppState>((set, get) => ({
     initialized = true;
     const [repos, workspaces, sums] = await Promise.all([api.listRepos(), api.listWorkspaces(), api.workspaceSummaries()]);
     set({ repos, workspaces, summaries: Object.fromEntries(sums.map((x) => [x.workspaceId, x])) });
+    api
+      .allWorkspaceUsage()
+      .then((list) => set({ usage: Object.fromEntries(list.map((u) => [u.workspaceId, u])) }))
+      .catch(() => {});
     await events.onWorkspace((ws) => get().upsertWorkspace(ws));
     await events.onAgentEvent(onAgentEvent);
     for (const ws of workspaces) void get().refreshChanges(ws.id);
@@ -176,6 +189,22 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const dismissedSeq = await api.dismissWorkspace(id);
       patchWorkspace(id, { dismissedSeq });
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  compactSession: async (id) => {
+    try {
+      await api.compactSession(id);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  newSession: async (id) => {
+    try {
+      await api.newSession(id);
     } catch (e) {
       get().setError(String(e));
     }
@@ -380,6 +409,11 @@ function foldSummary(prev: Summary | undefined, id: string, seq: number | null, 
   return next;
 }
 
+function patchUsage(all: Record<string, WorkspaceUsage>, id: string, event: AgentEvent) {
+  const next = applyUsage(all[id], id, event);
+  return next && next !== all[id] ? { ...all, [id]: next } : all;
+}
+
 function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
   const { getState: get, setState: set } = useApp;
   if (event.type === "textDelta") {
@@ -394,6 +428,7 @@ function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
       transcripts: loaded && seq !== null ? { ...s.transcripts, [id]: [...loaded, { seq, ts, event }] } : s.transcripts,
       live: clearsLive ? { ...s.live, [id]: "" } : s.live,
       summaries: { ...s.summaries, [id]: foldSummary(s.summaries[id], id, seq, ts, event) },
+      usage: patchUsage(s.usage, id, event),
     };
   });
   // The workspace the user is looking at never counts as unread.

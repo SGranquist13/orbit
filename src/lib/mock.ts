@@ -2,7 +2,7 @@
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AgentEvent, Attachment, FileChange, Issue, Pack, PrStatus, Profile, Related, Repo, Skill, StoredEvent, Summary, Workspace } from "./ipc";
+import type { AgentEvent, Attachment, FileChange, Issue, Pack, PrStatus, Profile, Related, Repo, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -80,6 +80,10 @@ const transcript: StoredEvent[] = [
   }),
   e({ type: "toolCall", id: "t4", name: "Edit", input: { file_path: "src/onboarding/submit.ts" } }),
   e({ type: "toolResult", id: "t4", output: "ok", isError: false }),
+  e({
+    type: "usage", inputTokens: 38, outputTokens: 3400, cacheReadTokens: 252_000, cacheWriteTokens: 16_000,
+    contextTokens: 170_000, contextWindow: 200_000, costUsd: 0.214, model: "claude-opus-4",
+  }),
   e({ type: "turnCompleted", durationMs: 74000, costUsd: 0.214, isError: false, error: null }),
   e({ type: "userMessage", text: "mention the slug fallback", skill: "shipkit:ship" }),
   e({ type: "toolCall", id: "t5", name: "Bash", input: { command: "git push -u origin HEAD" } }),
@@ -156,6 +160,64 @@ const suggested: Related[] = [
 ];
 const relatedDefaults: Record<string, string[]> = { r1: ["C:/code/shared-ui"] };
 
+const totals = (inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, turns: number): UsageTotals => ({
+  inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, turns,
+});
+// w1 sits at 85% of its window (warn state); w2 is Codex (no cost); w4 has never reported usage.
+const usageByWs: Record<string, WorkspaceUsage> = {
+  w1: { workspaceId: "w1", total: totals(180, 21_400, 1_450_000, 96_000, 1.42, 7), session: totals(180, 21_400, 1_450_000, 96_000, 1.42, 7), contextTokens: 170_000, contextWindow: 200_000, model: "claude-opus-4" },
+  w2: { workspaceId: "w2", total: totals(61_000, 9_800, 410_000, 0, 0, 4), session: totals(61_000, 9_800, 410_000, 0, 0, 4), contextTokens: 98_000, contextWindow: 258_400, model: "gpt-6.1-sol" },
+  w3: { workspaceId: "w3", total: totals(90, 6_100, 380_000, 41_000, 0.61, 3), session: totals(90, 6_100, 380_000, 41_000, 0.61, 3), contextTokens: 44_000, contextWindow: 200_000, model: "claude-opus-4" },
+};
+const sumTokens = (t: UsageTotals) => t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
+
+function mockReport(sinceMs: number | null): UsageReport {
+  const span = sinceMs === null ? 1 : Math.min(1, Math.max(0.1, (now - sinceMs) / (30 * 86_400_000)) * 3);
+  const scale = (t: UsageTotals): UsageTotals => totals(
+    Math.round(t.inputTokens * span), Math.round(t.outputTokens * span), Math.round(t.cacheReadTokens * span),
+    Math.round(t.cacheWriteTokens * span), t.costUsd * span, Math.max(1, Math.round(t.turns * span)),
+  );
+  const rows = Object.values(usageByWs).map((u) => {
+    const w = workspaces.find((x) => x.id === u.workspaceId)!;
+    return { workspaceId: w.id, name: w.name, agent: w.agent, total: scale(u.total), contextTokens: u.contextTokens, contextWindow: u.contextWindow };
+  });
+  const sum = (list: UsageTotals[]) => list.reduce((a, t) => totals(
+    a.inputTokens + t.inputTokens, a.outputTokens + t.outputTokens, a.cacheReadTokens + t.cacheReadTokens,
+    a.cacheWriteTokens + t.cacheWriteTokens, a.costUsd + t.costUsd, a.turns + t.turns,
+  ), totals(0, 0, 0, 0, 0, 0));
+  const agents = (["claude", "codex"] as const).map((agent) => ({ agent, total: sum(rows.filter((r) => r.agent === agent).map((r) => r.total)) }));
+  const shape = [0.2, 0.5, 0.9, 0.3, 0, 0, 0.6, 1, 0.7, 0.4, 0.85, 0.5, 0.35, 0.8];
+  const grand = sumTokens(sum(Object.values(usageByWs).map((u) => u.total)));
+  const byDay = shape.map((f, i) => {
+    const d = new Date(now - (13 - i) * 86_400_000);
+    return { day: d.toISOString().slice(0, 10), tokens: Math.round((grand / 7) * f), costUsd: Math.round(f * 20) / 10 };
+  });
+  return { totals: sum(rows.map((r) => r.total)), byWorkspace: rows.sort((a, b) => sumTokens(b.total) - sumTokens(a.total)), byAgent: agents, byDay };
+}
+
+function emitAgentEvent(workspaceId: string, event: AgentEvent) {
+  void emit("agent-event", { workspaceId, seq: ++seq, ts: Date.now(), event });
+}
+
+/** Compaction drops the context to a summary; the mock reports it as a quick turn. */
+function mockCompact(id: string) {
+  emitAgentEvent(id, { type: "userMessage", text: "/compact" });
+  emitAgentEvent(id, { type: "turnStarted" });
+  setTimeout(() => {
+    const u = usageByWs[id];
+    emitAgentEvent(id, {
+      type: "usage", inputTokens: 12, outputTokens: 1800, cacheReadTokens: 160_000, cacheWriteTokens: 3_000,
+      contextTokens: 9_000, contextWindow: u?.contextWindow ?? 200_000, costUsd: u?.total.costUsd ? 0.09 : null, model: u?.model ?? "claude-opus-4",
+    });
+    emitAgentEvent(id, { type: "turnCompleted", durationMs: 9000, costUsd: u?.total.costUsd ? 0.09 : null, isError: false, error: null });
+    if (u) {
+      u.contextTokens = 9_000;
+      u.total = totals(u.total.inputTokens + 12, u.total.outputTokens + 1800, u.total.cacheReadTokens + 160_000, u.total.cacheWriteTokens + 3_000, u.total.costUsd + 0.09, u.total.turns + 1);
+      u.session = u.total;
+    }
+  }, 900);
+}
+
 export function installMockBackend() {
   mockIPC(
     async (cmd, args) => {
@@ -201,6 +263,24 @@ export function installMockBackend() {
           const w = workspaces.find((x) => x.id === id)!;
           w.snoozedUntil = (args as { until: number }).until;
           return { ...w };
+        }
+        case "all_workspace_usage":
+          return Object.values(usageByWs);
+        case "workspace_usage":
+          return usageByWs[id] ?? null;
+        case "usage_report":
+          return mockReport((args as { sinceMs: number | null }).sinceMs);
+        case "compact_session":
+          mockCompact(id);
+          return null;
+        case "new_session": {
+          const u = usageByWs[id];
+          if (u) {
+            u.session = totals(0, 0, 0, 0, 0, 0);
+            u.contextTokens = null;
+          }
+          emitAgentEvent(id, { type: "sessionReset" });
+          return null;
         }
         case "get_pins":
           return ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];

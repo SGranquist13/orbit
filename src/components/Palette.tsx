@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { AlarmClock, CircleDot, Focus, UserRound, FolderPlus, FolderSymlink, Inbox, Package, PanelLeft, Plus, Rocket, Sparkles, Zap } from "lucide-react";
+import { AlarmClock, CircleDot, Focus, UserRound, FolderPlus, FolderSymlink, Inbox, Minimize2, RotateCcw, Package, PanelLeft, Plus, Rocket, Sparkles, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
@@ -77,6 +77,20 @@ export function Palette() {
                 </Command.Item>
                 <Command.Item className={item} onSelect={run(() => useApp.getState().setRelatedOpen(true))}>
                   <Sparkles className="size-3.5" /> Find related projects
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Compact context (summarise the conversation)"
+                  onSelect={run(() => void useApp.getState().compactSession(selectedId))}
+                >
+                  <Minimize2 className="size-3.5" /> Compact context
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="New session (clear context)"
+                  onSelect={run(() => void useApp.getState().newSession(selectedId))}
+                >
+                  <RotateCcw className="size-3.5" /> New session
                 </Command.Item>
               </>
             )}

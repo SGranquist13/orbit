@@ -28,8 +28,9 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { activeProfile, api, type Attachment, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
-import { fold, formatDuration, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
+import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
 import { useApp } from "../stores/app";
+import { ContextMeter } from "./ContextMeter";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -348,9 +349,18 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
           ) : (
             <>
               {block.durationMs !== null && <span>{formatDuration(block.durationMs)}</span>}
-              {block.costUsd !== null && <span>${block.costUsd.toFixed(3)}</span>}
+              {block.tokens !== null && <span>{formatTokens(block.tokens)} tok</span>}
+              {block.costUsd !== null && <span>{formatCost(block.costUsd)}</span>}
             </>
           )}
+          <span className="dither-rule flex-1 bg-line-strong" />
+        </div>
+      );
+    case "sessionReset":
+      return (
+        <div className="flex items-center gap-3 text-[11px] font-medium text-mute">
+          <span className="dither-rule flex-1 bg-line-strong" />
+          <span>New session, context cleared</span>
           <span className="dither-rule flex-1 bg-line-strong" />
         </div>
       );
@@ -678,6 +688,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
             <ProfileMenu ws={ws} running={running} />
           </span>
           <span className="flex-1" />
+          <ContextMeter ws={ws} running={running} />
           {running && (
             <span className="flex items-center gap-1.5 text-[11px] text-mute">
               <Kbd>Esc</Kbd> to interrupt
