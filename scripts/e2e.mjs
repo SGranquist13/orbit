@@ -24,7 +24,7 @@ const repo = path.join(scratch, "repo");
 
 const DOM = `
   const text = () => document.body.innerText;
-  const userBlocks = () => [...document.querySelectorAll('.bg-fg.text-bg')].map(e => e.innerText);
+  const userBlocks = () => [...document.querySelectorAll('[data-user-message]')].map(e => e.innerText);
   const sidebarRow = (name) => [...document.querySelectorAll('aside li button')].find(b => b.innerText.includes(name));
 `;
 
@@ -127,7 +127,7 @@ await step("slash-autocomplete-and-skill", async () => {
     t.dispatchEvent(new Event('input', { bubbles: true }));`);
   const before = await js(turnEnds);
   await js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'REBASE').click()`);
-  await waitFor("skill chip in transcript", `return [...document.querySelectorAll('.bg-fg.text-bg')].some(e => e.innerText.includes('/shipkit:rebase'))`, 10_000);
+  await waitFor("skill chip in transcript", `return [...document.querySelectorAll('[data-user-message]')].some(e => e.innerText.includes('/shipkit:rebase'))`, 10_000);
   await waitFor("skill turn completed", `${turnEnds} > ${before}`, 180_000);
   await shot("05-skill");
 });

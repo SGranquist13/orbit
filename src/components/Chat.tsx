@@ -315,9 +315,9 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
     case "user":
       return (
         <div className="flex justify-end">
-          <div className="selectable max-w-[85%] whitespace-pre-wrap rounded-[4px] bg-fg px-3.5 py-2.5 text-[14px] font-medium leading-relaxed text-bg shadow-hard-sm">
+          <div data-user-message className="selectable max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[5px] border border-line bg-hover px-4 py-2.5 text-[14px] leading-relaxed text-fg">
             {block.skill && (
-              <span className="mr-1.5 inline-flex items-center gap-1 rounded-[3px] bg-bg px-1.5 py-px align-[1px] text-[11.5px] font-semibold text-fg">
+              <span className="mr-1.5 inline-flex items-center gap-1 rounded-[6px] border border-line-strong/60 bg-raised px-1.5 py-px align-[1px] text-[11.5px] font-medium text-dim">
                 <Zap className="size-3" />/{block.skill}
               </span>
             )}
