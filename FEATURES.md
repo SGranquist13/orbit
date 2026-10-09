@@ -34,9 +34,13 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Seen/dismissed state persisted across restarts | P1 | 🟢 | Unit-tested (`db::tests`) |
 | Inbox: snooze a row (S = 1 hour, or menu: tomorrow 9:00, next week); snoozed rows show in All | P3 | ✅ | e2e `inbox-snooze`: snoozed row leaves Needs you, unsnoozed it returns |
 | Inbox: focus stays on the same index (next row) after dismiss / snooze / send | P3 | 🟢 | Mock UI only |
-| Archived workspaces list / restore | P3 | ⬜ | |
-| Settings UI (branch prefix, default agent/model, worktree location) | P2 | ⬜ | Stored settings exist; no UI |
-| Worktree cleanup for merged branches | P3 | ⬜ | |
+| Archived workspaces list / restore (Settings > Data); recreates the worktree on the existing branch if it was removed | P3 | 🟢 | Verified in mock UI; restore logic is Rust, not yet run against a real repo |
+| **Settings page** (gear in sidebar, Ctrl+, , palette "Open settings"; Esc returns): left section nav, every change saves instantly with a "Saved" tick | P2 | 🟢 | Verified in mock UI. Typed settings blob in `settings.rs` (`get_settings` / `update_settings`), legacy keys still read |
+| Settings: general (theme, branch prefix with live example, default agent + per-agent model, notifications and only-when-unfocused) | P2 | 🟢 | Verified in mock UI; prefix, notifications and defaults are wired to workspace creation, `notify_turn_done`, New workspace / Issues / New ticket |
+| Settings: agent safety (Claude permission mode, Codex sandbox, extra model ids) and tool diagnostics (`environment_info`, Re-check) | P2 | 🟢 | Verified in mock UI; modes go through `SessionConfig` (args unit-tested), idle sessions restart on change; read-only profiles stay enforced |
+| Settings: GitHub merge method and delete remote branch after merge | P2 | 🟢 | Verified in mock UI; `gh pr merge --<method>` args unit-tested, remote ref deleted via `gh api` |
+| Settings: skills and profiles overview, pinned-skill reorder / unpin, inbox AI suggestions on/off + model, shortcuts reference, data folder, about | P2 | 🟢 | Verified in mock UI; suggestions off skips the Haiku call entirely |
+| Worktree cleanup for merged branches (Settings > Data: dry-run list, confirm, archives and removes clean worktrees, keeps branches) | P3 | 🟢 | Verified in mock UI; git/gh detection (`branch --merged`, PR MERGED) not yet run against a real repo |
 
 ## Agents & chat
 

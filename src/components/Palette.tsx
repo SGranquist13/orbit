@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { AlarmClock, CircleDot, Focus, UserRound, FolderPlus, FolderSymlink, Inbox, Minimize2, RotateCcw, Package, PanelLeft, Plus, Rocket, Sparkles, Zap } from "lucide-react";
+import { AlarmClock, CircleDot, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Sparkles, UserRound, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
@@ -94,6 +94,9 @@ export function Palette() {
                 </Command.Item>
               </>
             )}
+            <Command.Item className={item} onSelect={run(() => useApp.getState().openSettings())}>
+              <Settings className="size-3.5" /> Open settings
+            </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
               <Package className="size-3.5" /> Manage skill packs
             </Command.Item>

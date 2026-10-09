@@ -7,6 +7,7 @@ import { NewWorkspace } from "./components/NewWorkspace";
 import { Packs } from "./components/Packs";
 import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
+import { Settings } from "./components/Settings";
 import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
@@ -42,6 +43,10 @@ export default function App() {
         // Not Ctrl+Shift+I: WebView2 reserves it for DevTools in dev builds.
         e.preventDefault();
         s.setView(s.view === "issues" ? "workspace" : "issues");
+      } else if (e.key === ",") {
+        e.preventDefault();
+        if (s.view === "settings") s.closeSettings();
+        else s.openSettings();
       } else if (key === "i") {
         e.preventDefault();
         s.setView(s.view === "inbox" ? "workspace" : "inbox");
@@ -74,7 +79,9 @@ export default function App() {
   return (
     <div className="flex h-full">
       {!focusMode && <Sidebar />}
-      {view === "inbox" ? (
+      {view === "settings" ? (
+        <Settings />
+      ) : view === "inbox" ? (
         <Inbox />
       ) : view === "issues" ? (
         <Issues />

@@ -93,6 +93,10 @@ pub struct SessionConfig {
     pub instructions: Option<String>,
     /// Read-only role: the agent may not edit files (Claude file tools denied, Codex sandboxed).
     pub readonly: bool,
+    /// Claude permission mode for non-readonly sessions (`bypassPermissions` | `acceptEdits`).
+    pub permission_mode: String,
+    /// Codex sandbox for non-readonly sessions (`danger-full-access` | `workspace-write`).
+    pub sandbox: String,
 }
 
 pub enum Command {
@@ -109,6 +113,16 @@ pub type EventSink = Arc<dyn Fn(AgentEvent) + Send + Sync>;
 #[derive(Clone)]
 pub struct SessionHandle {
     tx: mpsc::UnboundedSender<Command>,
+    /// Distinguishes successive sessions of one workspace, so a late exit from an old process
+    /// can't evict the session that replaced it.
+    pub generation: u64,
+}
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Allocates the generation for the next `spawn` (callers need it before the sink exists).
+pub fn next_generation() -> u64 {
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl SessionHandle {
@@ -118,13 +132,13 @@ impl SessionHandle {
     }
 }
 
-pub fn spawn(cfg: SessionConfig, sink: EventSink) -> anyhow::Result<SessionHandle> {
+pub fn spawn(cfg: SessionConfig, generation: u64, sink: EventSink) -> anyhow::Result<SessionHandle> {
     let (tx, rx) = mpsc::unbounded_channel();
     match cfg.kind {
         AgentKind::Claude => claude::spawn(cfg, sink, rx)?,
         AgentKind::Codex => codex::spawn(cfg, sink, rx)?,
     }
-    Ok(SessionHandle { tx })
+    Ok(SessionHandle { tx, generation })
 }
 
 /// Keeps the last few stderr lines for error reporting on exit.

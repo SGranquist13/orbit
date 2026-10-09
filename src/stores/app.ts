@@ -11,6 +11,7 @@ import {
   type Profile,
   type Related,
   type Repo,
+  type Settings,
   type Skill,
   type StoredEvent,
   type Summary,
@@ -19,7 +20,7 @@ import {
 } from "../lib/ipc";
 import { applyUsage } from "../lib/usage";
 
-export type View = "workspace" | "inbox" | "issues";
+export type View = "workspace" | "inbox" | "issues" | "settings";
 
 interface AppState {
   repos: Repo[];
@@ -35,6 +36,10 @@ interface AppState {
   /** Token/cost/context digest per workspace, kept current from `usage` events. */
   usage: Record<string, WorkspaceUsage>;
   view: View;
+  /** The view to return to when settings closes. */
+  previousView: View;
+  /** Typed app settings; null until loaded (consumers fall back to defaults). */
+  settings: Settings | null;
   /** undefined = not fetched yet, null = no PR for the branch. */
   prs: Record<string, PrStatus | null | undefined>;
   /** Folders attached to each workspace (loaded when it is selected, refetched after changes). */
@@ -64,6 +69,10 @@ interface AppState {
   init: () => Promise<void>;
   select: (id: string | null) => void;
   setView: (view: View) => void;
+  openSettings: () => void;
+  closeSettings: () => void;
+  /** Saves a partial update immediately; resolves false (and sets the error) on failure. */
+  updateSettings: (patch: Partial<Settings>) => Promise<boolean>;
   dismiss: (id: string) => Promise<void>;
   /** Summarise the conversation to free context. */
   compactSession: (id: string) => Promise<void>;
@@ -127,6 +136,8 @@ export const useApp = create<AppState>((set, get) => ({
   summaries: {},
   usage: {},
   view: "workspace",
+  previousView: "workspace",
+  settings: null,
   prs: {},
   attachments: {},
   related: {},
@@ -158,12 +169,13 @@ export const useApp = create<AppState>((set, get) => ({
     await events.onAgentEvent(onAgentEvent);
     for (const ws of workspaces) void get().refreshChanges(ws.id);
     void get().loadSkills();
+    api.getSettings().then((settings) => set({ settings })).catch(() => {});
     const last = localStorage.getItem("selectedWorkspace");
     if (last && workspaces.some((w) => w.id === last)) get().select(last);
   },
 
   select: (id) => {
-    set({ selectedId: id, view: "workspace" });
+    set({ selectedId: id, view: "workspace", previousView: "workspace" });
     if (!id) return;
     void markSeen(id);
     localStorage.setItem("selectedWorkspace", id);
@@ -183,7 +195,24 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  setView: (view) => set({ view }),
+  setView: (view) => set((s) => ({ view, previousView: view === "settings" ? s.previousView : view })),
+
+  openSettings: () => set((s) => (s.view === "settings" ? s : { view: "settings", previousView: s.view })),
+  closeSettings: () => set((s) => (s.view === "settings" ? { view: s.previousView } : s)),
+
+  updateSettings: async (patch) => {
+    const before = get().settings;
+    // Optimistic so toggles feel instant; the validated copy from the backend replaces it.
+    if (before) set({ settings: { ...before, ...patch } });
+    try {
+      set({ settings: await api.updateSettings(patch) });
+      return true;
+    } catch (e) {
+      if (before) set({ settings: before });
+      get().setError(String(e));
+      return false;
+    }
+  },
 
   dismiss: async (id) => {
     try {

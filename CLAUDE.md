@@ -27,6 +27,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - Profiles: `shipkit/agents/*.md` (Claude agent format + Orbit keys `agent`, `readonly`, `skills`), listed by `skills::list_profiles`, appended to `workspace_context` as "Your role". Read-only is enforced, not just prompted (Claude: `--permission-mode default` + the `READONLY_ALLOW` allowlist; Codex: read-only sandbox). Switching profile queues a one-shot hand-over note (`role_notices`) for the next message.
 - Attachments (`related.rs`, `attachments` table): extra folders passed to Claude as `--add-dir` and listed in the context prompt; editable ones get their own worktree.
 - **Never call a helper that locks `db()` inside an expression that already holds `state.db()`.** `std::sync::Mutex` isn't reentrant, so the command deadlocks. Bind the result first.
+- `settings.rs` — typed app settings, one JSON blob under `settings.app_settings` (`get_settings` / `update_settings`; Ctrl+, opens the page). Add a field there, in `ipc.ts`, and in `src/components/settings/`; wire it to behaviour (no dead toggles). `maintenance.rs` holds `environment_info` and merged-worktree cleanup.
 - `gh.rs` — PR status/checks/merge via the `gh` CLI.
 - `lib.rs` — Tauri commands + `on_agent_event` (persist → update status → notify → emit `agent-event` / `workspace`).
 - `src/lib/ipc.ts` mirrors the Rust types; keep them in sync (serde uses camelCase).
