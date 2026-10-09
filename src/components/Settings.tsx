@@ -5,6 +5,7 @@ import { Agents } from "./settings/Agents";
 import { Section } from "./settings/controls";
 import { Data } from "./settings/Data";
 import { General } from "./settings/General";
+import { Mobile } from "./settings/Mobile";
 import { About, GitHub, InboxSettings, Shortcuts } from "./settings/sections";
 import { Skills } from "./settings/Skills";
 import { UsageSection } from "./settings/UsageSection";
@@ -15,6 +16,7 @@ const SECTIONS = [
   { id: "github", title: "GitHub", body: <GitHub /> },
   { id: "skills", title: "Skills & profiles", body: <Skills /> },
   { id: "inbox", title: "Inbox", body: <InboxSettings /> },
+  { id: "mobile", title: "Mobile", body: <Mobile />, description: "Watch and steer your workspaces from the Orbit phone app." },
   { id: "usage", title: "Usage", body: <UsageSection /> },
   { id: "data", title: "Data", body: <Data /> },
   { id: "shortcuts", title: "Keyboard shortcuts", body: <Shortcuts /> },

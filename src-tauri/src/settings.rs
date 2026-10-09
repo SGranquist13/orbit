@@ -36,6 +36,10 @@ pub struct Settings {
     // inbox
     pub ai_suggestions: bool,
     pub suggestion_model: String,
+    // mobile bridge
+    pub remote_enabled: bool,
+    pub remote_port: u16,
+    pub remote_push: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +59,9 @@ impl Default for Settings {
             delete_branch_on_merge: false,
             ai_suggestions: true,
             suggestion_model: "haiku".into(),
+            remote_enabled: false,
+            remote_port: crate::remote::server::DEFAULT_PORT,
+            remote_push: true,
         }
     }
 }
@@ -105,6 +112,9 @@ impl Settings {
         check("mergeMethod", &self.merge_method, MERGE_METHODS)?;
         check("suggestionModel", &self.suggestion_model, SUGGESTION_MODELS)?;
         check("defaultAgent", &self.default_agent, AGENTS)?;
+        if self.remote_port < 1024 {
+            return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
+        }
         self.branch_prefix = normalize_prefix(&self.branch_prefix);
         self.extra_models_claude = normalize_models(&self.extra_models_claude);
         self.extra_models_codex = normalize_models(&self.extra_models_codex);
@@ -179,6 +189,10 @@ mod tests {
         assert!(d.patched(&json!({ "defaultAgent": "gemini" })).is_err());
         assert!(d.patched(&json!({ "notifications": "yes" })).is_err());
         assert!(d.patched(&json!("nope")).is_err());
+        assert!(d.patched(&json!({ "remotePort": 80 })).is_err());
+        assert!(d.patched(&json!({ "remotePort": 70000 })).is_err());
+        assert_eq!(d.patched(&json!({ "remotePort": 50000, "remoteEnabled": true })).unwrap().remote_port, 50000);
+        assert!(!d.remote_enabled && d.remote_push && d.remote_port == 47821);
         // Unknown keys are ignored rather than stored.
         assert!(d.patched(&json!({ "bogus": 1 })).is_ok());
     }

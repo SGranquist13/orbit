@@ -159,6 +159,14 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Rust unit tests incl. recorded agent fixtures | P1 | ✅ | 30 passing + 3 opt-in live tests |
 | macOS / Linux | P3 | 💭 | Tauri supports them; untested |
 
+## Mobile bridge (phone app, branch feat/mobile-bridge)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| Encrypted WebSocket bridge (`src-tauri/src/remote/`): handshake, NaCl box frames, RPC allowlist (snapshot, events, send, interrupt, markSeen, registerPush), live event + workspace mirroring | P2 | 🟢 | Protocol in `ide_mobile/docs/protocol.md`. Tested with a fake backend and real WebSocket clients (pair, auth, bad/expired/replayed code, unknown device, revoke) and a tweetnacl vector; not yet run against the real phone app |
+| Settings > Mobile: allow connections, port, status + addresses (Tailscale first), pairing QR with countdown, paired phones + Revoke, push toggle; palette "Pair a phone" | P2 | 🟢 | Verified in mock UI; `remote_status` / `remote_pairing` / `remote_devices` / `remote_revoke` not yet exercised in the real app |
+| Push notification on finished turn (Expo; name + status only) | P3 | 🟢 | Body builder unit-tested; real delivery needs the phone app and an Expo token |
+
 ## Mock vs real
 
 The mock (`bun run dev` in a browser) renders the **same components** as the real app, so styling matches exactly. The differences are all in the data:

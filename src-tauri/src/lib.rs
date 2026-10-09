@@ -4,6 +4,7 @@ mod gh;
 mod git;
 mod maintenance;
 mod related;
+mod remote;
 mod settings;
 mod skills;
 mod usage;
@@ -115,6 +116,7 @@ struct AgentEventPayload {
 }
 
 fn emit_workspace(app: &AppHandle, ws: &Workspace) {
+    remote::publish_workspace(ws);
     let _ = app.emit("workspace", ws);
 }
 
@@ -150,8 +152,11 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     // The user stopped it themselves, so no notification for interruptions.
     if let AgentEvent::TurnCompleted { is_error, error, interrupted: false, .. } = &ev {
         notify_turn_done(app, &state.settings(), updated.as_ref(), *is_error, error.as_deref());
+        remote::on_turn_completed(state, updated.as_ref(), *is_error, error.as_deref());
     }
-    let _ = app.emit("agent-event", AgentEventPayload { workspace_id: ws_id.to_string(), seq, ts, event: ev });
+    let payload = AgentEventPayload { workspace_id: ws_id.to_string(), seq, ts, event: ev };
+    remote::publish_event(&payload);
+    let _ = app.emit("agent-event", payload);
     if let Some(ws) = updated {
         emit_workspace(app, &ws);
     }
@@ -902,12 +907,15 @@ fn get_settings(state: State<AppState>) -> settings::Settings {
 /// Merges `patch` (camelCase keys) into the settings, validates, persists, returns the result.
 /// Agent mode changes only take effect on new sessions, so idle ones are restarted.
 #[tauri::command]
-fn update_settings(state: State<AppState>, patch: serde_json::Value) -> CmdResult<settings::Settings> {
+async fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: serde_json::Value) -> CmdResult<settings::Settings> {
     let before = state.settings();
     let after = before.patched(&patch)?;
     state.db().set_setting(settings::KEY, &serde_json::to_string(&after).map_err(err)?).map_err(err)?;
     if before.claude_permission_mode != after.claude_permission_mode || before.codex_sandbox != after.codex_sandbox {
         state.restart_idle_sessions();
+    }
+    if before.remote_enabled != after.remote_enabled || before.remote_port != after.remote_port {
+        remote::apply(&app, &state).await;
     }
     Ok(after)
 }
@@ -1019,7 +1027,11 @@ pub fn run() {
             if let Err(e) = skills::install_builtin(&home) {
                 eprintln!("failed to install shipkit: {e}");
             }
-            app.manage::<AppState>(Arc::new(Inner { db: Mutex::new(db), sessions: Mutex::default(), role_notices: Mutex::default(), home }));
+            let state: AppState = Arc::new(Inner { db: Mutex::new(db), sessions: Mutex::default(), role_notices: Mutex::default(), home });
+            app.manage::<AppState>(state.clone());
+            // Phone bridge: listens only while Settings > Mobile allows it.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move { remote::apply(&handle, &state).await });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1076,6 +1088,10 @@ pub fn run() {
             discover_related,
             get_related_defaults,
             set_related_default,
+            remote::remote_status,
+            remote::remote_pairing,
+            remote::remote_devices,
+            remote::remote_revoke,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

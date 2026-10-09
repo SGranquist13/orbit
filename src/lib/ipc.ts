@@ -243,6 +243,33 @@ export interface Settings {
   deleteBranchOnMerge: boolean;
   aiSuggestions: boolean;
   suggestionModel: "haiku" | "sonnet";
+  remoteEnabled: boolean;
+  remotePort: number;
+  remotePush: boolean;
+}
+
+/** Mobile bridge (src-tauri/src/remote/). */
+export interface RemoteStatus {
+  running: boolean;
+  port: number;
+  addresses: string[];
+  error?: string | null;
+}
+
+export interface RemotePairing {
+  uri: string;
+  /** QR code as an SVG string (black on white). */
+  svg: string;
+  expiresAt: number;
+}
+
+export interface RemoteDevice {
+  id: string;
+  name: string;
+  publicKey: string;
+  pushToken: string | null;
+  pairedAt: number;
+  lastSeenAt: number;
 }
 
 /** Output of `environment_info`: each tool is probed independently, so any may be missing. */
@@ -266,6 +293,10 @@ export interface CleanupCandidate {
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
+  remoteStatus: () => invoke<RemoteStatus>("remote_status"),
+  remotePairing: () => invoke<RemotePairing>("remote_pairing"),
+  remoteDevices: () => invoke<RemoteDevice[]>("remote_devices"),
+  remoteRevoke: (id: string) => invoke<void>("remote_revoke", { id }),
   environmentInfo: () => invoke<EnvironmentInfo>("environment_info"),
   listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
   restoreWorkspace: (id: string) => invoke<Workspace>("restore_workspace", { id }),

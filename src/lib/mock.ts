@@ -2,7 +2,7 @@
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, Profile, PrStatus, Related, Repo, Settings, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, Profile, PrStatus, Related, Repo, RemoteDevice, Settings, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -218,6 +218,23 @@ function mockCompact(id: string) {
   }, 900);
 }
 
+let remoteDevices: RemoteDevice[] = [
+  { id: "dev-1", name: "Steven's iPhone", publicKey: "mock", pushToken: "ExponentPushToken[mock]", pairedAt: Date.now() - 3 * 86_400_000, lastSeenAt: Date.now() - 4 * 60_000 },
+];
+
+/** A fake, non-scannable QR-like grid so the pairing panel has something to show in the mock. */
+function mockQr(): string {
+  const n = 25;
+  let cells = "";
+  for (let y = 0; y < n; y++)
+    for (let x = 0; x < n; x++) {
+      const finder = (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7);
+      const on = finder ? x % 6 === 0 || y % 6 === 0 || ((x % 7) > 1 && (x % 7) < 5 && (y % 7) > 1 && (y % 7) < 5) : ((x * 7 + y * 13 + x * y) % 5 < 2);
+      if (on) cells += `<rect x="${x + 2}" y="${y + 2}" width="1" height="1"/>`;
+    }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 4} ${n + 4}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${cells}</g></svg>`;
+}
+
 let settings: Settings = {
   branchPrefix: "steven/",
   defaultAgent: "claude",
@@ -233,6 +250,9 @@ let settings: Settings = {
   deleteBranchOnMerge: false,
   aiSuggestions: true,
   suggestionModel: "haiku",
+  remoteEnabled: false,
+  remotePort: 47821,
+  remotePush: true,
 };
 const ENUMS: Record<string, string[]> = {
   claudePermissionMode: ["bypassPermissions", "acceptEdits"],
@@ -328,6 +348,22 @@ export function installMockBackend() {
           return pins;
         case "set_pins":
           pins = (args as { pins: string[] }).pins;
+          return null;
+        case "remote_status":
+          return {
+            running: settings.remoteEnabled,
+            port: settings.remotePort,
+            addresses: ["100.101.102.103", "192.168.1.42"],
+            error: null,
+          };
+        case "remote_pairing": {
+          const uri = `orbit://pair?v=1&pk=mockpublickey&code=mockcode${Date.now() % 10000}&port=${settings.remotePort}&hosts=100.101.102.103,192.168.1.42&name=MOCK-PC`;
+          return { uri, svg: mockQr(), expiresAt: Date.now() + 5 * 60_000 };
+        }
+        case "remote_devices":
+          return remoteDevices.map((d) => ({ ...d }));
+        case "remote_revoke":
+          remoteDevices = remoteDevices.filter((d) => d.id !== id);
           return null;
         case "get_settings":
           return settings;
