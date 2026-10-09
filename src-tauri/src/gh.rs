@@ -90,6 +90,70 @@ fn summarize_checks(rollup: &Value) -> Checks {
     c
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Issue {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub state: String,
+    pub labels: Vec<String>,
+    pub author: String,
+    pub updated_at: String,
+    pub comments: u32,
+}
+
+const ISSUE_FIELDS: &str = "number,title,url,state,labels,author,updatedAt,comments";
+
+/// Open issues of the repo at `repo_path`. Errors starting with "No GitHub remote" mean
+/// the repo isn't on GitHub (or `gh` can't tell which repo it is).
+pub fn list_issues(repo_path: &Path) -> anyhow::Result<Vec<Issue>> {
+    match gh(repo_path, &["issue", "list", "--state", "open", "--limit", "100", "--json", ISSUE_FIELDS]) {
+        Ok(out) => parse_issues(&out),
+        Err(e) => {
+            let lower = e.to_string().to_lowercase();
+            if lower.contains("no git remotes") || lower.contains("none of the git remotes") || lower.contains("not a github") {
+                anyhow::bail!("No GitHub remote found for this repo");
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The URL of issue `number` in the repo at `cwd`.
+pub fn issue_url(cwd: &Path, number: i64) -> anyhow::Result<String> {
+    let out = gh(cwd, &["issue", "view", &number.to_string(), "--json", "url"])?;
+    let v: Value = serde_json::from_str(&out)?;
+    v["url"].as_str().map(str::to_string).ok_or_else(|| anyhow::anyhow!("gh returned no url for issue #{number}"))
+}
+
+fn parse_issues(json: &str) -> anyhow::Result<Vec<Issue>> {
+    let v: Value = serde_json::from_str(json)?;
+    Ok(v.as_array().into_iter().flatten().map(parse_issue).collect())
+}
+
+fn parse_issue(v: &Value) -> Issue {
+    let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+    Issue {
+        number: v["number"].as_u64().unwrap_or_default(),
+        title: s("title"),
+        url: s("url"),
+        state: s("state"),
+        labels: v["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|l| l["name"].as_str().or(l.as_str()))
+            .map(str::to_string)
+            .collect(),
+        // Deleted accounts come back as null or with an empty login.
+        author: v["author"]["login"].as_str().filter(|a| !a.is_empty()).unwrap_or("ghost").to_string(),
+        updated_at: s("updatedAt"),
+        // `comments` is an array of comment objects (or a bare count in other output).
+        comments: v["comments"].as_array().map(|a| a.len() as u32).or(v["comments"].as_u64().map(|n| n as u32)).unwrap_or(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +181,28 @@ mod tests {
         assert_eq!(pr.number, 42);
         assert!(pr.is_draft);
         assert_eq!(pr.checks, Checks::default());
+    }
+
+    #[test]
+    fn issues_parse() {
+        let issues = parse_issues(
+            r#"[
+              {"number": 12, "title": "Crash on save", "url": "https://github.com/o/r/issues/12", "state": "OPEN",
+               "labels": [{"name": "bug", "color": "d73a4a"}, {"name": "p1"}],
+               "author": {"login": "ada"}, "updatedAt": "2026-05-01T10:00:00Z",
+               "comments": [{"body": "a"}, {"body": "b"}]},
+              {"number": 7, "title": "Odd one", "url": "u", "state": "OPEN", "labels": [], "author": null,
+               "updatedAt": "2026-04-01T00:00:00Z", "comments": []},
+              {"number": 3}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(issues.len(), 3);
+        assert_eq!(issues[0].labels, ["bug", "p1"]);
+        assert_eq!((issues[0].author.as_str(), issues[0].comments, issues[0].updated_at.as_str()), ("ada", 2, "2026-05-01T10:00:00Z"));
+        assert_eq!((issues[1].author.as_str(), issues[1].comments), ("ghost", 0));
+        assert_eq!((issues[2].number, issues[2].title.as_str(), issues[2].labels.len()), (3, "", 0));
+        assert!(parse_issues("[]").unwrap().is_empty());
+        assert!(parse_issues("not json").is_err());
     }
 }

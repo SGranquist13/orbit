@@ -32,7 +32,8 @@ _Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex defa
 | Inbox: inline reply, Open (Enter), Dismiss (E; comes back on new activity), j/k navigation | P1 | ✅ | Dismiss + keys verified in e2e |
 | Inbox "All" tab: every workspace and what it is doing (replaces the planned fleet board) | P1 | 🟢 | Verified in mock UI |
 | Seen/dismissed state persisted across restarts | P1 | 🟢 | Unit-tested (`db::tests`) |
-| Inbox: snooze a row; focus moves to the neighbouring row after dismiss | P3 | ⬜ | Small follow-ups |
+| Inbox: snooze a row (S = 1 hour, or menu: tomorrow 9:00, next week); snoozed rows show in All | P3 | 🟢 | Unit-tested (`snoozed_until` migration + round trip); e2e step `inbox-snooze` written, not yet run |
+| Inbox: focus stays on the same index (next row) after dismiss / snooze / send | P3 | 🟢 | Mock UI only |
 | Archived workspaces list / restore | P3 | ⬜ | |
 | Settings UI (branch prefix, default agent/model, worktree location) | P2 | ⬜ | Stored settings exist; no UI |
 | Worktree cleanup for merged branches | P3 | ⬜ | |
@@ -97,8 +98,10 @@ _Last verified: 2026-10-08, `bun run e2e` 15/15 twice (Claude haiku + Codex defa
 | Ready for review / Squash & merge (with confirm, gated on green checks) | P1 | 🟢 | Not run against a real PR |
 | `/shipkit:ship` end to end: commit, push, draft PR | P1 | 🟢 | Needs a test GitHub repo to verify |
 | PR status auto-refresh while checks run | P2 | 🟢 | |
-| GitHub Issues panel per repo | P1 | ⬜ | Milestone 6 |
-| Start a workspace from an issue (branch `<n>-slug`, issue context, `Closes #n`) | P1 | 🟡 | Backend supports `issue_number` + context; no UI yet |
+| GitHub Issues panel per repo (Ctrl+Shift+I): search, labels, comment count, j/k, Start (Enter) / Plan (P) | P1 | 🟢 | `gh issue list` parser unit-tested; UI verified in mock; not run against real GitHub |
+| New ticket dialog (notes → Ticket writer workspace running `/shipkit:write-ticket`) | P1 | 🟢 | Mock only |
+| Start a workspace from an issue (branch `<n>-slug`, issue context, `Closes #n`); `start_issue` runs `/shipkit:start-issue` | P1 | 🟢 | Backend compiled, UI in mock; not run against real GitHub |
+| `#n` chip in the workspace header opens the linked issue (`issue_url` via `gh issue view`) | P2 | 🟢 | Not run against real GitHub |
 | `/shipkit:write-ticket` (notes → formatted GH issue) | P1 | 🟢 | Skill exists; not run against GitHub |
 | `/shipkit:preflight`: pre-ship spot check of boundary changes; searches this repo and attached folders for consumers; Safe/Risky/Breaking report | P1 | 🟢 | Skill written and pinned by default; needs a real cross-project run |
 

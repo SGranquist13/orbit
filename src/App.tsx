@@ -2,6 +2,7 @@ import { FolderPlus, Plus, X } from "lucide-react";
 import { useEffect } from "react";
 import { Chat } from "./components/Chat";
 import { Inbox } from "./components/Inbox";
+import { Issues, NewTicket } from "./components/Issues";
 import { NewWorkspace } from "./components/NewWorkspace";
 import { Packs } from "./components/Packs";
 import { Palette } from "./components/Palette";
@@ -17,6 +18,7 @@ export default function App() {
   const newOpen = useApp((s) => s.newWorkspaceOpen);
   const paletteOpen = useApp((s) => s.paletteOpen);
   const packsOpen = useApp((s) => s.packsOpen);
+  const ticketOpen = useApp((s) => s.ticketOpen);
   const view = useApp((s) => s.view);
   const shipOpen = useApp((s) => s.shipOpen);
   const focusMode = useApp((s) => s.focusMode);
@@ -36,6 +38,9 @@ export default function App() {
       } else if (key === "k") {
         e.preventDefault();
         s.setPaletteOpen(!s.paletteOpen);
+      } else if (key === "i" && e.shiftKey) {
+        e.preventDefault();
+        s.setView(s.view === "issues" ? "workspace" : "issues");
       } else if (key === "i") {
         e.preventDefault();
         s.setView(s.view === "inbox" ? "workspace" : "inbox");
@@ -70,6 +75,8 @@ export default function App() {
       {!focusMode && <Sidebar />}
       {view === "inbox" ? (
         <Inbox />
+      ) : view === "issues" ? (
+        <Issues />
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />
@@ -81,6 +88,7 @@ export default function App() {
       {newOpen && <NewWorkspace />}
       {paletteOpen && <Palette />}
       {packsOpen && <Packs />}
+      {ticketOpen && <NewTicket />}
       <ErrorToast />
     </div>
   );

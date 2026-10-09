@@ -341,6 +341,28 @@ await step("inbox", async () => {
   await key("i", { ctrl: true });
 });
 
+await step("inbox-snooze", async () => {
+  const INBOX = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
+    const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
+  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  const name = JSON.stringify(claudeWs.name.slice(0, 20));
+  const inNeeds = `${INBOX} return rows().some((li) => li.innerText.includes(${name}))`;
+
+  await key("i", { ctrl: true });
+  await waitFor("inbox view", `${INBOX} return !!inbox`, 5000);
+  // The previous step dismissed it; new activity puts it back in "Needs you".
+  await invoke("send_message", { id: claudeWs.id, text: "Reply with exactly one word: again" });
+  await waitFor("row is in Needs you", `${inNeeds} && /Finished/.test(rows().find((li) => li.innerText.includes(${name})).innerText)`, 120_000);
+  await invoke("snooze_workspace", { id: claudeWs.id, until: Date.now() + 3_600_000 });
+  await waitFor("snoozed row leaves Needs you", `${INBOX} return !rows().some((li) => li.innerText.includes(${name}))`, 10_000);
+  await shot("11b-inbox-snoozed");
+  await invoke("snooze_workspace", { id: claudeWs.id, until: 0 });
+  await waitFor("unsnoozed row is back", `${INBOX} return rows().some((li) => li.innerText.includes(${name}) && /Finished/.test(li.innerText))`, 10_000);
+  await js(`document.activeElement?.blur()`);
+  await key("e");
+  await key("i", { ctrl: true });
+});
+
 await step("attached-folders", async () => {
   const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
   const norm = (p) => p.split("\\").join("/").toLowerCase();

@@ -29,6 +29,8 @@ export interface Workspace {
   dismissedSeq: number;
   /** Profile id (`<plugin>:<name>`); null = Builder. */
   profile: string | null;
+  /** Hidden from the inbox until this time (ms epoch); 0 = not snoozed. */
+  snoozedUntil: number;
 }
 
 export type AgentEvent =
@@ -117,6 +119,27 @@ export interface PrStatus {
   checks: { passed: number; failed: number; pending: number; failing: string[] };
 }
 
+/** An open GitHub issue (from `gh issue list`). `updatedAt` is an ISO timestamp. */
+export interface Issue {
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  labels: string[];
+  author: string;
+  updatedAt: string;
+  comments: number;
+}
+
+export interface StartIssueArgs {
+  repoId: string;
+  number: number;
+  title: string;
+  profile?: string | null;
+  agent: AgentKind;
+  model?: string | null;
+}
+
 /** Another project folder attached to a workspace; editable ones live in their own worktree. */
 export interface Attachment {
   id: string;
@@ -199,6 +222,12 @@ export const api = {
   workspaceSummary: (id: string) => invoke<Summary>("workspace_summary", { id }),
   markSeen: (id: string) => invoke<number>("mark_seen", { id }),
   dismissWorkspace: (id: string) => invoke<number>("dismiss_workspace", { id }),
+  /** Hide a workspace from the inbox until `until` (ms epoch); 0 clears the snooze. */
+  snoozeWorkspace: (id: string, until: number) => invoke<Workspace>("snooze_workspace", { id, until }),
+  /** Rejects with "No GitHub remote…" when the repo isn't on GitHub. */
+  listIssues: (repoId: string) => invoke<Issue[]>("list_issues", { repoId }),
+  startIssue: (args: StartIssueArgs) => invoke<Workspace>("start_issue", { ...args }),
+  issueUrl: (workspaceId: string) => invoke<string>("issue_url", { workspaceId }),
   /** AI-generated follow-ups; slow (3-5s) and may reject. */
   suggestPrompts: (id: string, reason: string, offered: string[] = []) =>
     invoke<string[]>("suggest_prompts", { id, reason, offered }),
