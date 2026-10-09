@@ -25,3 +25,6 @@ dist-ssr
 
 # real-app e2e scratch (worktrees, app state, screenshots)
 .e2e/
+
+# agent worktrees (Claude Code isolation)
+.claude/worktrees/

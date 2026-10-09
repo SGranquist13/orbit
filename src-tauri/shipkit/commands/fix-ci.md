@@ -5,6 +5,7 @@ argument-hint: "[check name to focus on]"
 
 Fix CI for this branch.
 
+0. Sync first: `git pull --rebase` so you have any commits others pushed to this branch (CI ran on the remote head, not necessarily your local copy). Use `git log --oneline <base>..HEAD` to see what the branch contains and who added what.
 1. List checks: `gh pr checks` (if there is no PR, use `gh run list --branch "$(git branch --show-current)" --limit 5`).
 2. For each failing check (or only `$ARGUMENTS` if given), read the failure: `gh run view <run-id> --log-failed`. Focus on the first real error, not cascading noise.
 3. Reproduce locally with the same command when feasible, then fix the root cause. Don't skip tests, loosen assertions, or disable checks to make CI green.
