@@ -4,12 +4,15 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 
 ## Start here (status as of 2026-10-09)
 - **What's built and how well it's proven: [FEATURES.md](FEATURES.md)**. Read its "Real vs mock" ledger first. ✅ = proven in the real app by e2e; 🟢 = built, only verified in the mock UI / unit tests. Everything built on 2026-10-09 (Settings page, usage/context meter, Compact / New session, archive restore, worktree cleanup) is 🟢 and **still needs its first real-app e2e run**; the ledger lists the steps to add.
+- **Mobile companion (merged 2026-10-09):** `src-tauri/src/remote/` lets the iPhone app in `../ide_mobile` pair (QR), mirror workspaces live, send and stop. Verified by hand on a real iPhone (no `scripts/e2e.mjs` step yet). The wire contract is `../ide_mobile/docs/protocol.md`; change it there first, then both sides, then run `npm run interop` in `ide_mobile` (drives this repo's real bridge server with the app's own client). Runbook: `../ide_mobile/docs/dev-workflow.md`.
 - **Ideas under discussion: [PLANNING.md](PLANNING.md)** (#1–#5 are built; new ideas go to its Inbox).
-- **Last full runs:** `bun run e2e` 16/16 and `bun run e2e:github` 7/7, both before the 2026-10-09 settings/usage work. `cargo test`: 47 pass + 3 opt-in live tests (pass against real Claude/Codex).
+- **Last full runs:** `bun run e2e` 16/16 and `bun run e2e:github` 7/7, both before the 2026-10-09 settings/usage work. `cargo test`: 63 pass + 4 opt-in (3 live tests against real Claude/Codex, 1 `interop_server` used by `ide_mobile`'s `npm run interop`).
 - **Git:** everything is committed on `main` (local only, no remote). Commit as you go with conventional messages and the Co-Authored-By trailer.
 - **How the user likes to work:** dark, greyscale UI with colour only for meaning; ideas get noted in PLANNING.md before building; build with Sonnet subagents (in isolated worktrees, merged by the orchestrator) to save usage, the orchestrator reviews; verify UI in the mock (`bun run dev`) while iterating and save full real-app e2e runs for checkpoints.
 
 ## Known traps (each cost real debugging time)
+- **package.json scripts run in Bun's shell:** `\` is an escape there (and `\t` in JSON is a tab), so script paths use forward slashes (`scripts/tauri.cmd`).
+- **Phone can't connect?** Windows Firewall: Orbit's exe gets its own prompt when Settings > Mobile is turned on (allow on Private). The user's nvm `node.exe` had inbound Block rules on Public networks, which also blocks Expo/mock-orbit for the phone; see `../ide_mobile/docs/dev-workflow.md`.
 - **Toolchain:** Rust must build with VS 2022 (`scripts/cargo.cmd`, `scripts/tauri.cmd`); VS 2026 on this machine lacks the x64 libs.
 - **e2e needs Vite on :1420** (`bun run dev` or the `ui-mock` launch config) because the debug build loads its UI from it. New npm imports make Vite re-optimise and force-reload the page on first load: rerun if the first e2e step dies with "Execution context was destroyed".
 - **Native dialogs can't be clicked over CDP and Tauri's `invoke` is non-writable**, so confirmations in e2e go through `window.__ORBIT_AUTOCONFIRM__` (harness `autoConfirm()`, honoured by `src/lib/confirm.ts`).
