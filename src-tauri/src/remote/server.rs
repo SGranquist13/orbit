@@ -682,4 +682,78 @@ mod tests {
             }
         }
     }
+
+    /// Cross-implementation check against the phone app's real client code (ide_mobile).
+    /// Run: `cargo test interop_server -- --ignored --nocapture`, then within 120 s:
+    /// `npm run smoke -- "<printed uri>"` in ide_mobile.
+    #[tokio::test]
+    #[ignore]
+    async fn interop_server() {
+        struct Scripted {
+            hub: Arc<Hub>,
+            devices: Mutex<Vec<Device>>,
+            events: Arc<Mutex<Vec<Value>>>,
+        }
+        impl Backend for Scripted {
+            fn rpc(&self, method: &str, params: Value) -> Result<Value, String> {
+                let ws = json!({ "id": "w1", "repoId": "r1", "name": "Interop", "branch": "t/interop", "path": "C:/x",
+                    "agent": "claude", "model": null, "status": "done", "agentSessionId": "s", "issueNumber": null,
+                    "createdAt": 1, "updatedAt": 1, "seenSeq": 0, "dismissedSeq": 0, "profile": null, "snoozedUntil": 0 });
+                match method {
+                    "snapshot" => Ok(json!({ "repos": [{ "id": "r1", "name": "repo", "path": "C:/r", "baseBranch": "main" }],
+                        "workspaces": [ws], "summaries": [{ "workspaceId": "w1", "lastSeq": 2, "lastActivityTs": 1, "lastTurnSeq": 2,
+                        "lastTurnError": null, "lastTurnInterrupted": false, "lastAssistantText": "hi", "lastUserText": "yo" }] })),
+                    "events" => {
+                        let since = params.get("sinceSeq").and_then(Value::as_i64).unwrap_or(0);
+                        Ok(Value::Array(self.events.lock().unwrap().iter().filter(|e| e["seq"].as_i64().unwrap() > since).cloned().collect()))
+                    }
+                    "send" => {
+                        let text = params["text"].clone();
+                        let (hub, events) = (self.hub.clone(), self.events.clone());
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(200));
+                            let script = vec![
+                                (Some(3), json!({ "type": "userMessage", "text": text })),
+                                (Some(4), json!({ "type": "turnStarted" })),
+                                (None, json!({ "type": "textDelta", "text": "Hel" })),
+                                (None, json!({ "type": "textDelta", "text": "lo" })),
+                                (Some(5), json!({ "type": "message", "text": "Hello from the real bridge" })),
+                                (Some(6), json!({ "type": "turnCompleted", "durationMs": 5, "costUsd": null, "isError": false, "error": null, "interrupted": false })),
+                            ];
+                            for (seq, ev) in script {
+                                if let Some(seq) = seq {
+                                    events.lock().unwrap().push(json!({ "seq": seq, "ts": 1, "event": ev }));
+                                }
+                                hub.publish(json!({ "t": "event", "workspaceId": "w1", "seq": seq, "ts": 1, "event": ev }));
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                        });
+                        Ok(Value::Null)
+                    }
+                    "interrupt" => Ok(Value::Null),
+                    "markSeen" => Ok(json!(6)),
+                    _ => Err("unknown method".into()),
+                }
+            }
+            fn devices(&self) -> Vec<Device> {
+                self.devices.lock().unwrap().clone()
+            }
+            fn save_devices(&self, d: &[Device]) {
+                *self.devices.lock().unwrap() = d.to_vec();
+            }
+        }
+        let hub = Arc::new(Hub::new());
+        let events = Arc::new(Mutex::new(vec![
+            json!({ "seq": 1, "ts": 1, "event": { "type": "userMessage", "text": "yo" } }),
+            json!({ "seq": 2, "ts": 1, "event": { "type": "message", "text": "hi" } }),
+        ]));
+        let backend = Arc::new(Scripted { hub: hub.clone(), devices: Mutex::default(), events });
+        let orbit = Keypair::generate();
+        let cfg = ServerConfig { keypair: orbit.clone(), name: "interop box".into(), version: "0.0.0".into(),
+            bind: "127.0.0.1".parse().unwrap(), port: 47999 };
+        let _server = start(cfg, backend.clone(), hub.clone()).await.unwrap();
+        let (code, _) = hub.new_pairing();
+        println!("PAIR_URI {}", crate::remote::pairing_uri(&orbit.public(), &code, 47999, &["127.0.0.1".into()], "interop box"));
+        tokio::time::sleep(Duration::from_secs(120)).await;
+    }
 }
