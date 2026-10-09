@@ -2,18 +2,16 @@ import { CircleDot, LoaderCircle, MessageSquare, Plus, RefreshCw } from "lucide-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { timeAgo } from "../lib/attention";
 import { DEFAULT_PROFILE, api, type AgentKind, type Issue } from "../lib/ipc";
+import { defaultAgentModel } from "../lib/settings";
 import { useApp } from "../stores/app";
 import { Button, Kbd, agentLabel, AgentIcon, cn } from "./ui";
 
 const PLANNER = "shipkit:planner";
 const TICKET_WRITER = "shipkit:ticket-writer";
 
+/** The default agent from Settings (replaces the old remembered-last-agent behaviour). */
 function lastAgent(): AgentKind {
-  try {
-    return localStorage.getItem("lastAgent") === "codex" ? "codex" : "claude";
-  } catch {
-    return "claude";
-  }
+  return defaultAgentModel().agent;
 }
 
 interface Loaded {
@@ -81,7 +79,7 @@ export function Issues() {
       if (starting !== null) return;
       setStarting(issue.number);
       try {
-        const ws = await api.startIssue({ repoId, number: issue.number, title: issue.title, profile, agent: lastAgent(), model: null });
+        const ws = await api.startIssue({ repoId, number: issue.number, title: issue.title, profile, agent: lastAgent(), model: defaultAgentModel().model || null });
         useApp.getState().upsertWorkspace(ws);
         useApp.getState().select(ws.id);
       } catch (e) {
@@ -316,7 +314,7 @@ export function NewTicket() {
     setBusy(true);
     const agent = lastAgent();
     try {
-      const ws = await api.createWorkspace({ repoId, name: titleFrom(text), agent, model: null, profile: TICKET_WRITER });
+      const ws = await api.createWorkspace({ repoId, name: titleFrom(text), agent, model: defaultAgentModel().model || null, profile: TICKET_WRITER });
       useApp.getState().upsertWorkspace(ws);
       await api.runSkill(ws.id, "shipkit:write-ticket", text);
       useApp.getState().select(ws.id);

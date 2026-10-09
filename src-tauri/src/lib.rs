@@ -2,7 +2,9 @@ mod agent;
 mod db;
 mod gh;
 mod git;
+mod maintenance;
 mod related;
+mod settings;
 mod skills;
 
 use agent::{AgentEvent, AgentKind, Command, SessionConfig, SessionHandle};
@@ -89,12 +91,16 @@ impl Inner {
         list
     }
 
+    /// Current typed settings (defaults for anything unset; legacy `branch_prefix` honoured).
+    fn settings(&self) -> settings::Settings {
+        let db = self.db();
+        let blob = db.setting(settings::KEY).ok().flatten();
+        let legacy = db.setting(settings::LEGACY_BRANCH_PREFIX_KEY).ok().flatten();
+        settings::Settings::load(blob.as_deref(), legacy.as_deref())
+    }
+
     fn branch_prefix(&self) -> String {
-        self.db().setting("branch_prefix").ok().flatten().unwrap_or_else(|| {
-            let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
-            let user = git::slugify(&user);
-            if user == "task" { String::new() } else { format!("{user}/") }
-        })
+        self.settings().branch_prefix
     }
 }
 
@@ -145,7 +151,7 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     }
     // The user stopped it themselves, so no notification for interruptions.
     if let AgentEvent::TurnCompleted { is_error, error, interrupted: false, .. } = &ev {
-        notify_turn_done(app, updated.as_ref(), *is_error, error.as_deref());
+        notify_turn_done(app, &state.settings(), updated.as_ref(), *is_error, error.as_deref());
     }
     let _ = app.emit("agent-event", AgentEventPayload { workspace_id: ws_id.to_string(), seq, ts, event: ev });
     if let Some(ws) = updated {
@@ -153,9 +159,12 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     }
 }
 
-fn notify_turn_done(app: &AppHandle, ws: Option<&Workspace>, is_error: bool, error: Option<&str>) {
+fn notify_turn_done(app: &AppHandle, settings: &settings::Settings, ws: Option<&Workspace>, is_error: bool, error: Option<&str>) {
+    if !settings.notifications {
+        return;
+    }
     let focused = app.get_webview_window("main").and_then(|w| w.is_focused().ok()).unwrap_or(false);
-    let Some(ws) = ws.filter(|_| !focused) else { return };
+    let Some(ws) = ws.filter(|_| !(focused && settings.notify_only_unfocused)) else { return };
     let body = if is_error { error.unwrap_or("Turn failed").to_string() } else { "Finished — ready for you".into() };
     let _ = app.notification().builder().title(&ws.name).body(body).show();
 }
@@ -225,6 +234,7 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         AgentKind::Codex => vec![],
     };
     let profile = resolve_profile(state, ws);
+    let settings = state.settings();
     let cfg = SessionConfig {
         kind,
         cwd: PathBuf::from(&ws.path),
@@ -234,6 +244,8 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         add_dirs,
         instructions: Some(workspace_context(ws, &repo, &attachments, profile.as_ref())),
         readonly: profile.as_ref().is_some_and(|p| p.readonly),
+        permission_mode: settings.claude_permission_mode,
+        sandbox: settings.codex_sandbox,
     };
     let (app2, state2, id) = (app.clone(), state.clone(), ws.id.clone());
     let handle = agent::spawn(cfg, Arc::new(move |ev| on_agent_event(&app2, &state2, &id, ev)))?;
@@ -641,7 +653,11 @@ async fn pr_status(state: State<'_, AppState>, id: String) -> CmdResult<Option<g
 #[tauri::command]
 async fn merge_pr(state: State<'_, AppState>, id: String, number: u64) -> CmdResult<()> {
     let ws = state.db().workspace(&id).map_err(err)?;
-    tauri::async_runtime::spawn_blocking(move || gh::merge(Path::new(&ws.path), number))
+    let settings = state.settings();
+    tauri::async_runtime::spawn_blocking(move || {
+        let delete = settings.delete_branch_on_merge.then_some(ws.branch.as_str());
+        gh::merge(Path::new(&ws.path), number, &settings.merge_method, delete)
+    })
         .await
         .map_err(err)?
         .map_err(err)
@@ -741,6 +757,10 @@ async fn suggest_prompts(
     reason: String,
     offered: Option<Vec<String>>,
 ) -> CmdResult<Vec<String>> {
+    let settings = state.settings();
+    if !settings.ai_suggestions {
+        return Ok(vec![]);
+    }
     let summary = state.db().summary(&id).map_err(err)?;
     let clip = |s: Option<String>, n: usize| {
         let s = s.unwrap_or_default();
@@ -762,7 +782,7 @@ async fn suggest_prompts(
     );
     let schema = r#"{"type":"object","properties":{"suggestions":{"type":"array","items":{"type":"string"},"maxItems":3}},"required":["suggestions"]}"#;
     let args: Vec<String> = [
-        "-p", "--model", "haiku", "--output-format", "json", "--no-session-persistence",
+        "-p", "--model", settings.suggestion_model.as_str(), "--output-format", "json", "--no-session-persistence",
         // No user plugins/hooks and no tools: fast, cheap, side-effect free.
         "--setting-sources", "local", "--tools", "", "--json-schema", schema, &prompt,
     ]
@@ -780,6 +800,89 @@ async fn suggest_prompts(
         .as_array()
         .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).take(3).collect())
         .unwrap_or_default())
+}
+
+#[tauri::command]
+fn get_settings(state: State<AppState>) -> settings::Settings {
+    state.settings()
+}
+
+/// Merges `patch` (camelCase keys) into the settings, validates, persists, returns the result.
+/// Agent mode changes only take effect on new sessions, so idle ones are restarted.
+#[tauri::command]
+fn update_settings(state: State<AppState>, patch: serde_json::Value) -> CmdResult<settings::Settings> {
+    let before = state.settings();
+    let after = before.patched(&patch)?;
+    state.db().set_setting(settings::KEY, &serde_json::to_string(&after).map_err(err)?).map_err(err)?;
+    if before.claude_permission_mode != after.claude_permission_mode || before.codex_sandbox != after.codex_sandbox {
+        state.restart_idle_sessions();
+    }
+    Ok(after)
+}
+
+#[tauri::command]
+async fn environment_info(state: State<'_, AppState>) -> CmdResult<maintenance::EnvironmentInfo> {
+    Ok(maintenance::environment_info(&state.home).await)
+}
+
+#[tauri::command]
+fn list_archived_workspaces(state: State<AppState>) -> CmdResult<Vec<Workspace>> {
+    state.db().archived_workspaces().map_err(err)
+}
+
+/// Unarchives a workspace; recreates its worktree on the existing branch if the folder is gone.
+#[tauri::command]
+async fn restore_workspace(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<Workspace> {
+    let ws = state.db().workspace(&id).map_err(err)?;
+    if !Path::new(&ws.path).is_dir() {
+        let repo = state.db().repo(&ws.repo_id).map_err(err)?;
+        let (repo_path, wt, branch) = (PathBuf::from(repo.path), PathBuf::from(&ws.path), ws.branch.clone());
+        tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+            if !git::branch_exists(&repo_path, &branch) {
+                return Err(format!("Branch {branch} no longer exists, so the worktree cannot be recreated"));
+            }
+            git::add_existing_worktree(&repo_path, &wt, &branch).map_err(err)
+        })
+        .await
+        .map_err(err)??;
+    }
+    let restored = state.db().unarchive_workspace(&id).map_err(err)?;
+    emit_workspace(&app, &restored);
+    Ok(restored)
+}
+
+/// Workspaces whose branch has been merged and whose worktree is clean. `dry_run` only lists them;
+/// otherwise each is archived and its worktree removed (the branch is kept).
+#[tauri::command]
+async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> CmdResult<Vec<maintenance::CleanupCandidate>> {
+    // Bind each db result first: the guard must be dropped before the next lock.
+    let mut workspaces = state.db().workspaces().map_err(err)?;
+    let archived = state.db().archived_workspaces().map_err(err)?;
+    workspaces.extend(archived);
+    let repos = state.db().repos().map_err(err)?;
+    let (ws2, repos2) = (workspaces.clone(), repos.clone());
+    let candidates = tauri::async_runtime::spawn_blocking(move || maintenance::find_cleanup_candidates(&ws2, &repos2))
+        .await
+        .map_err(err)?;
+    if dry_run {
+        return Ok(candidates);
+    }
+    let mut done = vec![];
+    for c in candidates {
+        let Some(ws) = workspaces.iter().find(|w| w.id == c.workspace_id) else { continue };
+        let Some(repo) = repos.iter().find(|r| r.id == ws.repo_id) else { continue };
+        if let Some(h) = state.sessions.lock().unwrap().remove(&ws.id) {
+            h.send(Command::Shutdown);
+        }
+        let (repo_path, wt) = (PathBuf::from(&repo.path), PathBuf::from(&ws.path));
+        let removed = tauri::async_runtime::spawn_blocking(move || git::remove_worktree(&repo_path, &wt)).await.map_err(err)?;
+        if removed.is_err() {
+            continue;
+        }
+        state.db().archive_workspace(&ws.id).map_err(err)?;
+        done.push(c);
+    }
+    Ok(done)
 }
 
 #[tauri::command]
@@ -839,6 +942,12 @@ pub fn run() {
             workspace_changes,
             archive_workspace,
             get_setting,
+            get_settings,
+            update_settings,
+            environment_info,
+            list_archived_workspaces,
+            restore_workspace,
+            cleanup_merged_worktrees,
             workspace_summaries,
             workspace_summary,
             mark_seen,

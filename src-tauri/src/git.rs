@@ -81,6 +81,38 @@ pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Re-attaches an existing branch as a worktree at `path` (used when restoring an archived workspace).
+pub fn add_existing_worktree(repo: &Path, path: &Path, branch: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // Drop records of worktrees whose folders were deleted by hand, or git refuses the branch as "in use".
+    let _ = run(repo, &["worktree", "prune"]);
+    run(repo, &["worktree", "add", &path.to_string_lossy(), branch])?;
+    Ok(())
+}
+
+pub fn branch_exists(repo: &Path, branch: &str) -> bool {
+    run(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok()
+}
+
+/// Local branches fully merged into `origin/<base>` (after a fetch), else into local `<base>`.
+pub fn merged_branches(repo: &Path, base: &str) -> Vec<String> {
+    let _ = run(repo, &["fetch", "origin", base, "--quiet"]);
+    let origin_base = format!("origin/{base}");
+    let target = if run(repo, &["rev-parse", "--verify", "--quiet", &origin_base]).is_ok() { origin_base } else { base.to_string() };
+    run(repo, &["branch", "--merged", &target, "--format=%(refname:short)"])
+        .map(|o| o.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default()
+}
+
+/// True if the branch ever moved past its creation (a fresh branch is trivially "merged" into its base).
+pub fn branch_has_own_commits(repo: &Path, branch: &str) -> bool {
+    run(repo, &["reflog", "show", "--format=%gs", &format!("refs/heads/{branch}")])
+        .map(|o| o.lines().filter(|l| !l.trim().is_empty()).count() > 1)
+        .unwrap_or(false)
+}
+
 /// True when the worktree has no uncommitted or untracked changes.
 pub fn is_clean(worktree: &Path) -> bool {
     run(worktree, &["status", "--porcelain"]).map(|s| s.is_empty()).unwrap_or(false)

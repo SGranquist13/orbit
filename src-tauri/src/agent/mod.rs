@@ -78,6 +78,10 @@ pub struct SessionConfig {
     pub instructions: Option<String>,
     /// Read-only role: the agent may not edit files (Claude file tools denied, Codex sandboxed).
     pub readonly: bool,
+    /// Claude permission mode for non-readonly sessions (`bypassPermissions` | `acceptEdits`).
+    pub permission_mode: String,
+    /// Codex sandbox for non-readonly sessions (`danger-full-access` | `workspace-write`).
+    pub sandbox: String,
 }
 
 pub enum Command {

@@ -44,8 +44,26 @@ pub fn pr_status(worktree: &Path, branch: &str) -> anyhow::Result<Option<PrStatu
     }
 }
 
-pub fn merge(worktree: &Path, number: u64) -> anyhow::Result<()> {
-    gh(worktree, &["pr", "merge", &number.to_string(), "--squash"])?;
+/// Arguments for `gh pr merge`. The local branch is held by a worktree, so `--delete-branch` is
+/// never used; the remote ref is deleted separately (see `merge`).
+fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
+    let flag = match method {
+        "squash" | "merge" | "rebase" => format!("--{method}"),
+        other => anyhow::bail!("unknown merge method {other}"),
+    };
+    Ok(vec!["pr".into(), "merge".into(), number.to_string(), flag])
+}
+
+/// Merges the PR with `method`; optionally deletes the remote branch afterwards (best effort:
+/// the repo may already auto-delete head branches).
+pub fn merge(worktree: &Path, number: u64, method: &str, delete_remote_branch: Option<&str>) -> anyhow::Result<()> {
+    let args = merge_args(number, method)?;
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    gh(worktree, &args)?;
+    if let Some(branch) = delete_remote_branch {
+        let endpoint = format!("repos/{{owner}}/{{repo}}/git/refs/heads/{branch}");
+        let _ = gh(worktree, &["api", "-X", "DELETE", &endpoint]);
+    }
     Ok(())
 }
 
@@ -170,6 +188,14 @@ mod tests {
         ]));
         assert_eq!((c.passed, c.failed, c.pending), (2, 2, 1));
         assert_eq!(c.failing, ["test", "vercel"]);
+    }
+
+    #[test]
+    fn merge_args_per_method() {
+        assert_eq!(merge_args(7, "squash").unwrap(), ["pr", "merge", "7", "--squash"]);
+        assert_eq!(merge_args(7, "merge").unwrap()[3], "--merge");
+        assert_eq!(merge_args(7, "rebase").unwrap()[3], "--rebase");
+        assert!(merge_args(7, "ff").is_err());
     }
 
     #[test]

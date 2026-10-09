@@ -8,9 +8,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-/// Default permission mode: workspaces are isolated worktrees, so agents run unattended.
-const PERMISSION_MODE: &str = "bypassPermissions";
-
 /// File-editing tools denied in read-only roles (comma-separated, so the variadic flag can't swallow later args).
 const READONLY_DENY: &str = "Edit,Write,MultiEdit,NotebookEdit";
 
@@ -32,7 +29,7 @@ pub fn args(cfg: &SessionConfig) -> Vec<String> {
         "--verbose",
         "--include-partial-messages",
         "--permission-mode",
-        if cfg.readonly { "default" } else { PERMISSION_MODE },
+        if cfg.readonly { "default" } else { cfg.permission_mode.as_str() },
     ]
     .iter()
     .map(|s| s.to_string())
@@ -293,6 +290,8 @@ mod tests {
             add_dirs: vec![],
             instructions: None,
             readonly: false,
+            permission_mode: "bypassPermissions".into(),
+            sandbox: "danger-full-access".into(),
         };
         let handle = super::super::spawn(cfg, std::sync::Arc::new(move |ev| {
             let _ = tx.send(ev);
@@ -363,9 +362,13 @@ mod tests {
             add_dirs: vec!["/code/shared-ui".into(), "/code/api".into()],
             instructions: Some("ctx".into()),
             readonly: false,
+            permission_mode: "bypassPermissions".into(),
+            sandbox: "danger-full-access".into(),
         };
         let rw = args(&cfg).join(" ");
         assert!(!rw.contains("--disallowedTools") && rw.contains("--permission-mode bypassPermissions"));
+        let cfg = SessionConfig { permission_mode: "acceptEdits".into(), ..cfg };
+        assert!(args(&cfg).join(" ").contains("--permission-mode acceptEdits"));
         let cfg = SessionConfig { readonly: true, ..cfg };
         let a = args(&cfg).join(" ");
         // Read-only: no bypass, an explicit allowlist (so Bash writes are denied), edit tools denied.

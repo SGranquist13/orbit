@@ -1,15 +1,10 @@
 import { FolderPlus, Lock, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_PROFILE, api, type AgentKind, type Profile } from "../lib/ipc";
+import { defaultModelFor, modelsFor } from "../lib/settings";
 import { useApp } from "../stores/app";
 import { pickRepo } from "./Sidebar";
 import { AgentIcon, Button, Kbd, agentLabel, cn } from "./ui";
-
-// Blank = the agent's own configured default.
-const MODELS: Record<AgentKind, string[]> = {
-  claude: ["", "opus", "sonnet", "haiku"],
-  codex: ["", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol"],
-};
 
 /** First line of the prompt, trimmed to a sidebar-friendly title. */
 function titleFrom(prompt: string) {
@@ -21,8 +16,12 @@ export function NewWorkspace() {
   const repos = useApp((s) => s.repos);
   const selectedRepo = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId)?.repoId);
   const [repoId, setRepoId] = useState(() => localStorage.getItem("lastRepo") ?? "");
-  const [agent, setAgent] = useState<AgentKind>(() => (localStorage.getItem("lastAgent") as AgentKind) ?? "claude");
-  const [model, setModel] = useState("");
+  const settings = useApp((s) => s.settings);
+  // Agent and model start from Settings; only the last repo is remembered between uses.
+  const [agent, setAgent] = useState<AgentKind>(() => settings?.defaultAgent ?? "claude");
+  const [model, setModel] = useState(() => defaultModelFor(settings?.defaultAgent ?? "claude", settings));
+  const models = modelsFor(agent, settings);
+  if (model && !models.includes(model)) models.push(model);
   const profiles = useApp((s) => s.profiles);
   // Always start from Builder: silently inheriting a read-only profile from last time is a trap.
   const [profileId, setProfileId] = useState(DEFAULT_PROFILE);
@@ -41,8 +40,8 @@ export function NewWorkspace() {
     setProfileId(p.id);
     const nextAgent = p.agent ?? agent;
     if (p.agent) setAgent(p.agent);
-    if (p.agent && p.agent !== agent) setModel("");
-    if (p.model && MODELS[nextAgent].includes(p.model)) setModel(p.model);
+    if (p.agent && p.agent !== agent) setModel(defaultModelFor(nextAgent, settings));
+    if (p.model && modelsFor(nextAgent, settings).includes(p.model)) setModel(p.model);
   };
 
   const close = () => useApp.getState().setNewWorkspaceOpen(false);
@@ -51,7 +50,6 @@ export function NewWorkspace() {
     if (!repoId || !prompt.trim() || busy) return;
     setBusy(true);
     localStorage.setItem("lastRepo", repoId);
-    localStorage.setItem("lastAgent", agent);
     try {
       const ws = await api.createWorkspace({ repoId, name: titleFrom(prompt), agent, model: model || null, prompt, profile: profile?.id ?? null });
       useApp.getState().upsertWorkspace(ws);
@@ -135,7 +133,7 @@ export function NewWorkspace() {
                 key={a}
                 onClick={() => {
                   setAgent(a);
-                  setModel("");
+                  setModel(defaultModelFor(a, settings));
                 }}
                 className={cn(
                   "flex h-6 items-center gap-1.5 rounded-[2px] px-2 text-[12px] font-medium transition-colors",
@@ -153,7 +151,7 @@ export function NewWorkspace() {
             onChange={(e) => setModel(e.target.value)}
             className="h-7 rounded-[4px] border-[1.5px] border-line-strong bg-bg px-2 text-[12px] font-medium text-fg focus:outline-none"
           >
-            {MODELS[agent].map((m) => (
+            {models.map((m) => (
               <option key={m} value={m}>
                 {m || "default model"}
               </option>

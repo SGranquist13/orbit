@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, CircleDot, FolderPlus, Inbox, PanelLeft, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDot, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import type { Repo, Workspace } from "../lib/ipc";
@@ -92,6 +92,7 @@ export function Sidebar() {
         >
           <FolderPlus className="size-3.5" strokeWidth={2.25} /> Add repo
         </button>
+        <SettingsButton />
         <ThemeToggle />
       </div>
     </aside>
@@ -153,10 +154,25 @@ function Rail({ workspaces, needsYou }: { workspaces: Workspace[]; needsYou: num
         ))}
       </div>
       <div className="dither-rule w-full rotate-180 bg-line-strong" />
-      <div className="py-2">
+      <div className="flex flex-col items-center gap-0.5 py-2">
+        <SettingsButton />
         <ThemeToggle />
       </div>
     </aside>
+  );
+}
+
+function SettingsButton() {
+  const active = useApp((s) => s.view === "settings");
+  return (
+    <button
+      onClick={() => (active ? useApp.getState().closeSettings() : useApp.getState().openSettings())}
+      title="Settings (Ctrl ,)"
+      aria-label="Settings"
+      className={cn("grid size-7 shrink-0 place-items-center rounded-[4px] hover:bg-hover hover:text-fg", active ? "bg-raised text-fg" : "text-dim")}
+    >
+      <Settings className="size-3.5" />
+    </button>
   );
 }
 

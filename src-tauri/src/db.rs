@@ -269,6 +269,19 @@ impl Db {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    pub fn archived_workspaces(&self) -> anyhow::Result<Vec<Workspace>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT * FROM workspaces WHERE archived = 1 ORDER BY updated_at DESC")?;
+        let rows = stmt.query_map([], workspace_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn unarchive_workspace(&self, id: &str) -> anyhow::Result<Workspace> {
+        self.conn.execute("UPDATE workspaces SET archived = 0, updated_at = ?2 WHERE id = ?1", params![id, now()])?;
+        self.workspace(id)
+    }
+
     pub fn workspace(&self, id: &str) -> anyhow::Result<Workspace> {
         Ok(self
             .conn
@@ -468,6 +481,27 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_and_restore() {
+        let db = Db::memory();
+        db.insert_repo(&Repo { id: "r".into(), name: "r".into(), path: "/r".into(), base_branch: "main".into() })
+            .unwrap();
+        let ws = Workspace {
+            id: "w".into(), repo_id: "r".into(), name: "w".into(), branch: "b".into(), path: "/w".into(),
+            agent: "claude".into(), model: None, status: "idle".into(), agent_session_id: None, issue_number: None,
+            created_at: 0, updated_at: 0, seen_seq: 0, dismissed_seq: 0, profile: None, snoozed_until: 0,
+        };
+        db.insert_workspace(&ws).unwrap();
+        db.archive_workspace("w").unwrap();
+        assert!(db.workspaces().unwrap().is_empty());
+        assert_eq!(db.archived_workspaces().unwrap().len(), 1);
+        db.unarchive_workspace("w").unwrap();
+        assert_eq!(db.workspaces().unwrap().len(), 1);
+        assert!(db.archived_workspaces().unwrap().is_empty());
+        db.set_setting("app_settings", "{}").unwrap();
+        assert_eq!(db.setting("app_settings").unwrap().as_deref(), Some("{}"));
+    }
 
     #[test]
     fn events_round_trip() {

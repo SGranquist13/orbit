@@ -194,12 +194,14 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
   const reason = row?.reason ?? null;
   const key = `${id}:${row?.summary?.lastSeq ?? 0}`;
   const cached = aiCache.get(key);
+  // Settings load async; until they do (null), suggestions are not fetched either.
+  const aiEnabled = useApp((s) => s.settings?.aiSuggestions === true);
   const profiles = useApp((s) => s.profiles);
   const profile = row ? activeProfile(profiles, row.ws) : undefined;
   const planner = !!profile?.readonly && profile.id.endsWith(":planner");
 
   useEffect(() => {
-    if (!id || aiCache.has(key) || aiInflight.has(key)) return;
+    if (!id || !aiEnabled || aiCache.has(key) || aiInflight.has(key)) return;
     aiInflight.add(key);
     // Tell the model what the rule chips already offer so it suggests something new.
     const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner }) : []).map((c) => c.label);
@@ -212,7 +214,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
         refresh();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, aiEnabled]);
 
   return useMemo(() => {
     if (!id) return { items: [], loading: false };
@@ -227,8 +229,8 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
         return true;
       })
       .slice(0, MAX_CHIPS);
-    return { items, loading: !cached };
-  }, [id, reason, hasPr, changedFiles, planner, cached]);
+    return { items, loading: aiEnabled && !cached };
+  }, [id, reason, hasPr, changedFiles, planner, cached, aiEnabled]);
 }
 
 function InboxRow({

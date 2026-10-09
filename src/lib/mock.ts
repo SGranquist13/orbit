@@ -2,7 +2,7 @@
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AgentEvent, Attachment, FileChange, Issue, Pack, PrStatus, Profile, Related, Repo, Skill, StoredEvent, Summary, Workspace } from "./ipc";
+import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, Repo, Settings, Skill, StoredEvent, Summary, Workspace } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -156,6 +156,48 @@ const suggested: Related[] = [
 ];
 const relatedDefaults: Record<string, string[]> = { r1: ["C:/code/shared-ui"] };
 
+let settings: Settings = {
+  branchPrefix: "steven/",
+  defaultAgent: "claude",
+  defaultModelClaude: "",
+  defaultModelCodex: "",
+  notifications: true,
+  notifyOnlyUnfocused: true,
+  claudePermissionMode: "bypassPermissions",
+  codexSandbox: "danger-full-access",
+  extraModelsClaude: [],
+  extraModelsCodex: [],
+  mergeMethod: "squash",
+  deleteBranchOnMerge: false,
+  aiSuggestions: true,
+  suggestionModel: "haiku",
+};
+const ENUMS: Record<string, string[]> = {
+  claudePermissionMode: ["bypassPermissions", "acceptEdits"],
+  codexSandbox: ["danger-full-access", "workspace-write"],
+  mergeMethod: ["squash", "merge", "rebase"],
+  suggestionModel: ["haiku", "sonnet"],
+  defaultAgent: ["claude", "codex"],
+};
+let pins = ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];
+const environment: EnvironmentInfo = {
+  claude: { path: "C:\\Users\\steven\\AppData\\Roaming\\npm\\claude.cmd", version: "2.1.4", ok: true },
+  // Codex is missing here so the red state is visible.
+  codex: { path: null, version: null, loggedIn: false },
+  gh: { path: "C:\\Program Files\\GitHub CLI\\gh.exe", version: "2.62.0", user: "steven", scopes: ["gist", "read:org", "repo"] },
+  git: { path: "C:\\Program Files\\Git\\cmd\\git.exe", version: "2.47.1.windows.1" },
+  orbitHome: "C:\\Users\\steven\\.orbit",
+  dbSizeBytes: 1_482_752,
+  worktreeCount: 7,
+};
+const archived: Workspace[] = [
+  { ...ws("a1", "r1", "Add CSV export", "claude", "done"), branch: "steven/add-csv-export-1a2b", updatedAt: now - 3 * 86_400_000 },
+  { ...ws("a2", "r2", "Fix footer links", "codex", "idle"), branch: "steven/fix-footer-links-9c4d", updatedAt: now - 9 * 86_400_000 },
+];
+let cleanup: CleanupCandidate[] = [
+  { workspaceId: "w3", name: "Refactor auth flow", branch: "steven/refactor-auth-flow", reason: "PR #801 merged" },
+];
+
 export function installMockBackend() {
   mockIPC(
     async (cmd, args) => {
@@ -165,7 +207,7 @@ export function installMockBackend() {
         case "list_repos":
           return repos;
         case "list_workspaces":
-          return workspaces;
+          return [...workspaces];
         case "load_events":
           return transcript;
         case "workspace_changes":
@@ -203,7 +245,49 @@ export function installMockBackend() {
           return { ...w };
         }
         case "get_pins":
-          return ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];
+          return pins;
+        case "set_pins":
+          pins = (args as { pins: string[] }).pins;
+          return null;
+        case "get_settings":
+          return settings;
+        case "update_settings": {
+          const patch = (args as { patch: Partial<Settings> }).patch;
+          for (const [k, v] of Object.entries(patch)) {
+            if (ENUMS[k] && !ENUMS[k].includes(v as string)) throw `invalid ${k} "${v}"`;
+          }
+          settings = { ...settings, ...patch };
+          if (patch.branchPrefix !== undefined) {
+            const p = patch.branchPrefix.trim().replace(/[^A-Za-z0-9/_-]/g, "-").replace(/^[/-]+|[/-]+$/g, "");
+            settings.branchPrefix = p ? `${p}/` : "";
+          }
+          return settings;
+        }
+        case "environment_info":
+          await new Promise((r) => setTimeout(r, 400));
+          return environment;
+        case "list_archived_workspaces":
+          return archived;
+        case "restore_workspace": {
+          const i = archived.findIndex((x) => x.id === id);
+          const [w] = archived.splice(i, 1);
+          workspaces.unshift(w);
+          environment.worktreeCount += 1;
+          return { ...w };
+        }
+        case "cleanup_merged_worktrees": {
+          await new Promise((r) => setTimeout(r, 500));
+          const list = cleanup;
+          if (!(args as { dryRun: boolean }).dryRun) {
+            for (const c of list) {
+              const i = workspaces.findIndex((x) => x.id === c.workspaceId);
+              if (i >= 0) archived.unshift(...workspaces.splice(i, 1));
+            }
+            environment.worktreeCount -= list.length;
+            cleanup = [];
+          }
+          return list;
+        }
         case "pr_status":
           return id === "w1" ? pr : null;
         case "workspace_summaries":

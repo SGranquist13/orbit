@@ -11,7 +11,6 @@ use tokio::sync::mpsc;
 /// Workspaces are isolated worktrees and shipping needs network (git push, gh), so the
 /// agent runs unsandboxed and never asks for approval.
 const APPROVAL_POLICY: &str = "never";
-const SANDBOX: &str = "danger-full-access";
 const SANDBOX_READONLY: &str = "read-only";
 
 /// Maps one server notification to normalized events. Pure, so it is fixture-testable.
@@ -242,7 +241,7 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                     let mut params = json!({
                         "cwd": st.cfg.cwd.display().to_string(),
                         "approvalPolicy": APPROVAL_POLICY,
-                        "sandbox": if st.cfg.readonly { SANDBOX_READONLY } else { SANDBOX },
+                        "sandbox": if st.cfg.readonly { SANDBOX_READONLY } else { st.cfg.sandbox.as_str() },
                         "persistExtendedHistory": false,
                     });
                     if let Some(model) = &st.cfg.model {
@@ -324,7 +323,7 @@ mod tests {
         let dir = std::env::temp_dir().join("orbit_codex_live");
         std::fs::create_dir_all(&dir).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false };
+        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into() };
         let handle = super::super::spawn(cfg, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
         handle.send(Command::User("Reply with the single word: pong".into()));
         let mut seen = Vec::new();

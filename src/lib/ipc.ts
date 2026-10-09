@@ -181,7 +181,48 @@ export interface CreateWorkspaceArgs {
   profile?: string | null;
 }
 
+export interface Settings {
+  branchPrefix: string;
+  defaultAgent: AgentKind;
+  defaultModelClaude: string;
+  defaultModelCodex: string;
+  notifications: boolean;
+  notifyOnlyUnfocused: boolean;
+  claudePermissionMode: "bypassPermissions" | "acceptEdits";
+  codexSandbox: "danger-full-access" | "workspace-write";
+  extraModelsClaude: string[];
+  extraModelsCodex: string[];
+  mergeMethod: "squash" | "merge" | "rebase";
+  deleteBranchOnMerge: boolean;
+  aiSuggestions: boolean;
+  suggestionModel: "haiku" | "sonnet";
+}
+
+/** Output of `environment_info`: each tool is probed independently, so any may be missing. */
+export interface EnvironmentInfo {
+  claude: { path: string | null; version: string | null; ok: boolean };
+  codex: { path: string | null; version: string | null; loggedIn: boolean };
+  gh: { path: string | null; version: string | null; user: string | null; scopes: string[] };
+  git: { path: string | null; version: string | null };
+  orbitHome: string;
+  dbSizeBytes: number;
+  worktreeCount: number;
+}
+
+export interface CleanupCandidate {
+  workspaceId: string;
+  name: string;
+  branch: string;
+  reason: string;
+}
+
 export const api = {
+  getSettings: () => invoke<Settings>("get_settings"),
+  updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
+  environmentInfo: () => invoke<EnvironmentInfo>("environment_info"),
+  listArchivedWorkspaces: () => invoke<Workspace[]>("list_archived_workspaces"),
+  restoreWorkspace: (id: string) => invoke<Workspace>("restore_workspace", { id }),
+  cleanupMergedWorktrees: (dryRun: boolean) => invoke<CleanupCandidate[]>("cleanup_merged_worktrees", { dryRun }),
   listRepos: () => invoke<Repo[]>("list_repos"),
   addRepo: (path: string) => invoke<Repo>("add_repo", { path }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
