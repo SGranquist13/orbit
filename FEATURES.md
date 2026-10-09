@@ -70,7 +70,7 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
-| Bundled `shipkit` pack (only pack shipped with the app) | P1 | ✅ | `/shipkit:ship`, `fix-ci`, `address-comments`, `rebase`, `write-ticket`, `start-issue` |
+| Bundled `shipkit` pack (only pack shipped with the app) | P1 | ✅ | `/shipkit:ship`, `preflight`, `fix-ci`, `address-comments`, `rebase`, `write-ticket`, `start-issue`, plus 6 profiles |
 | `/` autocomplete across enabled packs, Tab to complete | P1 | ✅ | |
 | Pinned skills as one-click chips above the composer | P1 | ✅ | e2e runs `rebase` via its chip |
 | Pin / unpin skills | P1 | 🟢 | Skill packs dialog |
@@ -111,16 +111,16 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Void (dark, default) / Paper (light) themes, Ctrl+Shift+L | P1 | ✅ | Native title bar follows |
-| Greyscale chrome; colour only for function (running, done, error, diff, PR state) | P1 | 🟢 | Verified in mock UI; accent switcher removed by request |
-| Inter everywhere in the UI (mono only for code), bundled offline | P1 | 🟢 | Verified in mock UI |
+| Greyscale chrome; colour only for function (running, done, error, diff, PR state) | P1 | ✅ | Seen in real-app e2e screenshots; accent switcher removed by request |
+| Inter everywhere in the UI (mono only for code), bundled offline | P1 | ✅ | Seen in real-app e2e screenshots |
 | Dither: rules, selected-row fade, running sweeps, progress | P1 | ✅ | |
 | Black-hole brand mark (sidebar logo + app icon) from `src/assets/orbit.png` | P1 | 🟢 | Icon set generated; check it in the taskbar after a build |
 | Start page: black hole with a planet orbiting (passes behind the horizon) | P2 | 🟢 | Verified in mock UI; respects reduced motion |
 | Native confirm dialogs (archive, merge, remove pack) | P2 | 🟢 | |
-| Product name: **Orbit** | P1 | 🟢 | Crate, binary, window, identifier `dev.steven.orbit`, data dir `~/.orbit` (auto-migrates `~/.agentic-ide`) |
+| Product name: **Orbit** | P1 | ✅ | Crate, binary, window, identifier `dev.steven.orbit`, data dir `~/.orbit` (auto-migrates `~/.agentic-ide`) |
 | Focus layout: Ship panel hidden until you click **Ship** in the header (Ctrl+.), never opens on its own; header hint shows PR # + checks dot or changed-file count | P1 | ✅ | e2e opens/closes it; verified in mock UI |
-| Narrower, quieter sidebar (216px); collapses to an icon rail (Ctrl+B) | P1 | 🟢 | Verified in mock UI |
-| Wider chat column (880px) and bigger composer | P1 | 🟢 | Verified in mock UI |
+| Narrower, quieter sidebar (216px); collapses to an icon rail (Ctrl+B) | P1 | 🟡 | Slim sidebar seen in the real app; collapse-to-rail only checked in mock |
+| Wider chat column (880px) and bigger composer | P1 | ✅ | Seen in real-app e2e screenshots |
 | Focus mode (Ctrl+\): hides sidebar and Ship panel | P2 | 🟢 | Verified in mock UI |
 | Responsive layout below ~1000px | P3 | ⬜ | Partly covered by the sidebar rail |
 
@@ -133,7 +133,7 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | UI mock mode for design iteration (`bun run dev`) | P1 | ✅ | Same components as the real app; fake data |
 | Real-app e2e (`bun run e2e`) | P1 | ✅ | Needs `bun run dev` running and a debug build; shares `scripts/e2e-harness.mjs` |
 | GitHub e2e (`bun run e2e:github`): real PRs, CI, merge, issues in a private sandbox (`ORBIT_GH_SANDBOX`) | P1 | ✅ | Opt-in; creates and closes PRs/issues in the sandbox |
-| Rust unit tests incl. recorded agent fixtures | P1 | ✅ | 28 passing + 3 opt-in live tests |
+| Rust unit tests incl. recorded agent fixtures | P1 | ✅ | 30 passing + 3 opt-in live tests |
 | macOS / Linux | P3 | 💭 | Tauri supports them; untested |
 
 ## Mock vs real
