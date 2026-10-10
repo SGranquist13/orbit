@@ -84,6 +84,39 @@ Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyos
 - Which agent finds vs applies? [the workspace's agent; option to let the other agent find, for a second view]
 - Run automatically before Ship, or only on click? [only on click / routine]
 
+### 9. Local models via Ollama (for utility tasks)
+
+**Want:** Let people point some of Orbit's small, behind-the-scenes model calls at a local Ollama model, if they want to. Claude / Codex stay the default and the only coding agents; nobody has to touch this.
+
+**Position (proposed):** Ollama is **not a chat provider**. Local models are far behind frontier models at agentic coding, and most machines can't run the ones that come close. It's a **utility model** option: the short, cheap, structured calls around the agents, where a 3–8B model is good enough and "free, private, offline" is a real win.
+
+**Where Orbit makes (or will make) utility calls:**
+- Inbox prompt suggestions (today: one-shot `claude -p --model haiku`, `suggest_prompts` in `lib.rs`).
+- Workspace names / branch slugs from the first prompt (today: slugify).
+- Save-point and squash commit messages (#7).
+- Routine run summaries and "nothing to do" detection (#6).
+- _Later:_ PR description drafts, Simplify candidate triage (#8), transcript titles.
+
+Coding turns, Simplify edits, conflict resolution and anything with tools stay on Claude / Codex.
+
+**Sketch:**
+- **`llm.rs`: one utility-call API** (`complete_json(task, prompt, schema)`) with two backends: the current Claude CLI one-shot, and Ollama over HTTP (`POST /api/chat`, `stream: false`, `format: <JSON schema>` for structured output; `GET /api/tags` to list installed models). Every utility call goes through it, so each task can be pointed anywhere.
+- **Settings > Models** (new section, or part of Agents):
+  - Ollama: URL (default `http://localhost:11434`), live status (connected / not running / not installed), installed models list.
+  - **Per-task model**, each one Default (Claude Haiku) / Ollama: `<model>` / Off: Inbox suggestions, Workspace names, Commit messages, Routine summaries. One "Use local for all utility tasks" shortcut.
+  - A note on the trade-off: local = free and private (code never leaves the machine), but slower on weak hardware and less accurate.
+- **Always falls back.** If Ollama is down or returns invalid JSON, Orbit uses the default for that call (or skips it, for optional ones like suggestions) and shows a quiet status in Settings, never an error in the chat.
+- **Nothing to install from Orbit.** We detect Ollama; we don't download it or pull models (link to `ollama pull <model>` with a suggested small model).
+
+**Optional, experimental: local model as the agent.** Both CLIs can already talk to a local server: Codex has an open-source / Ollama provider mode, and Claude Code can be pointed at an Anthropic-compatible endpoint (`ANTHROPIC_BASE_URL`), which recent Ollama versions expose (both need verifying against the installed versions). So instead of a third chat provider, the New Workspace model picker could offer "Local (Ollama): `<model>`" under Codex/Claude, behind an "Experimental" toggle in Settings > Models. Low cost because it reuses the existing adapters; the quality caveat is shown where you pick it.
+
+**Open questions (proposed defaults in brackets):**
+- Utility-only, or also the experimental local-agent option? [utility first; local agent as a later, flagged follow-up]
+- Which tasks get a per-task switch in v1? [suggestions, workspace names, commit messages, routine summaries]
+- Default when Ollama is set up: switch everything to local automatically, or keep each task on Default until picked? [keep Default; user opts in per task or with "use local for all"]
+- Other local servers (LM Studio, llama.cpp server) via an OpenAI-compatible URL? [design `llm.rs` for it, ship Ollama only]
+- Suggested starter model? [a small instruct model that handles JSON well, e.g. a 3–8B Qwen/Llama; pick after testing on our real prompts]
+
 ### 1. Focus on the main workspace (chat / editor) (built)
 
 **Decided (2026-10-08, building):** defaults accepted: fixed widths; opening Ship pushes the chat narrower; sidebar collapse state is global; the Ship button shows a small hint (PR number, checks dot).
