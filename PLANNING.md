@@ -62,7 +62,7 @@ Source: [addyosmani/agent-skills: git-workflow-and-versioning](https://github.co
 - Hard block on failing checks, or allow an override? [block, with "Ship anyway" in the inbox row]
 - "Long-lived" threshold for the inbox? [3 days or 20 commits behind]
 
-### 8. Simplification pass (built-in action)
+### 8. Simplification pass (built-in action) (built, mock-verified)
 
 Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyosmani/agent-skills/blob/main/skills/code-simplification/SKILL.md). Core ideas: preserve behaviour exactly (tests pass unmodified); follow project conventions; clarity over cleverness, not fewer lines; scope to what changed; understand before touching (Chesterton's fence); one simplification at a time, tested, committed; refactors kept separate from features.
 

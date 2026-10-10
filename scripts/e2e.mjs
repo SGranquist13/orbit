@@ -335,6 +335,94 @@ await step("trunk-save-points", async () => {
   await invoke("set_check_command", { repoId: repoRow.id, cmd: null });
 });
 
+await step("simplify", async () => {
+  // Find over-nested code with the read-only pass, apply every candidate, and let Orbit police it:
+  // refactor commits only where the repo's check (a real behaviour test) stays green, tests untouched.
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Reply with the single word ok. Do not create or edit any files." });
+  await waitFor("setup turn completed", `${turnEnds} >= 1`, 120_000);
+  const g = (...a) => execFileSync("git", a, { cwd: ws.path, encoding: "utf8" }).trim();
+  const commit = (msg) => g("-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qm", msg);
+  const wipHead = g("rev-parse", "HEAD");
+  fs.writeFileSync(
+    path.join(ws.path, "shipping.js"),
+    [
+      "function shippingCost(order) {",
+      "  let cost = 0;",
+      "  if (order) {",
+      "    if (order.items) {",
+      "      if (order.items.length > 0) {",
+      "        if (order.destination) {",
+      "          if (order.destination.country === 'US') {",
+      "            if (order.total > 100) {",
+      "              cost = 0;",
+      "            } else {",
+      "              cost = 5;",
+      "            }",
+      "          } else {",
+      "            cost = 20;",
+      "          }",
+      "        }",
+      "      }",
+      "    }",
+      "  }",
+      "  return cost;",
+      "}",
+      "module.exports = { shippingCost };",
+      "",
+    ].join("\n"),
+  );
+  const testSrc = [
+    "const assert = require('node:assert');",
+    "const { shippingCost } = require('./shipping.js');",
+    "assert.strictEqual(shippingCost(null), 0);",
+    "assert.strictEqual(shippingCost({ items: [] }), 0);",
+    "assert.strictEqual(shippingCost({ items: [1], destination: { country: 'US' }, total: 150 }), 0);",
+    "assert.strictEqual(shippingCost({ items: [1], destination: { country: 'US' }, total: 50 }), 5);",
+    "assert.strictEqual(shippingCost({ items: [1], destination: { country: 'FR' }, total: 50 }), 20);",
+    "",
+  ].join("\n");
+  fs.writeFileSync(path.join(ws.path, "shipping.test.js"), testSrc);
+  g("add", "-A");
+  commit("feat: shipping cost");
+  const featureHead = g("rev-parse", "HEAD");
+
+  const repoRow = (await invoke("list_repos"))[0];
+  await invoke("set_check_command", { repoId: repoRow.id, cmd: "node shipping.test.js" });
+  await invoke("update_settings", { patch: { simplifyModel: "haiku" } });
+
+  await invoke("simplify_find", { workspaceId: ws.id });
+  let st;
+  await h.until("find finished", async () => {
+    st = await invoke("simplify_state", { workspaceId: ws.id });
+    if (st.error) throw new Error(`find failed: ${st.error}`);
+    return st.phase === "ready";
+  }, 300_000, 2000);
+  if (st.candidates.length < 1) throw new Error("find returned no candidates for an obviously over-nested function");
+  if (st.candidates.some((c) => /\.test\./.test(c.file))) throw new Error("a candidate targets a test file");
+  await ui.openShip(); // make sure the right-hand area is in a known state, then open the Simplify panel
+  await js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Simplify').click()`);
+  await waitFor("candidates listed in the panel", `return document.body.innerText.includes(${JSON.stringify(st.candidates[0].title.slice(0, 20))})`, 10_000);
+  await shot("15-simplify-ready");
+
+  await invoke("simplify_apply", { workspaceId: ws.id, candidateIds: st.candidates.map((c) => c.id) });
+  await h.until("apply finished", async () => (await invoke("simplify_state", { workspaceId: ws.id })).phase === "done", 600_000, 3000);
+  st = await invoke("simplify_state", { workspaceId: ws.id });
+  await shot("16-simplify-done");
+
+  const applied = st.rows.filter((r) => r.status === "applied");
+  if (applied.length < 1) throw new Error(`expected at least one applied refactor, got ${JSON.stringify(st.rows)}`);
+  if (applied.some((r) => r.unchecked)) throw new Error("applied rows should have been checked");
+  const subjects = g("log", "--format=%s", `${featureHead}..HEAD`).split("\n").filter(Boolean);
+  if (!subjects.length || !subjects.every((s) => s.startsWith("refactor:"))) throw new Error(`unexpected commits after simplify: ${subjects}`);
+  if (subjects.length !== applied.length) throw new Error(`${subjects.length} commits for ${applied.length} applied rows`);
+  if (g("diff", featureHead, "HEAD", "--", "shipping.test.js")) throw new Error("the test file was changed");
+  if (g("status", "--porcelain")) throw new Error("worktree left dirty");
+  execFileSync("node", ["shipping.test.js"], { cwd: ws.path }); // behaviour preserved
+  if (wipHead === g("rev-parse", "HEAD")) throw new Error("HEAD did not move");
+  await invoke("set_check_command", { repoId: repoRow.id, cmd: null });
+  await invoke("update_settings", { patch: { simplifyModel: "sonnet" } });
+});
+
 await step("resume-after-restart", async () => {
   await quit();
   await launch();
