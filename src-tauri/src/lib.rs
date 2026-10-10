@@ -1,4 +1,5 @@
 mod agent;
+mod checks;
 mod db;
 mod gh;
 mod git;
@@ -7,6 +8,7 @@ mod related;
 mod remote;
 mod settings;
 mod skills;
+mod trunk;
 mod usage;
 
 use agent::{AgentEvent, AgentKind, Command, SessionConfig, SessionHandle};
@@ -137,6 +139,12 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
             AgentEvent::SessionStarted { session_id, .. } if !session_id.is_empty() => {
                 let _ = db.set_agent_session(ws_id, session_id);
             }
+            // A new message supersedes the last failed-checks flag.
+            AgentEvent::UserMessage { .. } => {
+                if db.clear_checks_failed(ws_id).unwrap_or(false) {
+                    updated = db.workspace(ws_id).ok();
+                }
+            }
             AgentEvent::TurnStarted => updated = db.set_status(ws_id, "running").ok(),
             AgentEvent::TurnCompleted { is_error, interrupted, .. } => {
                 let status = if *interrupted { "idle" } else if *is_error { "error" } else { "done" };
@@ -153,6 +161,11 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     if let AgentEvent::TurnCompleted { is_error, error, interrupted: false, .. } = &ev {
         notify_turn_done(app, &state.settings(), updated.as_ref(), *is_error, error.as_deref());
         remote::on_turn_completed(state, updated.as_ref(), *is_error, error.as_deref());
+    }
+    // Save point + sync bookkeeping happen off the event thread (and after the status update above).
+    if matches!(ev, AgentEvent::TurnCompleted { .. }) {
+        let (app2, state2, id) = (app.clone(), state.clone(), ws_id.to_string());
+        tauri::async_runtime::spawn_blocking(move || trunk::save_point(&app2, &state2, &id));
     }
     let payload = AgentEventPayload { workspace_id: ws_id.to_string(), seq, ts, event: ev };
     remote::publish_event(&payload);
@@ -348,6 +361,7 @@ async fn create_workspace(
         dismissed_seq: 0,
         profile: profile.filter(|p| !p.is_empty()),
         snoozed_until: 0,
+            ..Default::default()
     };
     state.db().insert_workspace(&ws).map_err(err)?;
     // The repo's "always attach" folders (read-only); skip ones that have since disappeared.
@@ -670,7 +684,7 @@ async fn pr_status(state: State<'_, AppState>, id: String) -> CmdResult<Option<g
 }
 
 #[tauri::command]
-async fn merge_pr(state: State<'_, AppState>, id: String, number: u64) -> CmdResult<()> {
+async fn merge_pr(app: AppHandle, state: State<'_, AppState>, id: String, number: u64) -> CmdResult<trunk::MergeOutcome> {
     let ws = state.db().workspace(&id).map_err(err)?;
     let settings = state.settings();
     tauri::async_runtime::spawn_blocking(move || {
@@ -679,7 +693,9 @@ async fn merge_pr(state: State<'_, AppState>, id: String, number: u64) -> CmdRes
     })
         .await
         .map_err(err)?
-        .map_err(err)
+        .map_err(err)?;
+    // Archive/cleanup and syncing the other workspaces; neither can fail the merge itself.
+    Ok(trunk::after_merge(&app, state.inner(), &id).await)
 }
 
 #[tauri::command]
@@ -1031,7 +1047,10 @@ pub fn run() {
             app.manage::<AppState>(state.clone());
             // Phone bridge: listens only while Settings > Mobile allows it.
             let handle = app.handle().clone();
+            let (sync_app, sync_state) = (handle.clone(), state.clone());
             tauri::async_runtime::spawn(async move { remote::apply(&handle, &state).await });
+            // Keeps idle workspaces close to base (Settings > Git).
+            trunk::start(sync_app, sync_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1088,6 +1107,13 @@ pub fn run() {
             discover_related,
             get_related_defaults,
             set_related_default,
+            trunk::get_check_command,
+            trunk::set_check_command,
+            trunk::run_checks,
+            trunk::prepare_ship,
+            trunk::undo_last_turn,
+            trunk::workspace_overlaps,
+            trunk::sync_now,
             remote::remote_status,
             remote::remote_pairing,
             remote::remote_devices,

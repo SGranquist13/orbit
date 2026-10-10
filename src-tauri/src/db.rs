@@ -17,7 +17,7 @@ pub struct Repo {
     pub base_branch: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     pub id: String,
@@ -41,6 +41,15 @@ pub struct Workspace {
     pub profile: Option<String>,
     /// Hidden from the inbox until this time (ms epoch); 0 = not snoozed.
     pub snoozed_until: i64,
+    /// The last Ship gate / check run failed (cleared by a passing check or a new user message).
+    pub checks_failed: bool,
+    pub checks_command: Option<String>,
+    pub checks_output: Option<String>,
+    /// Files that conflicted when Orbit last tried to rebase onto base; empty = no known conflict.
+    pub sync_conflicts: Vec<String>,
+    /// Commits on `origin/<base>` this branch lacks / has on top, as of the last sync pass.
+    pub behind: i64,
+    pub ahead: i64,
 }
 
 /// What the inbox needs to know about a workspace's recent activity.
@@ -154,6 +163,15 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         dismissed_seq: r.get("dismissed_seq")?,
         profile: r.get("profile")?,
         snoozed_until: r.get("snoozed_until")?,
+        checks_failed: r.get::<_, i64>("checks_failed")? != 0,
+        checks_command: r.get("checks_command")?,
+        checks_output: r.get("checks_output")?,
+        sync_conflicts: r
+            .get::<_, Option<String>>("sync_conflicts")?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        behind: r.get("behind")?,
+        ahead: r.get("ahead")?,
     })
 }
 
@@ -185,10 +203,23 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("dismissed_seq", "ALTER TABLE workspaces ADD COLUMN dismissed_seq INTEGER NOT NULL DEFAULT 0"),
         ("profile", "ALTER TABLE workspaces ADD COLUMN profile TEXT"),
         ("snoozed_until", "ALTER TABLE workspaces ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0"),
+        ("checks_failed", "ALTER TABLE workspaces ADD COLUMN checks_failed INTEGER NOT NULL DEFAULT 0"),
+        ("checks_command", "ALTER TABLE workspaces ADD COLUMN checks_command TEXT"),
+        ("checks_output", "ALTER TABLE workspaces ADD COLUMN checks_output TEXT"),
+        ("sync_conflicts", "ALTER TABLE workspaces ADD COLUMN sync_conflicts TEXT"),
+        ("behind", "ALTER TABLE workspaces ADD COLUMN behind INTEGER NOT NULL DEFAULT 0"),
+        ("ahead", "ALTER TABLE workspaces ADD COLUMN ahead INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
         }
+    }
+    let repo_cols: Vec<String> = conn
+        .prepare("PRAGMA table_info(repos)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<Result<_, _>>()?;
+    if !repo_cols.iter().any(|c| c == "check_command") {
+        conn.execute("ALTER TABLE repos ADD COLUMN check_command TEXT", [])?;
     }
     Ok(())
 }
@@ -305,6 +336,55 @@ impl Db {
     pub fn set_snoozed(&self, id: &str, until: i64) -> anyhow::Result<Workspace> {
         self.conn.execute("UPDATE workspaces SET snoozed_until = ?2 WHERE id = ?1", params![id, until])?;
         self.workspace(id)
+    }
+
+    /// Records a check run's outcome. `failed` raises the inbox flag; a pass clears it.
+    pub fn set_checks(&self, id: &str, failed: bool, command: &str, output: &str) -> anyhow::Result<Workspace> {
+        self.conn.execute(
+            "UPDATE workspaces SET checks_failed = ?2, checks_command = ?3, checks_output = ?4 WHERE id = ?1",
+            params![id, failed, command, output],
+        )?;
+        self.workspace(id)
+    }
+
+    /// Clears the failed-checks flag; true if it was set.
+    pub fn clear_checks_failed(&self, id: &str) -> anyhow::Result<bool> {
+        Ok(self.conn.execute("UPDATE workspaces SET checks_failed = 0 WHERE id = ?1 AND checks_failed = 1", [id])? > 0)
+    }
+
+    pub fn set_sync(&self, id: &str, behind: i64, ahead: i64, conflicts: &[String]) -> anyhow::Result<Workspace> {
+        let json = if conflicts.is_empty() { None } else { Some(serde_json::to_string(conflicts)?) };
+        self.conn.execute(
+            "UPDATE workspaces SET behind = ?2, ahead = ?3, sync_conflicts = ?4 WHERE id = ?1",
+            params![id, behind, ahead, json],
+        )?;
+        self.workspace(id)
+    }
+
+    /// Per-repo override of the auto-detected check command.
+    pub fn check_command(&self, repo_id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT check_command FROM repos WHERE id = ?1", [repo_id], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten())
+    }
+
+    pub fn set_check_command(&self, repo_id: &str, cmd: Option<&str>) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE repos SET check_command = ?2 WHERE id = ?1", params![repo_id, cmd])?;
+        Ok(())
+    }
+
+    /// The user's latest message (with its `/skill` prefix), for naming save-point commits.
+    pub fn last_user_text(&self, id: &str) -> Option<String> {
+        match self.latest(id, "userMessage").ok().flatten()?.event {
+            AgentEvent::UserMessage { text, skill } => Some(match skill {
+                Some(skill) if text.is_empty() => format!("/{skill}"),
+                Some(skill) => format!("/{skill} {text}"),
+                None => text,
+            }),
+            _ => None,
+        }
     }
 
     pub fn set_agent_session(&self, id: &str, session_id: &str) -> anyhow::Result<()> {
@@ -525,6 +605,7 @@ mod tests {
             id: "w".into(), repo_id: "r".into(), name: "w".into(), branch: "b".into(), path: "/w".into(),
             agent: "claude".into(), model: None, status: "idle".into(), agent_session_id: None, issue_number: None,
             created_at: 0, updated_at: 0, seen_seq: 0, dismissed_seq: 0, profile: None, snoozed_until: 0,
+            ..Default::default()
         };
         db.insert_workspace(&ws).unwrap();
         db.archive_workspace("w").unwrap();
@@ -559,6 +640,7 @@ mod tests {
             dismissed_seq: 0,
             profile: None,
             snoozed_until: 0,
+            ..Default::default()
         };
         db.insert_workspace(&ws).unwrap();
         db.append_event("w", &AgentEvent::UserMessage { text: "hi".into(), skill: None }).unwrap();
@@ -614,6 +696,7 @@ mod tests {
             dismissed_seq: 0,
             profile: None,
             snoozed_until: 0,
+            ..Default::default()
         };
         db.insert_workspace(&mk("w")).unwrap();
         db.insert_workspace(&mk("x")).unwrap();
@@ -677,6 +760,7 @@ mod tests {
             dismissed_seq: 0,
             profile: None,
             snoozed_until: 0,
+            ..Default::default()
         };
         db.insert_workspace(&ws).unwrap();
 
