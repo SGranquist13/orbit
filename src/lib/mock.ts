@@ -27,6 +27,12 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   dismissedSeq: 0,
   profile: null,
   snoozedUntil: 0,
+  checksFailed: false,
+  checksCommand: null,
+  checksOutput: null,
+  syncConflicts: [],
+  behind: 0,
+  ahead: 0,
 });
 
 const workspaces: Workspace[] = [
@@ -34,6 +40,8 @@ const workspaces: Workspace[] = [
   ws("w2", "r1", "Billing webhooks", "codex", "done"),
   ws("w3", "r1", "Refactor auth flow", "claude", "idle"),
   ws("w4", "r2", "Refresh homepage hero", "claude", "error"),
+  ws("w5", "r1", "Migrate billing schema", "claude", "idle"),
+  ws("w6", "r2", "Try new pricing layout", "codex", "idle"),
 ];
 
 // w1 running (seen), w2 finished unseen, w3 asked a question unseen, w4 failed unseen, w1's PR has failing checks.
@@ -43,6 +51,16 @@ workspaces[2].profile = "shipkit:planner";
 workspaces[3].profile = "shipkit:debugger";
 workspaces[0].issueNumber = 398;
 for (const w of workspaces) w.seenSeq = seenSeq[w.id] ?? 0;
+// Trunk handling: w2's ship gate failed, w5's auto-sync hit conflicts, w6 is old and far behind base.
+Object.assign(workspaces[1], {
+  checksFailed: true,
+  checksCommand: "bun run typecheck",
+  checksOutput: "src/billing/webhook.ts(42,7): error TS2322: Type 'string | undefined' is not assignable to type 'string'.\n1 error",
+});
+Object.assign(workspaces[4], { behind: 4, ahead: 3, syncConflicts: ["src/db/schema.ts", "src/billing/invoice.ts"] });
+Object.assign(workspaces[5], { behind: 23, ahead: 1, createdAt: now - 5 * 86_400_000 });
+workspaces[4].seenSeq = 20;
+workspaces[5].seenSeq = 21;
 
 const min = 60_000;
 const sum = (id: string, ageMin: number, p: Partial<Summary>): Summary => ({
@@ -60,6 +78,8 @@ const summaries: Summary[] = [
   sum("w1", 0, { lastSeq: 40, lastTurnSeq: 30, lastAssistantText: "Pushed the branch. Opening a draft PR with the template now.", lastUserText: "/shipkit:ship mention the slug fallback" }),
   sum("w2", 4, { lastSeq: 12, lastTurnSeq: 12, lastAssistantText: "Webhook retries now back off exponentially and the handler is idempotent. Added tests for duplicate delivery.", lastUserText: "Make the Stripe webhook handler idempotent" }),
   sum("w3", 55, { lastSeq: 9, lastTurnSeq: 9, lastAssistantText: "I can split the auth flow into session and token modules.\n\nDo you want me to keep the legacy cookie path working during the migration?", lastUserText: "Refactor the auth flow" }),
+  sum("w5", 70, { lastSeq: 20, lastTurnSeq: 20, lastAssistantText: "Schema migration written and tested locally.", lastUserText: "Migrate the billing schema to the new invoice tables" }),
+  sum("w6", 600, { lastSeq: 21, lastTurnSeq: 21, lastAssistantText: "Pricing layout prototype is ready for a look.", lastUserText: "Try a three-column pricing layout" }),
   sum("w4", 190, { lastSeq: 8, lastTurnSeq: 8, lastTurnError: "Build failed: cannot resolve ./hero.png", lastAssistantText: "The hero image import is missing from the repo.", lastUserText: "Refresh the homepage hero" }),
 ];
 
@@ -250,6 +270,15 @@ let settings: Settings = {
   deleteBranchOnMerge: false,
   aiSuggestions: true,
   suggestionModel: "haiku",
+  saveCommits: true,
+  squashWip: true,
+  checksMode: "block",
+  syncMode: "auto",
+  syncIntervalMinutes: 10,
+  staleDays: 3,
+  staleBehind: 20,
+  archiveOnMerge: true,
+  deleteLocalBranch: true,
   remoteEnabled: false,
   remotePort: 47821,
   remotePush: true,
@@ -260,7 +289,10 @@ const ENUMS: Record<string, string[]> = {
   mergeMethod: ["squash", "merge", "rebase"],
   suggestionModel: ["haiku", "sonnet"],
   defaultAgent: ["claude", "codex"],
+  checksMode: ["off", "warn", "block"],
+  syncMode: ["off", "suggest", "auto"],
 };
+const checkOverrides: Record<string, string | null> = {};
 let pins = ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];
 const environment: EnvironmentInfo = {
   claude: { path: "C:\\Users\\steven\\AppData\\Roaming\\npm\\claude.cmd", version: "2.1.4", ok: true },
@@ -404,6 +436,35 @@ export function installMockBackend() {
           }
           return list;
         }
+        case "get_check_command":
+          return { detected: a.repoId === "r1" ? "bun run typecheck" : null, override: checkOverrides[a.repoId!] ?? null };
+        case "set_check_command":
+          checkOverrides[a.repoId!] = (args as { cmd: string | null }).cmd;
+          return null;
+        case "run_checks":
+          return { ok: true, command: "bun run typecheck", outputTail: "", durationMs: 1800 };
+        case "prepare_ship": {
+          const w = workspaces.find((x) => x.id === a.workspaceId);
+          const skip = (args as { skipChecks?: boolean }).skipChecks;
+          if (w?.checksFailed && !skip) {
+            const checks = { ok: false, command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
+            return settings.checksMode === "block" ? { ok: false, checks, squashed: 0 } : { ok: true, checks, squashed: 2 };
+          }
+          if (w && skip) w.checksFailed = false;
+          return { ok: true, checks: null, squashed: 2 };
+        }
+        case "undo_last_turn":
+          return null;
+        case "workspace_overlaps":
+          return [{ a: "w1", b: "w3", files: ["src/auth/session.ts", "src/lib/slug.ts"] }];
+        case "sync_now": {
+          const w = workspaces.find((x) => x.id === a.workspaceId)!;
+          w.behind = 0;
+          w.syncConflicts = [];
+          return { ...w };
+        }
+        case "merge_pr":
+          return { archived: settings.archiveOnMerge };
         case "pr_status":
           return id === "w1" ? pr : null;
         case "workspace_summaries":

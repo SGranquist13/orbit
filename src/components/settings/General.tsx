@@ -1,15 +1,12 @@
-import { useState } from "react";
 import type { AgentKind } from "../../lib/ipc";
-import { defaultModelFor, modelsFor, normalizePrefix } from "../../lib/settings";
+import { defaultModelFor, modelsFor } from "../../lib/settings";
 import { useTheme, type ThemeMode } from "../../lib/theme";
-import { Row, Segmented, Select, TextInput, Toggle, save, useSettings } from "./controls";
+import { Row, Segmented, Select, Toggle, save, useSettings } from "./controls";
 
 export function General() {
   const s = useSettings();
   const mode = useTheme((t) => t.mode);
-  const [draftPrefix, setDraftPrefix] = useState<string | null>(null);
   if (!s) return null;
-  const prefix = draftPrefix === null ? s.branchPrefix : normalizePrefix(draftPrefix);
 
   const modelSelect = (agent: AgentKind) => {
     const current = defaultModelFor(agent, s);
@@ -40,27 +37,6 @@ export function General() {
             { value: "light", label: "Light" },
           ]}
           onChange={(v) => useTheme.getState().setMode(v)}
-        />
-      </Row>
-      <Row
-        label="Branch prefix"
-        field="branchPrefix"
-        description={
-          <>
-            Prepended to the branch of every new workspace, for example{" "}
-            <span className="font-medium text-dim">{prefix}fix-login-3fa2</span>. Leave empty for none.
-          </>
-        }
-      >
-        <TextInput
-          label="Branch prefix"
-          value={s.branchPrefix}
-          placeholder="none"
-          onDraft={setDraftPrefix}
-          onCommit={(v) => {
-            setDraftPrefix(null);
-            void save({ branchPrefix: v });
-          }}
         />
       </Row>
       <Row label="Default agent" field="defaultAgent" description="Pre-selected in New workspace, and used by Issues and New ticket.">

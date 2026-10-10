@@ -1,7 +1,8 @@
 import { Command } from "cmdk";
-import { AlarmClock, CircleDot, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, UserRound, Zap } from "lucide-react";
+import { AlarmClock, CircleDot, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, Undo2, UserRound, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
-import { activeProfile } from "../lib/ipc";
+import { confirmAction } from "../lib/confirm";
+import { api, activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
 import { pickRepo } from "./Sidebar";
@@ -84,6 +85,33 @@ export function Palette() {
                   onSelect={run(() => void useApp.getState().compactSession(selectedId))}
                 >
                   <Minimize2 className="size-3.5" /> Compact context
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Undo last turn (drop its save point)"
+                  onSelect={run(() => {
+                    void confirmAction("Undo the last turn? Its save-point commit and any edits since are discarded.", "Undo").then(
+                      (ok) => void (ok && useApp.getState().undoLastTurn(selectedId)),
+                    );
+                  })}
+                >
+                  <Undo2 className="size-3.5" /> Undo last turn
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Sync with base now (rebase onto the base branch)"
+                  onSelect={run(() => void useApp.getState().syncNow(selectedId))}
+                >
+                  <GitBranch className="size-3.5" /> Sync with base now
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Run checks"
+                  onSelect={run(() => {
+                    api.runChecks(selectedId).catch((e) => useApp.getState().setError(String(e)));
+                  })}
+                >
+                  <ListChecks className="size-3.5" /> Run checks
                 </Command.Item>
                 <Command.Item
                   className={item}

@@ -31,6 +31,40 @@ export interface Workspace {
   profile: string | null;
   /** Hidden from the inbox until this time (ms epoch); 0 = not snoozed. */
   snoozedUntil: number;
+  /** The last Ship gate / check run failed (cleared by a pass or a new message). */
+  checksFailed: boolean;
+  checksCommand: string | null;
+  checksOutput: string | null;
+  /** Files that conflicted when Orbit last tried to rebase onto base. */
+  syncConflicts: string[];
+  /** Commits on base this branch lacks / has on top. */
+  behind: number;
+  ahead: number;
+}
+
+/** Result of a check run (src-tauri/src/checks.rs). */
+export interface CheckResult {
+  ok: boolean;
+  command: string;
+  outputTail: string;
+  durationMs: number;
+}
+
+export interface CheckCommandInfo {
+  detected: string | null;
+  override: string | null;
+}
+
+export interface PrepareShip {
+  ok: boolean;
+  checks: CheckResult | null;
+  squashed: number;
+}
+
+export interface Overlap {
+  a: string;
+  b: string;
+  files: string[];
 }
 
 export type AgentEvent =
@@ -243,6 +277,16 @@ export interface Settings {
   deleteBranchOnMerge: boolean;
   aiSuggestions: boolean;
   suggestionModel: "haiku" | "sonnet";
+  // git handling
+  saveCommits: boolean;
+  squashWip: boolean;
+  checksMode: "off" | "warn" | "block";
+  syncMode: "off" | "suggest" | "auto";
+  syncIntervalMinutes: number;
+  staleDays: number;
+  staleBehind: number;
+  archiveOnMerge: boolean;
+  deleteLocalBranch: boolean;
   remoteEnabled: boolean;
   remotePort: number;
   remotePush: boolean;
@@ -333,7 +377,16 @@ export const api = {
   removePack: (name: string) => invoke<void>("remove_pack", { name }),
   setPackEnabled: (name: string, enabled: boolean) => invoke<void>("set_pack_enabled", { name, enabled }),
   prStatus: (id: string) => invoke<PrStatus | null>("pr_status", { id }),
-  mergePr: (id: string, number: number) => invoke<void>("merge_pr", { id, number }),
+  /** `archived`: Orbit also archived the workspace and removed its worktree. */
+  mergePr: (id: string, number: number) => invoke<{ archived: boolean }>("merge_pr", { id, number }),
+  getCheckCommand: (repoId: string) => invoke<CheckCommandInfo>("get_check_command", { repoId }),
+  setCheckCommand: (repoId: string, cmd: string | null) => invoke<void>("set_check_command", { repoId, cmd }),
+  runChecks: (workspaceId: string) => invoke<CheckResult>("run_checks", { workspaceId }),
+  /** The Ship gate: checks per `checksMode`, then squash save points. Run `shipkit:ship` only when `ok`. */
+  prepareShip: (workspaceId: string, skipChecks = false) => invoke<PrepareShip>("prepare_ship", { workspaceId, skipChecks }),
+  undoLastTurn: (workspaceId: string) => invoke<void>("undo_last_turn", { workspaceId }),
+  workspaceOverlaps: () => invoke<Overlap[]>("workspace_overlaps"),
+  syncNow: (workspaceId: string) => invoke<Workspace>("sync_now", { workspaceId }),
   markPrReady: (id: string, number: number) => invoke<void>("mark_pr_ready", { id, number }),
   listAttachments: (workspaceId: string) => invoke<Attachment[]>("list_attachments", { workspaceId }),
   attachFolder: (workspaceId: string, path: string) => invoke<Attachment>("attach_folder", { workspaceId, path }),

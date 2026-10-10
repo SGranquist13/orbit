@@ -24,6 +24,17 @@ export function RightPanel({ ws }: { ws: Workspace }) {
   const files = useApp((s) => s.changes[ws.id]);
   const repo = useApp((s) => s.repos.find((r) => r.id === ws.repoId));
   const totals = diffTotals(files);
+  const overlaps = useApp((s) => s.overlaps);
+  const workspaces = useApp((s) => s.workspaces);
+  const nChanges = files?.length ?? 0;
+  useEffect(() => {
+    void useApp.getState().refreshOverlaps();
+  }, [ws.id, nChanges]);
+  // "Also edited in <workspace>: file, file" for each live workspace touching the same files.
+  const alsoEdited = overlaps
+    .filter((o) => o.a === ws.id || o.b === ws.id)
+    .map((o) => ({ name: workspaces.find((w) => w.id === (o.a === ws.id ? o.b : o.a))?.name, files: o.files }))
+    .filter((o) => o.name);
 
   const archive = async () => {
     const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?\n\nThe branch ${ws.branch} is kept.`, "Archive");
@@ -66,6 +77,13 @@ export function RightPanel({ ws }: { ws: Workspace }) {
         <GitBranch className="size-3" />
         <span className="truncate">→ {repo?.baseBranch ?? "main"}</span>
       </div>
+
+      {alsoEdited.map((o) => (
+        <p key={o.name} className="truncate px-4 pb-2 text-[11px] text-mute" title={o.files.join(", ")}>
+          Also edited in {o.name}: {o.files.slice(0, 3).join(", ")}
+          {o.files.length > 3 ? ` +${o.files.length - 3}` : ""}
+        </p>
+      ))}
 
       <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {files?.map((f) => {
@@ -111,7 +129,7 @@ function ShipSection({ ws }: { ws: Workspace }) {
     return (
       <div className="space-y-2.5 px-4 py-4">
         <p className="text-[12px] text-mute">No pull request for this branch yet.</p>
-        <Button variant="primary" className="w-full justify-center" disabled={running} onClick={() => run("shipkit:ship")}>
+        <Button variant="primary" className="w-full justify-center" disabled={running} onClick={() => void useApp.getState().ship(ws.id)}>
           <Rocket className="size-3.5" /> Ship: commit, push, draft PR
         </Button>
       </div>
@@ -190,7 +208,7 @@ function PrCard({ ws, pr, running, run }: { ws: Workspace; pr: PrStatus; running
           {failed > 0 && <Action icon={<X className="size-3.5" />} label="Fix CI" disabled={running} onClick={() => run("shipkit:fix-ci")} />}
           {conflicting && <Action label="Rebase" disabled={running} onClick={() => run("shipkit:rebase")} />}
           <Action label="Address comments" disabled={running} onClick={() => run("shipkit:address-comments")} />
-          <Action icon={<Rocket className="size-3.5" />} label="Push updates" disabled={running} onClick={() => run("shipkit:ship")} />
+          <Action icon={<Rocket className="size-3.5" />} label="Push updates" disabled={running} onClick={() => void useApp.getState().ship(ws.id)} />
           {pr.isDraft && (
             <Action
               label="Ready for review"
@@ -207,7 +225,11 @@ function PrCard({ ws, pr, running, run }: { ws: Workspace; pr: PrStatus; running
             title={canMerge ? undefined : "Needs: ready for review, green checks, no conflicts"}
             onClick={async () => {
               if (await confirmAction(`Squash-merge #${pr.number} into the base branch?`, "Merge")) {
-                void act("merge", () => api.mergePr(ws.id, pr.number));
+                void act("merge", async () => {
+                  const out = await api.mergePr(ws.id, pr.number);
+                  // Orbit archived the workspace and removed its worktree.
+                  if (out?.archived) useApp.getState().removeWorkspace(ws.id);
+                });
               }
             }}
           />

@@ -28,6 +28,11 @@ export function Inbox() {
   const summaries = useApp((s) => s.summaries);
   const prs = useApp((s) => s.prs);
   const changes = useApp((s) => s.changes);
+  const settings = useApp((s) => s.settings);
+  const staleLimits = useMemo(
+    () => (settings ? { days: settings.staleDays, behind: settings.staleBehind } : undefined),
+    [settings?.staleDays, settings?.staleBehind], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const [tab, setTab] = useState<Tab>("needs");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [, bump] = useState(0);
@@ -52,9 +57,9 @@ export function Inbox() {
   const all: Row[] = useMemo(
     () =>
       workspaces
-        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id]) }))
+        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits) }))
         .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
-    [workspaces, summaries, prs],
+    [workspaces, summaries, prs, staleLimits],
   );
   const needs = useMemo(() => all.filter((r) => r.reason), [all]);
   const rows = tab === "needs" ? needs : all;
@@ -69,7 +74,8 @@ export function Inbox() {
   }, [rows, focused]);
   const fid = focused?.ws.id ?? "";
 
-  const chips = useChips(focused, changes[fid]?.length ?? 0, !!prs[fid], () => bump((n) => n + 1));
+  const baseBranch = repos.find((r) => r.id === focused?.ws.repoId)?.baseBranch;
+  const chips = useChips(focused, changes[fid]?.length ?? 0, !!prs[fid], baseBranch, () => bump((n) => n + 1));
 
   const move = useCallback(
     (delta: number) => {
@@ -94,6 +100,8 @@ export function Inbox() {
       try {
         if (typeof chip === "string") await api.sendMessage(id, chip);
         else if (chip.kind === "skill") await api.runSkill(id, chip.skillId, "");
+        else if (chip.kind === "ship") await useApp.getState().ship(id, chip.anyway);
+        else if (chip.kind === "sync") await useApp.getState().syncNow(id);
         else if (chip.kind === "handoff") {
           if (await useApp.getState().setProfile(id, chip.profileId)) await api.sendMessage(id, chip.text);
         }
@@ -189,7 +197,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 }
 
 /** Rule suggestions first, then (lazily fetched, cached) AI ones, de-duplicated and capped. */
-function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh: () => void): Chips {
+function useChips(row: Row | null, changedFiles: number, hasPr: boolean, baseBranch: string | undefined, refresh: () => void): Chips {
   const id = row?.ws.id;
   const reason = row?.reason ?? null;
   const key = `${id}:${row?.summary?.lastSeq ?? 0}`;
@@ -204,7 +212,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
     if (!id || !aiEnabled || aiCache.has(key) || aiInflight.has(key)) return;
     aiInflight.add(key);
     // Tell the model what the rule chips already offer so it suggests something new.
-    const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner }) : []).map((c) => c.label);
+    const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner, ws: row?.ws, baseBranch }) : []).map((c) => c.label);
     api
       .suggestPrompts(id, reason ?? "idle", offered)
       .then((r) => aiCache.set(key, r))
@@ -218,7 +226,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
 
   return useMemo(() => {
     if (!id) return { items: [], loading: false };
-    const rules = reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner }) : [];
+    const rules = reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner, ws: row?.ws, baseBranch }) : [];
     const ai = (cached ?? []).map((text): Suggestion => ({ label: text, kind: "text", text }));
     const seen = new Set<string>();
     const items = [...rules, ...ai]
@@ -230,7 +238,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, refresh
       })
       .slice(0, MAX_CHIPS);
     return { items, loading: aiEnabled && !cached };
-  }, [id, reason, hasPr, changedFiles, planner, cached, aiEnabled]);
+  }, [id, reason, hasPr, changedFiles, planner, cached, aiEnabled, row?.ws, baseBranch]);
 }
 
 function InboxRow({
@@ -255,7 +263,17 @@ function InboxRow({
   const { ws, summary, reason } = row;
   const snoozed = isSnoozed(ws);
   const running = ws.status === "running";
-  const snippet = reason === "error" ? (summary?.lastTurnError ?? summary?.lastAssistantText) : summary?.lastAssistantText;
+  const days = Math.floor((Date.now() - ws.createdAt) / 86_400_000);
+  const snippet =
+    reason === "checksFailed"
+      ? `${ws.checksCommand ?? "Checks"} failed: ${(ws.checksOutput ?? "").trim().split("\n").pop() ?? ""}`
+      : reason === "needsSync"
+        ? `Conflicts with base in ${ws.syncConflicts.join(", ")}`
+        : reason === "stale"
+          ? `${ws.behind} commit${ws.behind === 1 ? "" : "s"} behind base, open ${days} day${days === 1 ? "" : "s"}`
+          : reason === "error"
+            ? (summary?.lastTurnError ?? summary?.lastAssistantText)
+            : summary?.lastAssistantText;
 
   return (
     <li
@@ -287,7 +305,7 @@ function InboxRow({
         </span>
       </div>
       {snippet && (
-        <p className={cn("mt-1 truncate pl-[18px] text-[12.5px]", reason === "error" ? "text-bad" : "text-dim")}>
+        <p className={cn("mt-1 truncate pl-[18px] text-[12.5px]", reason === "error" || reason === "checksFailed" ? "text-bad" : "text-dim")}>
           {snippet.replace(/\s+/g, " ")}
         </p>
       )}
