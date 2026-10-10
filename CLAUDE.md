@@ -8,7 +8,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - **Ideas under discussion: [PLANNING.md](PLANNING.md)** (#1–#5 are built; new ideas go to its Inbox).
 - **Last full runs:** `bun run e2e` 16/16 and `bun run e2e:github` 7/7, both before the 2026-10-09 settings/usage work. `cargo test`: 63 pass + 4 opt-in (3 live tests against real Claude/Codex, 1 `interop_server` used by `ide_mobile`'s `npm run interop`).
 - **Git:** everything is committed on `main` (local only, no remote). Commit as you go with conventional messages and the Co-Authored-By trailer.
-- **How the user likes to work:** dark, greyscale UI with colour only for meaning; ideas get noted in PLANNING.md before building; build with Sonnet subagents (in isolated worktrees, merged by the orchestrator) to save usage, the orchestrator reviews; verify UI in the mock (`bun run dev`) while iterating and save full real-app e2e runs for checkpoints.
+- **How the user likes to work:** dark, greyscale UI with colour only for meaning; ideas get noted in PLANNING.md before building; **models: Sonnet for coding, Opus for orchestration** (the Opus orchestrator plans, splits work, reviews and merges; Sonnet subagents write the code, in isolated worktrees when parallel); verify UI in the mock (`bun run dev`) while iterating and save full real-app e2e runs for checkpoints.
 
 ## Known traps (each cost real debugging time)
 - **package.json scripts run in Bun's shell:** `\` is an escape there (and `\t` in JSON is a tab), so script paths use forward slashes (`scripts/tauri.cmd`).
