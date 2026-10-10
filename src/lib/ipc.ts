@@ -45,6 +45,8 @@ export interface Workspace {
 /** Result of a check run (src-tauri/src/checks.rs). */
 export interface CheckResult {
   ok: boolean;
+  /** `installFailed` = the dependency install broke (not a code failure); `timedOut` = killed at the limit. */
+  kind: "pass" | "fail" | "timedOut" | "installFailed";
   command: string;
   outputTail: string;
   durationMs: number;
@@ -281,6 +283,8 @@ export interface Settings {
   saveCommits: boolean;
   squashWip: boolean;
   checksMode: "off" | "warn" | "block";
+  checkTimeoutMinutes: number;
+  installBeforeChecks: boolean;
   syncMode: "off" | "suggest" | "auto";
   syncIntervalMinutes: number;
   staleDays: number;

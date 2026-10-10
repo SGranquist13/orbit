@@ -386,9 +386,16 @@ fn resolve_command(state: &AppState, ws: &Workspace) -> Option<String> {
     checks::effective(Path::new(&ws.path), override_cmd.as_deref())
 }
 
+/// Timeout and install behaviour for a check run, from Settings > Git.
+pub fn run_options(state: &AppState) -> checks::RunOptions {
+    let s = state.settings();
+    checks::RunOptions { timeout: Duration::from_secs(s.check_timeout_minutes as u64 * 60), install: s.install_before_checks }
+}
+
 async fn run_and_record(app: &AppHandle, state: &AppState, ws: &Workspace, cmd: String, flag_on_fail: bool) -> CmdResult<CheckResult> {
     let wt = PathBuf::from(&ws.path);
-    let result = tauri::async_runtime::spawn_blocking(move || checks::run(&wt, &cmd)).await.map_err(err)?;
+    let opts = run_options(state);
+    let result = tauri::async_runtime::spawn_blocking(move || checks::run(&wt, &cmd, opts)).await.map_err(err)?;
     let failed = flag_on_fail && !result.ok;
     let updated = state.db().set_checks(&ws.id, failed, &result.command, &result.output_tail).map_err(err)?;
     emit_workspace(app, &updated);

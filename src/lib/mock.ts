@@ -273,6 +273,8 @@ let settings: Settings = {
   saveCommits: true,
   squashWip: true,
   checksMode: "block",
+  checkTimeoutMinutes: 10,
+  installBeforeChecks: true,
   syncMode: "auto",
   syncIntervalMinutes: 10,
   staleDays: 3,
@@ -442,12 +444,12 @@ export function installMockBackend() {
           checkOverrides[a.repoId!] = (args as { cmd: string | null }).cmd;
           return null;
         case "run_checks":
-          return { ok: true, command: "bun run typecheck", outputTail: "", durationMs: 1800 };
+          return { ok: true, kind: "pass", command: "bun run typecheck", outputTail: "", durationMs: 1800 };
         case "prepare_ship": {
           const w = workspaces.find((x) => x.id === a.workspaceId);
           const skip = (args as { skipChecks?: boolean }).skipChecks;
           if (w?.checksFailed && !skip) {
-            const checks = { ok: false, command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
+            const checks = { ok: false, kind: "fail", command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
             return settings.checksMode === "block" ? { ok: false, checks, squashed: 0 } : { ok: true, checks, squashed: 2 };
           }
           if (w && skip) w.checksFailed = false;

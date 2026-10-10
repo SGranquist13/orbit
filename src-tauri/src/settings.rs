@@ -45,6 +45,10 @@ pub struct Settings {
     pub squash_wip: bool,
     /// off | warn (inbox only, Ship proceeds) | block (Ship refused, "Ship anyway" in the inbox).
     pub checks_mode: String,
+    /// Per-run limit for a check (and for the dependency install before it); the process tree is killed after.
+    pub check_timeout_minutes: u32,
+    /// Install JS dependencies in a worktree that has a package.json but no node_modules before checking.
+    pub install_before_checks: bool,
     /// off | suggest (record how far behind, inbox only) | auto (rebase idle, clean workspaces).
     pub sync_mode: String,
     pub sync_interval_minutes: u32,
@@ -79,6 +83,8 @@ impl Default for Settings {
             save_commits: true,
             squash_wip: true,
             checks_mode: "block".into(),
+            check_timeout_minutes: 10,
+            install_before_checks: true,
             sync_mode: "auto".into(),
             sync_interval_minutes: 10,
             stale_days: 3,
@@ -142,6 +148,9 @@ impl Settings {
         check("syncMode", &self.sync_mode, SYNC_MODES)?;
         if !(1..=1440).contains(&self.sync_interval_minutes) {
             return Err(format!("invalid syncIntervalMinutes {} (expected 1-1440)", self.sync_interval_minutes));
+        }
+        if !(1..=240).contains(&self.check_timeout_minutes) {
+            return Err(format!("invalid checkTimeoutMinutes {} (expected 1-240)", self.check_timeout_minutes));
         }
         if self.remote_port < 1024 {
             return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
@@ -239,6 +248,9 @@ mod tests {
         assert!(d.patched(&json!({ "checksMode": "maybe" })).is_err());
         assert!(d.patched(&json!({ "syncMode": "always" })).is_err());
         assert!(d.patched(&json!({ "syncIntervalMinutes": 0 })).is_err());
+        assert_eq!((d.check_timeout_minutes, d.install_before_checks), (10, true));
+        assert!(d.patched(&json!({ "checkTimeoutMinutes": 0 })).is_err());
+        assert_eq!(d.patched(&json!({ "checkTimeoutMinutes": 30, "installBeforeChecks": false })).unwrap().check_timeout_minutes, 30);
         assert!(d.patched(&json!({ "staleBehind": -1 })).is_err());
     }
 

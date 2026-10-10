@@ -76,6 +76,25 @@ export function Git() {
           onChange={(v) => void save({ checksMode: v })}
         />
       </Row>
+      <Row
+        label="Check timeout"
+        field="checkTimeoutMinutes"
+        description="A check (or the dependency install before it) that runs longer than this is killed and reported as timed out."
+      >
+        <Select
+          label="Check timeout"
+          value={String(s.checkTimeoutMinutes)}
+          options={numberOptions(s.checkTimeoutMinutes, [1, 5, 10, 20, 30, 60], (n) => `${n} min`)}
+          onChange={(v) => void save({ checkTimeoutMinutes: Number(v) })}
+        />
+      </Row>
+      <Row
+        label="Install dependencies before checks"
+        field="installBeforeChecks"
+        description="A fresh worktree has no node_modules, so a JavaScript check would fail for the wrong reason. Orbit runs the matching install (bun, pnpm, yarn or npm ci) once first. An install failure is reported as such, not as a code failure."
+      >
+        <Toggle label="Install dependencies before checks" checked={s.installBeforeChecks} onChange={(v) => void save({ installBeforeChecks: v })} />
+      </Row>
       {repos.map((r) => (
         <CheckCommandRow key={r.id} repo={r} />
       ))}
