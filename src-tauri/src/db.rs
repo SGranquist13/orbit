@@ -1,4 +1,5 @@
 use crate::agent::AgentEvent;
+use crate::routines::{Mode, Routine, RoutineRun};
 use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
@@ -41,6 +42,8 @@ pub struct Workspace {
     pub profile: Option<String>,
     /// Hidden from the inbox until this time (ms epoch); 0 = not snoozed.
     pub snoozed_until: i64,
+    /// The routine that started this workspace, if any.
+    pub routine_id: Option<String>,
 }
 
 /// What the inbox needs to know about a workspace's recent activity.
@@ -55,6 +58,8 @@ pub struct Summary {
     pub last_turn_interrupted: bool,
     pub last_assistant_text: Option<String>,
     pub last_user_text: Option<String>,
+    /// Name of the routine that started this workspace, if any.
+    pub routine_name: Option<String>,
 }
 
 /// Another project folder attached to a workspace so its agent can read (or, via its own
@@ -125,6 +130,32 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at INTEGER NOT NULL,
   UNIQUE(workspace_id, path)
 );
+CREATE TABLE IF NOT EXISTS routines (
+  id TEXT PRIMARY KEY,
+  repo_id TEXT NOT NULL REFERENCES repos(id),
+  name TEXT NOT NULL,
+  schedule TEXT NOT NULL,
+  action TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  model TEXT,
+  profile TEXT,
+  mode TEXT NOT NULL DEFAULT 'fresh',
+  standing_workspace_id TEXT,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  last_run_at INTEGER,
+  next_run_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS routine_runs (
+  id TEXT PRIMARY KEY,
+  routine_id TEXT NOT NULL,
+  workspace_id TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  status TEXT NOT NULL,
+  summary TEXT
+);
+CREATE INDEX IF NOT EXISTS routine_runs_routine ON routine_runs(routine_id, started_at);
 CREATE TABLE IF NOT EXISTS repo_related (
   repo_id TEXT NOT NULL REFERENCES repos(id),
   path TEXT NOT NULL,
@@ -154,6 +185,47 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         dismissed_seq: r.get("dismissed_seq")?,
         profile: r.get("profile")?,
         snoozed_until: r.get("snoozed_until")?,
+        routine_id: r.get("routine_id")?,
+    })
+}
+
+const ROUTINE_SELECT: &str = "SELECT routines.*, (SELECT status FROM routine_runs WHERE routine_id = routines.id ORDER BY started_at DESC, rowid DESC LIMIT 1) AS last_status FROM routines";
+
+fn json_col<T: serde::de::DeserializeOwned>(r: &Row, col: &str) -> rusqlite::Result<T> {
+    let text: String = r.get(col)?;
+    serde_json::from_str(&text).map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+}
+
+fn routine_from_row(r: &Row) -> rusqlite::Result<Routine> {
+    let mode: String = r.get("mode")?;
+    Ok(Routine {
+        id: r.get("id")?,
+        repo_id: r.get("repo_id")?,
+        name: r.get("name")?,
+        schedule: json_col(r, "schedule")?,
+        action: json_col(r, "action")?,
+        agent: r.get("agent")?,
+        model: r.get("model")?,
+        profile: r.get("profile")?,
+        mode: Mode::parse(&mode).unwrap_or(Mode::Fresh),
+        standing_workspace_id: r.get("standing_workspace_id")?,
+        enabled: r.get("enabled")?,
+        created_at: r.get("created_at")?,
+        last_run_at: r.get("last_run_at")?,
+        next_run_at: r.get("next_run_at")?,
+        last_status: r.get("last_status")?,
+    })
+}
+
+fn run_from_row(r: &Row) -> rusqlite::Result<RoutineRun> {
+    Ok(RoutineRun {
+        id: r.get(0)?,
+        routine_id: r.get(1)?,
+        workspace_id: r.get(2)?,
+        started_at: r.get(3)?,
+        finished_at: r.get(4)?,
+        status: r.get(5)?,
+        summary: r.get(6)?,
     })
 }
 
@@ -185,6 +257,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("dismissed_seq", "ALTER TABLE workspaces ADD COLUMN dismissed_seq INTEGER NOT NULL DEFAULT 0"),
         ("profile", "ALTER TABLE workspaces ADD COLUMN profile TEXT"),
         ("snoozed_until", "ALTER TABLE workspaces ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0"),
+        ("routine_id", "ALTER TABLE workspaces ADD COLUMN routine_id TEXT"),
     ] {
         if !cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -251,11 +324,11 @@ impl Db {
 
     pub fn insert_workspace(&self, ws: &Workspace) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 ws.id, ws.repo_id, ws.name, ws.branch, ws.path, ws.agent, ws.model, ws.status,
-                ws.issue_number, ws.created_at, ws.updated_at, ws.profile
+                ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id
             ],
         )?;
         Ok(())
@@ -392,6 +465,14 @@ impl Db {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
         let mut s = Summary { workspace_id: id.to_string(), last_seq, last_activity_ts, ..Default::default() };
+        s.routine_name = self
+            .conn
+            .query_row(
+                "SELECT r.name FROM workspaces w JOIN routines r ON r.id = w.routine_id WHERE w.id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
         if let Some(StoredEvent { seq, event: AgentEvent::TurnCompleted { is_error, error, interrupted, .. }, .. }) =
             self.latest(id, "turnCompleted")?
         {
@@ -479,6 +560,135 @@ impl Db {
         Ok(())
     }
 
+    // ---- routines
+
+    pub fn insert_routine(&self, r: &Routine) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO routines (id, repo_id, name, schedule, action, agent, model, profile, mode, standing_workspace_id, enabled, created_at, last_run_at, next_run_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                r.id, r.repo_id, r.name, serde_json::to_string(&r.schedule)?, serde_json::to_string(&r.action)?, r.agent, r.model,
+                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.created_at, r.last_run_at, r.next_run_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Rewrites everything the user can edit plus the schedule state; keeps `created_at`.
+    pub fn update_routine(&self, r: &Routine) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE routines SET repo_id = ?2, name = ?3, schedule = ?4, action = ?5, agent = ?6, model = ?7, profile = ?8, mode = ?9,
+             standing_workspace_id = ?10, enabled = ?11, next_run_at = ?12 WHERE id = ?1",
+            params![
+                r.id, r.repo_id, r.name, serde_json::to_string(&r.schedule)?, serde_json::to_string(&r.action)?, r.agent, r.model,
+                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.next_run_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_routine(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM routine_runs WHERE routine_id = ?1", [id])?;
+        self.conn.execute("DELETE FROM routines WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn routines(&self) -> anyhow::Result<Vec<Routine>> {
+        let mut stmt = self.conn.prepare(&format!("{ROUTINE_SELECT} ORDER BY created_at"))?;
+        let rows = stmt.query_map([], routine_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn routine(&self, id: &str) -> anyhow::Result<Routine> {
+        Ok(self
+            .conn
+            .query_row(&format!("{ROUTINE_SELECT} WHERE routines.id = ?1"), [id], routine_from_row)
+            .with_context(|| format!("routine {id} not found"))?)
+    }
+
+    pub fn set_routine_next(&self, id: &str, next: Option<i64>, enabled: bool) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE routines SET next_run_at = ?2, enabled = ?3 WHERE id = ?1", params![id, next, enabled])?;
+        Ok(())
+    }
+
+    pub fn set_routine_last_run(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE routines SET last_run_at = ?2 WHERE id = ?1", params![id, ts])?;
+        Ok(())
+    }
+
+    pub fn set_routine_standing(&self, id: &str, workspace_id: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE routines SET standing_workspace_id = ?2 WHERE id = ?1", params![id, workspace_id])?;
+        Ok(())
+    }
+
+    pub fn insert_run(&self, r: &RoutineRun) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO routine_runs (id, routine_id, workspace_id, started_at, finished_at, status, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![r.id, r.routine_id, r.workspace_id, r.started_at, r.finished_at, r.status, r.summary],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_workspace(&self, run_id: &str, workspace_id: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE routine_runs SET workspace_id = ?2 WHERE id = ?1", params![run_id, workspace_id])?;
+        Ok(())
+    }
+
+    pub fn finish_run(&self, run_id: &str, status: &str, summary: Option<&str>, at: i64) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE routine_runs SET status = ?2, summary = ?3, finished_at = ?4 WHERE id = ?1",
+            params![run_id, status, summary, at],
+        )?;
+        Ok(())
+    }
+
+    /// Changes the status only if it is currently `from`; true when a row changed.
+    pub fn set_run_status_if(&self, run_id: &str, from: &str, to: &str) -> anyhow::Result<bool> {
+        Ok(self.conn.execute("UPDATE routine_runs SET status = ?3 WHERE id = ?1 AND status = ?2", params![run_id, from, to])? > 0)
+    }
+
+    /// Newest first.
+    pub fn routine_runs(&self, routine_id: &str, limit: u32) -> anyhow::Result<Vec<RoutineRun>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, routine_id, workspace_id, started_at, finished_at, status, summary FROM routine_runs
+             WHERE routine_id = ?1 ORDER BY started_at DESC, rowid DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![routine_id, limit], run_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn running_run_for_workspace(&self, workspace_id: &str) -> anyhow::Result<Option<RoutineRun>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, routine_id, workspace_id, started_at, finished_at, status, summary FROM routine_runs
+                 WHERE workspace_id = ?1 AND status = 'running' ORDER BY started_at DESC LIMIT 1",
+                [workspace_id],
+                run_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn running_runs_count(&self) -> anyhow::Result<usize> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM routine_runs WHERE status = 'running'", [], |r| r.get::<_, i64>(0))? as usize)
+    }
+
+    pub fn routine_has_running_run(&self, routine_id: &str) -> anyhow::Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM routine_runs WHERE routine_id = ?1 AND status = 'running'",
+            [routine_id],
+            |r| r.get::<_, i64>(0),
+        )? > 0)
+    }
+
+    /// Marks leftover `running` runs (from a previous process) as failed; returns how many.
+    pub fn fail_stale_runs(&self, at: i64, why: &str) -> anyhow::Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE routine_runs SET status = 'error', summary = ?2, finished_at = ?1 WHERE status = 'running'",
+            params![at, why],
+        )?)
+    }
+
     pub fn archive_workspace(&self, id: &str) -> anyhow::Result<()> {
         self.conn.execute("UPDATE workspaces SET archived = 1 WHERE id = ?1", [id])?;
         Ok(())
@@ -524,7 +734,7 @@ mod tests {
         let ws = Workspace {
             id: "w".into(), repo_id: "r".into(), name: "w".into(), branch: "b".into(), path: "/w".into(),
             agent: "claude".into(), model: None, status: "idle".into(), agent_session_id: None, issue_number: None,
-            created_at: 0, updated_at: 0, seen_seq: 0, dismissed_seq: 0, profile: None, snoozed_until: 0,
+            created_at: 0, updated_at: 0, seen_seq: 0, dismissed_seq: 0, profile: None, snoozed_until: 0, routine_id: None,
         };
         db.insert_workspace(&ws).unwrap();
         db.archive_workspace("w").unwrap();
@@ -558,7 +768,7 @@ mod tests {
             seen_seq: 0,
             dismissed_seq: 0,
             profile: None,
-            snoozed_until: 0,
+            snoozed_until: 0, routine_id: None,
         };
         db.insert_workspace(&ws).unwrap();
         db.append_event("w", &AgentEvent::UserMessage { text: "hi".into(), skill: None }).unwrap();
@@ -613,7 +823,7 @@ mod tests {
             seen_seq: 0,
             dismissed_seq: 0,
             profile: None,
-            snoozed_until: 0,
+            snoozed_until: 0, routine_id: None,
         };
         db.insert_workspace(&mk("w")).unwrap();
         db.insert_workspace(&mk("x")).unwrap();
@@ -676,7 +886,7 @@ mod tests {
             seen_seq: 0,
             dismissed_seq: 0,
             profile: None,
-            snoozed_until: 0,
+            snoozed_until: 0, routine_id: None,
         };
         db.insert_workspace(&ws).unwrap();
 
