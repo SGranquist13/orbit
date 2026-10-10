@@ -18,6 +18,7 @@ import {
   Plus,
   Rocket,
   Search,
+  Shrink,
   Sparkles,
   Square,
   SquareTerminal,
@@ -74,7 +75,10 @@ export function Chat({ ws }: { ws: Workspace }) {
             Exit focus <Kbd>Ctrl \</Kbd>
           </Button>
         ) : (
-          <ShipButton ws={ws} />
+          <>
+            <SimplifyButton ws={ws} />
+            <ShipButton ws={ws} />
+          </>
         )}
       </header>
       <div className="dither-rule bg-line-strong" />
@@ -233,6 +237,23 @@ function RelatedPopover({ ws }: { ws: Workspace }) {
         )}
       </div>
     </>
+  );
+}
+
+/** Header toggle for the Simplify panel; a quiet dither sweep while the pass is working. */
+function SimplifyButton({ ws }: { ws: Workspace }) {
+  const open = useApp((s) => s.simplifyOpen);
+  const phase = useApp((s) => s.simplify[ws.id]?.phase);
+  const working = phase === "finding" || phase === "applying";
+  return (
+    <Button
+      onClick={() => useApp.getState().setSimplifyOpen(!open)}
+      title="Find and apply simplifications in this workspace's changes"
+      className={cn("relative shrink-0 overflow-hidden", open && "bg-raised text-fg")}
+    >
+      {working && <span className="dither-sweep bg-run opacity-[0.14]" />}
+      <Shrink className="size-3.5" /> Simplify
+    </Button>
   );
 }
 

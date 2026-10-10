@@ -76,10 +76,62 @@ export function Git() {
           onChange={(v) => void save({ checksMode: v })}
         />
       </Row>
+      <Row
+        label="Check timeout"
+        field="checkTimeoutMinutes"
+        description="A check (or the dependency install before it) that runs longer than this is killed and reported as timed out."
+      >
+        <Select
+          label="Check timeout"
+          value={String(s.checkTimeoutMinutes)}
+          options={numberOptions(s.checkTimeoutMinutes, [1, 5, 10, 20, 30, 60], (n) => `${n} min`)}
+          onChange={(v) => void save({ checkTimeoutMinutes: Number(v) })}
+        />
+      </Row>
+      <Row
+        label="Install dependencies before checks"
+        field="installBeforeChecks"
+        description="A fresh worktree has no node_modules, so a JavaScript check would fail for the wrong reason. Orbit runs the matching install (bun, pnpm, yarn or npm ci) once first. An install failure is reported as such, not as a code failure."
+      >
+        <Toggle label="Install dependencies before checks" checked={s.installBeforeChecks} onChange={(v) => void save({ installBeforeChecks: v })} />
+      </Row>
       {repos.map((r) => (
         <CheckCommandRow key={r.id} repo={r} />
       ))}
       {repos.length === 0 && <p className="py-3 text-[12px] text-mute">Add a repository to set its check command.</p>}
+
+      <SubHeading>Simplify</SubHeading>
+      <Row
+        label="Model for finding simplifications"
+        field="simplifyModel"
+        description="The read-only pass that looks over a workspace's changes always runs through Claude, whichever agent the workspace uses. The edits themselves go to the workspace's own agent."
+      >
+        <Segmented<Settings["simplifyModel"]>
+          label="Model for finding simplifications"
+          value={s.simplifyModel}
+          options={[
+            { value: "haiku", label: "Haiku" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "opus", label: "Opus" },
+          ]}
+          onChange={(v) => void save({ simplifyModel: v })}
+        />
+      </Row>
+      <Row label="Most simplifications to list" field="simplifyMaxCandidates" description="Caps how many candidates one pass may return, most valuable first.">
+        <Select
+          label="Most simplifications to list"
+          value={String(s.simplifyMaxCandidates)}
+          options={numberOptions(s.simplifyMaxCandidates, [5, 8, 12, 20, 30], (n) => String(n))}
+          onChange={(v) => void save({ simplifyMaxCandidates: Number(v) })}
+        />
+      </Row>
+      <Row
+        label="Show “Apply all low-risk”"
+        field="simplifyLowRiskButton"
+        description="A shortcut in the Simplify panel that applies every low-risk candidate in one go. Each is still checked and committed separately."
+      >
+        <Toggle label="Show Apply all low-risk" checked={s.simplifyLowRiskButton} onChange={(v) => void save({ simplifyLowRiskButton: v })} />
+      </Row>
 
       <SubHeading>Staying close to base</SubHeading>
       <Row

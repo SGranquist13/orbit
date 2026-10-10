@@ -3,7 +3,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
-import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, Profile, PrStatus, Related, Repo, RemoteDevice, Routine, RoutineInput, RoutineRun, Settings, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -276,7 +276,12 @@ let settings: Settings = {
   saveCommits: true,
   squashWip: true,
   checksMode: "block",
+  checkTimeoutMinutes: 10,
+  installBeforeChecks: true,
   syncMode: "auto",
+  simplifyModel: "sonnet",
+  simplifyMaxCandidates: 12,
+  simplifyLowRiskButton: true,
   syncIntervalMinutes: 10,
   staleDays: 3,
   staleBehind: 20,
@@ -312,6 +317,7 @@ const ENUMS: Record<string, string[]> = {
   defaultAgent: ["claude", "codex"],
   checksMode: ["off", "warn", "block"],
   syncMode: ["off", "suggest", "auto"],
+  simplifyModel: ["haiku", "sonnet", "opus"],
 };
 const checkOverrides: Record<string, string | null> = {};
 let pins = ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];
@@ -410,6 +416,102 @@ function mockRunNow(id: string): RoutineRun {
     void emit("routines-changed");
   }, 2000);
   return { ...started };
+}
+
+// ---- Simplify (mirrors src-tauri/src/simplify.rs closely enough to show the whole flow) ----
+
+const simplifyStates: Record<string, SimplifyState> = {};
+const mockSimplifyCancelled = new Set<string>();
+const mockSimplifyFinding = new Set<string>();
+
+function mockSimplify(workspaceId: string): SimplifyState {
+  return (simplifyStates[workspaceId] ??= {
+    workspaceId, phase: "idle", candidates: [], rows: [], error: null, scopeFiles: 0, scopeNote: null, checkCommand: null, cancelled: false,
+  });
+}
+
+function setMockSimplify(st: SimplifyState) {
+  simplifyStates[st.workspaceId] = st;
+  void emit("simplify", st);
+}
+
+const mockCandidates: SimplifyCandidate[] = [
+  { id: "c1", file: "src/auth/session.ts", startLine: 42, endLine: 88, signal: "nesting", title: "Flatten refreshSession with early returns", risk: "low",
+    rationale: "Five levels of nested ifs hide the one path that matters; the error cases sit at the bottom, far from the checks that cause them.",
+    proposedChange: "Invert each condition into a guard clause that returns (or throws) early, keeping the same checks in the same order." },
+  { id: "c2", file: "src/lib/slug.ts", startLine: 10, endLine: 31, signal: "duplication", title: "Share one trimDashes helper", risk: "low",
+    rationale: "slugify and branchName both strip leading and trailing dashes with the same three-line loop.",
+    proposedChange: "Extract trimDashes(s) in slug.ts and call it from both; no change to their outputs." },
+  { id: "c3", file: "src/components/Sidebar.tsx", startLine: 120, endLine: 141, signal: "nestedTernary", title: "Replace nested ternary in statusLabel", risk: "medium",
+    rationale: "A three-way nested ternary picks the label, and a fourth case was bolted on last week.",
+    proposedChange: "Use a lookup object keyed by status, keeping the existing fallback label." },
+  { id: "c4", file: "src/lib/api.ts", startLine: 5, endLine: 19, signal: "needlessWrapper", title: "Drop the fetchJson wrapper around fetch", risk: "medium",
+    rationale: "fetchJson only forwards its arguments and parses JSON; both callers could use the shared client directly.",
+    proposedChange: "Inline the two call sites and delete the wrapper, preserving their error handling." },
+  { id: "c5", file: "src/stores/app.ts", startLine: 300, endLine: 352, signal: "booleanFlags", title: "Split select(id, quiet) into two functions", risk: "high",
+    rationale: "The quiet flag switches off half the body; callers pass literals.",
+    proposedChange: "Create selectQuietly() for the quiet path and have select() call shared helpers." },
+];
+
+function mockSimplifyFind(workspaceId: string): SimplifyState {
+  const finding: SimplifyState = { ...mockSimplify(workspaceId), phase: "finding", candidates: [], rows: [], error: null, cancelled: false };
+  setMockSimplify(finding);
+  mockSimplifyFinding.add(workspaceId);
+  setTimeout(() => {
+    if (!mockSimplifyFinding.delete(workspaceId) || mockSimplify(workspaceId).phase !== "finding") return;
+    // The second workspace in the mock has nothing to simplify, so that state can be seen too.
+    const empty = workspaceId === "w2";
+    const candidates = empty ? [] : mockCandidates;
+    setMockSimplify({
+      ...mockSimplify(workspaceId),
+      phase: "ready",
+      candidates,
+      rows: candidates.map((c) => ({ candidateId: c.id, status: "queued", detail: null, commit: null, linesRemoved: 0, unchecked: false })),
+      scopeFiles: empty ? 2 : 7,
+      scopeNote: null,
+      checkCommand: workspaceId === "w3" ? null : "bun run typecheck",
+    });
+  }, 2200);
+  return finding;
+}
+
+function mockSimplifyApply(workspaceId: string, ids: string[]): SimplifyState {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const start: SimplifyState = { ...mockSimplify(workspaceId), phase: "applying", cancelled: false };
+  mockSimplifyCancelled.delete(workspaceId);
+  const ordered = start.candidates.filter((c) => ids.includes(c.id)).map((c) => c.id);
+  start.rows = start.rows.map((r) => (ordered.includes(r.candidateId) ? { ...r, status: "queued", detail: null, commit: null, linesRemoved: 0, unchecked: false } : r));
+  setMockSimplify(start);
+  void (async () => {
+    const patch = (cid: string, p: Partial<SimplifyRow>) => {
+      const cur = mockSimplify(workspaceId);
+      setMockSimplify({ ...cur, rows: cur.rows.map((r) => (r.candidateId === cid ? { ...r, ...p } : r)) });
+    };
+    let n = 0;
+    for (const cid of ordered) {
+      const title = mockSimplify(workspaceId).candidates.find((c) => c.id === cid)!.title;
+      if (mockSimplifyCancelled.delete(workspaceId)) {
+        patch(cid, { status: "skipped", detail: "cancelled" });
+        setMockSimplify({ ...mockSimplify(workspaceId), cancelled: true });
+        continue;
+      }
+      patch(cid, { status: "editing" });
+      emitAgentEvent(workspaceId, { type: "userMessage", text: `Simplify: ${title}` });
+      emitAgentEvent(workspaceId, { type: "turnStarted" });
+      await wait(1100);
+      emitAgentEvent(workspaceId, { type: "turnCompleted", durationMs: 1100, costUsd: 0.02, isError: false, error: null });
+      patch(cid, { status: "checking" });
+      await wait(900);
+      n += 1;
+      const checked = mockSimplify(workspaceId).checkCommand !== null;
+      if (cid === "c3") patch(cid, { status: "skipped", detail: "checks failed\nsrc/components/Sidebar.tsx(131,9): error TS2322: Type 'string | undefined' is not assignable to type 'string'." });
+      else if (cid === "c4") patch(cid, { status: "skipped", detail: "touched tests (src/lib/api.test.ts)" });
+      else if (cid === "c5") patch(cid, { status: "noop", detail: "the agent made no change" });
+      else patch(cid, { status: "applied", commit: (0xa1b2c3 + n * 0x1357).toString(16).padStart(7, "0"), linesRemoved: 6 + n * 3, unchecked: !checked });
+    }
+    setMockSimplify({ ...mockSimplify(workspaceId), phase: "done" });
+  })();
+  return start;
 }
 
 export function installMockBackend() {
@@ -553,12 +655,12 @@ export function installMockBackend() {
           checkOverrides[a.repoId!] = (args as { cmd: string | null }).cmd;
           return null;
         case "run_checks":
-          return { ok: true, command: "bun run typecheck", outputTail: "", durationMs: 1800 };
+          return { ok: true, kind: "pass", command: "bun run typecheck", outputTail: "", durationMs: 1800 };
         case "prepare_ship": {
           const w = workspaces.find((x) => x.id === a.workspaceId);
           const skip = (args as { skipChecks?: boolean }).skipChecks;
           if (w?.checksFailed && !skip) {
-            const checks = { ok: false, command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
+            const checks = { ok: false, kind: "fail", command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
             return settings.checksMode === "block" ? { ok: false, checks, squashed: 0 } : { ok: true, checks, squashed: 2 };
           }
           if (w && skip) w.checksFailed = false;
@@ -568,6 +670,18 @@ export function installMockBackend() {
           return null;
         case "workspace_overlaps":
           return [{ a: "w1", b: "w3", files: ["src/auth/session.ts", "src/lib/slug.ts"] }];
+        case "simplify_state":
+          return mockSimplify(a.workspaceId!);
+        case "simplify_find":
+          return mockSimplifyFind(a.workspaceId!);
+        case "simplify_apply":
+          return mockSimplifyApply(a.workspaceId!, (args as { candidateIds: string[] }).candidateIds);
+        case "simplify_cancel": {
+          const st = mockSimplify(a.workspaceId!);
+          mockSimplifyCancelled.add(st.workspaceId);
+          if (st.phase === "finding") setMockSimplify({ ...st, phase: "idle" });
+          return mockSimplify(a.workspaceId!);
+        }
         case "sync_now": {
           const w = workspaces.find((x) => x.id === a.workspaceId)!;
           w.behind = 0;

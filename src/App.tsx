@@ -8,6 +8,7 @@ import { Packs } from "./components/Packs";
 import { Routines } from "./components/Routines";
 import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
+import { SimplifyPanel } from "./components/SimplifyPanel";
 import { Settings } from "./components/Settings";
 import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
@@ -23,6 +24,7 @@ export default function App() {
   const ticketOpen = useApp((s) => s.ticketOpen);
   const view = useApp((s) => s.view);
   const shipOpen = useApp((s) => s.shipOpen);
+  const simplifyOpen = useApp((s) => s.simplifyOpen);
   const focusMode = useApp((s) => s.focusMode);
 
   useEffect(() => {
@@ -95,7 +97,7 @@ export default function App() {
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />
-          {shipOpen && !focusMode && <RightPanel ws={ws} />}
+          {simplifyOpen && !focusMode ? <SimplifyPanel key={`simplify-${ws.id}`} ws={ws} /> : shipOpen && !focusMode && <RightPanel ws={ws} />}
         </>
       ) : (
         <Empty />

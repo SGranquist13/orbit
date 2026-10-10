@@ -9,6 +9,8 @@ export type Suggestion =
   | { label: string; kind: "ship"; anyway: boolean }
   /** Fetch and rebase onto base now. */
   | { label: string; kind: "sync" }
+  /** Open the Simplify panel and start the read-only pass. */
+  | { label: string; kind: "simplify" }
   | { label: string; kind: "text"; text: string }
   /** Switch the workspace to another profile, then send `text`. */
   | { label: string; kind: "handoff"; profileId: string; text: string };
@@ -121,13 +123,16 @@ export function resolveConflictsPrompt(ws: Pick<Workspace, "syncConflicts">, bas
   );
 }
 
+/** Changed lines (added + deleted) above which a finished workspace is offered "Simplify". */
+export const SIMPLIFY_SUGGEST_LINES = 300;
+
 export function reasonMeta(reason: Reason) {
   return meta[reason];
 }
 
 export function ruleSuggestions(
   reason: Reason,
-  ctx: { hasPr: boolean; changedFiles: number; planner?: boolean; ws?: Workspace; baseBranch?: string },
+  ctx: { hasPr: boolean; changedFiles: number; changedLines?: number; planner?: boolean; ws?: Workspace; baseBranch?: string },
 ): Suggestion[] {
   const text = (label: string): Suggestion => ({ label, kind: "text", text: label });
   const skill = (label: string, skillId: string): Suggestion => ({ label, kind: "skill", skillId });
@@ -163,6 +168,8 @@ export function ruleSuggestions(
       }
       if (ctx.hasPr) out.push(ship("Push updates"));
       else if (ctx.changedFiles > 0) out.push(ship("Ship it"));
+      // A big diff is where agents leave residue; offer the cleanup before it goes out.
+      if ((ctx.changedLines ?? 0) > SIMPLIFY_SUGGEST_LINES) out.push({ label: "Simplify", kind: "simplify" });
       out.push(text("Keep going"), text("Summarize what changed"));
       return out.slice(0, 3);
     }

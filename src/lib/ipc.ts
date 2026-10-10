@@ -47,6 +47,8 @@ export interface Workspace {
 /** Result of a check run (src-tauri/src/checks.rs). */
 export interface CheckResult {
   ok: boolean;
+  /** `installFailed` = the dependency install broke (not a code failure); `timedOut` = killed at the limit. */
+  kind: "pass" | "fail" | "timedOut" | "installFailed";
   command: string;
   outputTail: string;
   durationMs: number;
@@ -55,6 +57,60 @@ export interface CheckResult {
 export interface CheckCommandInfo {
   detected: string | null;
   override: string | null;
+}
+
+/** Simplify (src-tauri/src/simplify.rs). */
+export type SimplifySignal =
+  | "nesting"
+  | "longFunction"
+  | "nestedTernary"
+  | "booleanFlags"
+  | "duplication"
+  | "deadCode"
+  | "needlessWrapper"
+  | "naming"
+  | "other";
+export type SimplifyRisk = "low" | "medium" | "high";
+
+export interface SimplifyCandidate {
+  id: string;
+  file: string;
+  startLine: number;
+  endLine: number;
+  signal: SimplifySignal;
+  title: string;
+  rationale: string;
+  proposedChange: string;
+  risk: SimplifyRisk;
+}
+
+export type SimplifyPhase = "idle" | "finding" | "ready" | "applying" | "done";
+export type SimplifyRowStatus = "queued" | "editing" | "checking" | "applied" | "skipped" | "noop";
+
+export interface SimplifyRow {
+  candidateId: string;
+  status: SimplifyRowStatus;
+  /** Why it was skipped, or the check output tail. */
+  detail: string | null;
+  /** Short hash of the `refactor:` commit when applied. */
+  commit: string | null;
+  /** Deleted minus added lines (negative when the code grew). */
+  linesRemoved: number;
+  /** Applied with no check command to vouch for it. */
+  unchecked: boolean;
+}
+
+/** In-memory per workspace; lost when Orbit restarts. */
+export interface SimplifyState {
+  workspaceId: string;
+  phase: SimplifyPhase;
+  candidates: SimplifyCandidate[];
+  rows: SimplifyRow[];
+  error: string | null;
+  scopeFiles: number;
+  scopeNote: string | null;
+  checkCommand: string | null;
+  cancelled: boolean;
 }
 
 export interface PrepareShip {
@@ -285,7 +341,12 @@ export interface Settings {
   saveCommits: boolean;
   squashWip: boolean;
   checksMode: "off" | "warn" | "block";
+  checkTimeoutMinutes: number;
+  installBeforeChecks: boolean;
   syncMode: "off" | "suggest" | "auto";
+  simplifyModel: "haiku" | "sonnet" | "opus";
+  simplifyMaxCandidates: number;
+  simplifyLowRiskButton: boolean;
   syncIntervalMinutes: number;
   staleDays: number;
   staleBehind: number;
@@ -494,6 +555,12 @@ export const api = {
   runChecks: (workspaceId: string) => invoke<CheckResult>("run_checks", { workspaceId }),
   /** The Ship gate: checks per `checksMode`, then squash save points. Run `shipkit:ship` only when `ok`. */
   prepareShip: (workspaceId: string, skipChecks = false) => invoke<PrepareShip>("prepare_ship", { workspaceId, skipChecks }),
+  simplifyState: (workspaceId: string) => invoke<SimplifyState>("simplify_state", { workspaceId }),
+  /** Starts the read-only analysis; progress and the result arrive as `simplify` events. */
+  simplifyFind: (workspaceId: string) => invoke<SimplifyState>("simplify_find", { workspaceId }),
+  simplifyApply: (workspaceId: string, candidateIds: string[]) =>
+    invoke<SimplifyState>("simplify_apply", { workspaceId, candidateIds }),
+  simplifyCancel: (workspaceId: string) => invoke<SimplifyState>("simplify_cancel", { workspaceId }),
   undoLastTurn: (workspaceId: string) => invoke<void>("undo_last_turn", { workspaceId }),
   workspaceOverlaps: () => invoke<Overlap[]>("workspace_overlaps"),
   syncNow: (workspaceId: string) => invoke<Workspace>("sync_now", { workspaceId }),
@@ -532,4 +599,6 @@ export const events = {
     listen<string>("workspace-archived", (e) => cb(e.payload)),
   /** Routines or their runs changed (a run started or finished, a one-off switched itself off). */
   onRoutinesChanged: (cb: () => void): Promise<UnlistenFn> => listen("routines-changed", () => cb()),
+  onSimplify: (cb: (s: SimplifyState) => void): Promise<UnlistenFn> =>
+    listen<SimplifyState>("simplify", (e) => cb(e.payload)),
 };

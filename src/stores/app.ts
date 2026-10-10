@@ -14,6 +14,7 @@ import {
   type Repo,
   type Routine,
   type Settings,
+  type SimplifyState,
   type Skill,
   type StoredEvent,
   type Summary,
@@ -70,6 +71,10 @@ interface AppState {
   paletteOpen: boolean;
   /** Ship panel (changes, PR, checks). Hidden until asked for; never opens on its own. */
   shipOpen: boolean;
+  /** Simplify panel; takes the Ship panel's place on the right while open. Not persisted. */
+  simplifyOpen: boolean;
+  /** Simplify state per workspace, mirrored from the backend's `simplify` events. */
+  simplify: Record<string, SimplifyState>;
   sidebarCollapsed: boolean;
   /** Chat only: hides the sidebar and Ship panel. Not persisted. */
   focusMode: boolean;
@@ -120,6 +125,11 @@ interface AppState {
   snooze: (id: string, until: number) => Promise<void>;
   setPaletteOpen: (open: boolean) => void;
   setShipOpen: (open: boolean) => void;
+  setSimplifyOpen: (open: boolean) => void;
+  loadSimplify: (workspaceId: string) => Promise<void>;
+  simplifyFind: (workspaceId: string) => Promise<void>;
+  simplifyApply: (workspaceId: string, candidateIds: string[]) => Promise<void>;
+  simplifyCancel: (workspaceId: string) => Promise<void>;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setFocusMode: (on: boolean) => void;
   setError: (error: string | null) => void;
@@ -177,6 +187,8 @@ export const useApp = create<AppState>((set, get) => ({
   packsOpen: false,
   paletteOpen: false,
   shipOpen: readFlag("shipOpen"),
+  simplifyOpen: false,
+  simplify: {},
   sidebarCollapsed: readFlag("sidebarCollapsed"),
   focusMode: false,
   error: null,
@@ -195,6 +207,7 @@ export const useApp = create<AppState>((set, get) => ({
     await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
     await events.onRoutinesChanged(() => void get().refreshRoutines());
     void get().refreshRoutines();
+    await events.onSimplify(onSimplify);
     for (const ws of workspaces) void get().refreshChanges(ws.id);
     void get().loadSkills();
     api.getSettings().then((settings) => set({ settings })).catch(() => {});
@@ -455,7 +468,43 @@ export const useApp = create<AppState>((set, get) => ({
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setShipOpen: (open) => {
     writeFlag("shipOpen", open);
-    set({ shipOpen: open });
+    set(open ? { shipOpen: true, simplifyOpen: false } : { shipOpen: false });
+  },
+  setSimplifyOpen: (open) => {
+    set({ simplifyOpen: open });
+    const id = get().selectedId;
+    if (open && id) void get().loadSimplify(id);
+  },
+  loadSimplify: async (workspaceId) => {
+    try {
+      const st = await api.simplifyState(workspaceId);
+      set((s) => ({ simplify: { ...s.simplify, [workspaceId]: st } }));
+    } catch {
+      // Only a convenience on open; the next event fills it in.
+    }
+  },
+  simplifyFind: async (workspaceId) => {
+    try {
+      const st = await api.simplifyFind(workspaceId);
+      set((s) => ({ simplify: { ...s.simplify, [workspaceId]: st } }));
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+  simplifyApply: async (workspaceId, candidateIds) => {
+    try {
+      const st = await api.simplifyApply(workspaceId, candidateIds);
+      set((s) => ({ simplify: { ...s.simplify, [workspaceId]: st } }));
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+  simplifyCancel: async (workspaceId) => {
+    try {
+      await api.simplifyCancel(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
   },
   setSidebarCollapsed: (collapsed) => {
     writeFlag("sidebarCollapsed", collapsed);
@@ -523,6 +572,16 @@ function foldSummary(prev: Summary | undefined, id: string, seq: number | null, 
 function patchUsage(all: Record<string, WorkspaceUsage>, id: string, event: AgentEvent) {
   const next = applyUsage(all[id], id, event);
   return next && next !== all[id] ? { ...all, [id]: next } : all;
+}
+
+/** Simplify commits and reverts change the branch outside any tool result, so re-read the diff after each step. */
+function onSimplify(st: SimplifyState) {
+  const { getState: get, setState: set } = useApp;
+  set((s) => ({ simplify: { ...s.simplify, [st.workspaceId]: st } }));
+  if (st.phase === "applying" || st.phase === "done") {
+    clearTimeout(changeTimers[st.workspaceId]);
+    changeTimers[st.workspaceId] = window.setTimeout(() => void get().refreshChanges(st.workspaceId), 400);
+  }
 }
 
 function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {

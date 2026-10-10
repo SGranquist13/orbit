@@ -18,7 +18,7 @@ use tauri::{AppHandle, State};
 /// each other's `index.lock`.
 static GIT_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
     GIT_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -191,7 +191,8 @@ pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
         Ok(w) => w,
         Err(_) => return,
     };
-    if settings.save_commits {
+    // A Simplify step commits (or reverts) its own result; a save point would swallow it as `wip:`.
+    if settings.save_commits && !crate::simplify::active(ws_id) {
         let text = state.db().last_user_text(ws_id).unwrap_or_default();
         let msg = wip_message(&text);
         let _g = lock();
@@ -381,14 +382,21 @@ pub fn set_check_command(state: State<AppState>, repo_id: String, cmd: Option<St
 }
 
 /// The command for a workspace's repo, resolved against its worktree.
-fn resolve_command(state: &AppState, ws: &Workspace) -> Option<String> {
+pub fn resolve_command(state: &AppState, ws: &Workspace) -> Option<String> {
     let override_cmd = state.db().check_command(&ws.repo_id).ok().flatten();
     checks::effective(Path::new(&ws.path), override_cmd.as_deref())
 }
 
+/// Timeout and install behaviour for a check run, from Settings > Git.
+pub fn run_options(state: &AppState) -> checks::RunOptions {
+    let s = state.settings();
+    checks::RunOptions { timeout: Duration::from_secs(s.check_timeout_minutes as u64 * 60), install: s.install_before_checks }
+}
+
 async fn run_and_record(app: &AppHandle, state: &AppState, ws: &Workspace, cmd: String, flag_on_fail: bool) -> CmdResult<CheckResult> {
     let wt = PathBuf::from(&ws.path);
-    let result = tauri::async_runtime::spawn_blocking(move || checks::run(&wt, &cmd)).await.map_err(err)?;
+    let opts = run_options(state);
+    let result = tauri::async_runtime::spawn_blocking(move || checks::run(&wt, &cmd, opts)).await.map_err(err)?;
     let failed = flag_on_fail && !result.ok;
     let updated = state.db().set_checks(&ws.id, failed, &result.command, &result.output_tail).map_err(err)?;
     emit_workspace(app, &updated);

@@ -9,6 +9,7 @@ mod related;
 mod remote;
 mod routines;
 mod settings;
+mod simplify;
 mod skills;
 mod trunk;
 mod usage;
@@ -126,6 +127,7 @@ fn emit_workspace(app: &AppHandle, ws: &Workspace) {
 
 /// Handles one normalized event: persist, update workspace status, notify, forward to UI.
 fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent) {
+    simplify::on_event(ws_id, &ev);
     let mut seq = None;
     let mut ts = db::now();
     let mut updated = None;
@@ -1205,6 +1207,10 @@ pub fn run() {
             trunk::undo_last_turn,
             trunk::workspace_overlaps,
             trunk::sync_now,
+            simplify::simplify_state,
+            simplify::simplify_find,
+            simplify::simplify_apply,
+            simplify::simplify_cancel,
             remote::remote_status,
             remote::remote_pairing,
             remote::remote_devices,

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeProfile } from "../lib/ipc";
 import { attentionReason, formatSnooze, isSnoozed, reasonMeta, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
 import { api, type Summary, type Workspace } from "../lib/ipc";
-import { useApp } from "../stores/app";
+import { diffTotals, useApp } from "../stores/app";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 type Tab = "needs" | "all";
@@ -75,7 +75,8 @@ export function Inbox() {
   const fid = focused?.ws.id ?? "";
 
   const baseBranch = repos.find((r) => r.id === focused?.ws.repoId)?.baseBranch;
-  const chips = useChips(focused, changes[fid]?.length ?? 0, !!prs[fid], baseBranch, () => bump((n) => n + 1));
+  const totals = diffTotals(changes[fid]);
+  const chips = useChips(focused, changes[fid]?.length ?? 0, totals.additions + totals.deletions, !!prs[fid], baseBranch, () => bump((n) => n + 1));
 
   const move = useCallback(
     (delta: number) => {
@@ -102,6 +103,12 @@ export function Inbox() {
         else if (chip.kind === "skill") await api.runSkill(id, chip.skillId, "");
         else if (chip.kind === "ship") await useApp.getState().ship(id, chip.anyway);
         else if (chip.kind === "sync") await useApp.getState().syncNow(id);
+        else if (chip.kind === "simplify") {
+          const s = useApp.getState();
+          s.select(id);
+          s.setSimplifyOpen(true);
+          await s.simplifyFind(id);
+        }
         else if (chip.kind === "handoff") {
           if (await useApp.getState().setProfile(id, chip.profileId)) await api.sendMessage(id, chip.text);
         }
@@ -197,7 +204,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 }
 
 /** Rule suggestions first, then (lazily fetched, cached) AI ones, de-duplicated and capped. */
-function useChips(row: Row | null, changedFiles: number, hasPr: boolean, baseBranch: string | undefined, refresh: () => void): Chips {
+function useChips(row: Row | null, changedFiles: number, changedLines: number, hasPr: boolean, baseBranch: string | undefined, refresh: () => void): Chips {
   const id = row?.ws.id;
   const reason = row?.reason ?? null;
   const key = `${id}:${row?.summary?.lastSeq ?? 0}`;
@@ -212,7 +219,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, baseBra
     if (!id || !aiEnabled || aiCache.has(key) || aiInflight.has(key)) return;
     aiInflight.add(key);
     // Tell the model what the rule chips already offer so it suggests something new.
-    const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner, ws: row?.ws, baseBranch }) : []).map((c) => c.label);
+    const offered = (reason ? ruleSuggestions(reason, { hasPr, changedFiles, changedLines, planner, ws: row?.ws, baseBranch }) : []).map((c) => c.label);
     api
       .suggestPrompts(id, reason ?? "idle", offered)
       .then((r) => aiCache.set(key, r))
@@ -226,7 +233,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, baseBra
 
   return useMemo(() => {
     if (!id) return { items: [], loading: false };
-    const rules = reason ? ruleSuggestions(reason, { hasPr, changedFiles, planner, ws: row?.ws, baseBranch }) : [];
+    const rules = reason ? ruleSuggestions(reason, { hasPr, changedFiles, changedLines, planner, ws: row?.ws, baseBranch }) : [];
     const ai = (cached ?? []).map((text): Suggestion => ({ label: text, kind: "text", text }));
     const seen = new Set<string>();
     const items = [...rules, ...ai]
@@ -238,7 +245,7 @@ function useChips(row: Row | null, changedFiles: number, hasPr: boolean, baseBra
       })
       .slice(0, MAX_CHIPS);
     return { items, loading: aiEnabled && !cached };
-  }, [id, reason, hasPr, changedFiles, planner, cached, aiEnabled, row?.ws, baseBranch]);
+  }, [id, reason, hasPr, changedFiles, changedLines, planner, cached, aiEnabled, row?.ws, baseBranch]);
 }
 
 function InboxRow({

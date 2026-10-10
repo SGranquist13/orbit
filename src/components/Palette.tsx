@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { AlarmClock, CalendarClock, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, Undo2, UserRound, Zap } from "lucide-react";
+import { AlarmClock, CalendarClock, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Undo2, UserRound, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, activeProfile } from "../lib/ipc";
@@ -128,6 +128,21 @@ export function Palette() {
                   })}
                 >
                   <ListChecks className="size-3.5" /> Run checks
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Simplify changes (find and apply simplifications)"
+                  onSelect={run(() => {
+                    const s = useApp.getState();
+                    s.setSimplifyOpen(true);
+                    // An explicit command starts the read-only pass unless one is already underway or waiting.
+                    api
+                      .simplifyState(selectedId)
+                      .then((st) => (st.phase === "idle" ? s.simplifyFind(selectedId) : undefined))
+                      .catch((e) => s.setError(String(e)));
+                  })}
+                >
+                  <Shrink className="size-3.5" /> Simplify changes
                 </Command.Item>
                 <Command.Item
                   className={item}

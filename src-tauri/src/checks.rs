@@ -2,9 +2,11 @@
 //! and run by Orbit itself, so shipping gates and the Simplify pass share one definition of "green".
 
 use serde::Serialize;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 const TAIL_BYTES: usize = 4096;
 
@@ -12,6 +14,7 @@ const TAIL_BYTES: usize = 4096;
 #[serde(rename_all = "camelCase")]
 pub struct CheckResult {
     pub ok: bool,
+    pub kind: CheckKind,
     pub command: String,
     /// Last ~4KB of combined stdout + stderr.
     pub output_tail: String,
@@ -68,9 +71,62 @@ fn tail(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[start..]).trim().to_string()
 }
 
-/// Runs `cmd` through the platform shell in `worktree` without a console window.
-pub fn run(worktree: &Path, cmd: &str) -> CheckResult {
-    let started = Instant::now();
+/// What a check run came to, beyond pass/fail: the inbox words timeouts and install failures
+/// differently from a genuine code failure.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckKind {
+    Pass,
+    Fail,
+    TimedOut,
+    InstallFailed,
+}
+
+/// How to run a check: the per-run timeout and whether to install JS dependencies first.
+#[derive(Debug, Clone, Copy)]
+pub struct RunOptions {
+    pub timeout: Duration,
+    pub install: bool,
+}
+
+/// The install command a fresh worktree needs before a JS check can run: `package.json` exists
+/// but `node_modules` doesn't. Matches the lockfile the way `detect` does.
+pub fn install_command(repo: &Path) -> Option<String> {
+    if !repo.join("package.json").exists() || repo.join("node_modules").exists() {
+        return None;
+    }
+    let cmd = if repo.join("bun.lock").exists() || repo.join("bun.lockb").exists() {
+        "bun install"
+    } else if repo.join("pnpm-lock.yaml").exists() {
+        "pnpm install --frozen-lockfile"
+    } else if repo.join("yarn.lock").exists() {
+        "yarn install --frozen-lockfile"
+    } else {
+        "npm ci"
+    };
+    Some(cmd.into())
+}
+
+/// Kills `pid` and everything it spawned.
+fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        // The child leads its own process group (see `shell`), so a negative pid reaches the tree.
+        let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+    }
+}
+
+fn shell(worktree: &Path, cmd: &str) -> Command {
     #[cfg(windows)]
     let mut c = {
         use std::os::windows::process::CommandExt;
@@ -80,20 +136,110 @@ pub fn run(worktree: &Path, cmd: &str) -> CheckResult {
     };
     #[cfg(not(windows))]
     let mut c = {
+        use std::os::unix::process::CommandExt;
         let mut c = Command::new("sh");
-        c.args(["-c", cmd]);
+        c.args(["-c", cmd]).process_group(0);
         c
     };
-    c.current_dir(worktree).stdin(Stdio::null());
-    let (ok, output) = match c.output() {
-        Ok(out) => {
-            let mut all = out.stdout;
-            all.extend_from_slice(&out.stderr);
-            (out.status.success(), tail(&all))
-        }
-        Err(e) => (false, format!("could not start `{cmd}`: {e}")),
+    c.current_dir(worktree).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c
+}
+
+struct Ran {
+    ok: bool,
+    output: String,
+    timed_out: bool,
+}
+
+/// Runs `cmd` through the platform shell, killing its process tree after `timeout`.
+fn run_shell(worktree: &Path, cmd: &str, timeout: Duration) -> Ran {
+    let mut child = match shell(worktree, cmd).spawn() {
+        Ok(c) => c,
+        Err(e) => return Ran { ok: false, output: format!("could not start `{cmd}`: {e}"), timed_out: false },
     };
-    CheckResult { ok, command: cmd.to_string(), output_tail: output, duration_ms: started.elapsed().as_millis() as u64 }
+    let (tx, rx) = mpsc::channel::<(bool, Vec<u8>)>();
+    let pipes: [(bool, Option<Box<dyn Read + Send>>); 2] = [
+        (false, child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
+        (true, child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)),
+    ];
+    for (is_err, pipe) in pipes {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let mut buf = vec![];
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            let _ = tx.send((is_err, buf));
+        });
+    }
+    drop(tx);
+    let started = Instant::now();
+    let (mut ok, mut timed_out) = (false, false);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                ok = status.success();
+                break;
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                timed_out = true;
+                kill_tree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+            Err(_) => break,
+        }
+    }
+    // A grandchild that escaped the kill can hold a pipe open; don't wait on it forever.
+    let (mut out, mut err) = (vec![], vec![]);
+    for _ in 0..2 {
+        match rx.recv_timeout(Duration::from_secs(if timed_out { 2 } else { 30 })) {
+            Ok((false, b)) => out = b,
+            Ok((true, b)) => err = b,
+            Err(_) => break,
+        }
+    }
+    out.extend_from_slice(&err);
+    Ran { ok: ok && !timed_out, output: tail(&out), timed_out }
+}
+
+fn duration_label(d: Duration) -> String {
+    let s = d.as_secs();
+    if s >= 60 && s % 60 == 0 { format!("{} min", s / 60) } else { format!("{s} s") }
+}
+
+/// Runs `cmd` in `worktree` (without a console window): installs JS dependencies first when the
+/// worktree needs them, and gives up on either step after `opts.timeout`.
+pub fn run(worktree: &Path, cmd: &str, opts: RunOptions) -> CheckResult {
+    let started = Instant::now();
+    let done = |ok: bool, kind: CheckKind, command: &str, output: String| CheckResult {
+        ok,
+        kind,
+        command: command.to_string(),
+        output_tail: output.trim().to_string(),
+        duration_ms: started.elapsed().as_millis() as u64,
+    };
+    if opts.install {
+        if let Some(install) = install_command(worktree) {
+            let r = run_shell(worktree, &install, opts.timeout);
+            if !r.ok {
+                let note = if r.timed_out {
+                    format!("`{install}` timed out after {}: dependencies failed to install", duration_label(opts.timeout))
+                } else {
+                    "dependencies failed to install".to_string()
+                };
+                return done(false, CheckKind::InstallFailed, &install, format!("{}\n{note}", r.output));
+            }
+        }
+    }
+    let r = run_shell(worktree, cmd, opts.timeout);
+    if r.timed_out {
+        let note = format!("timed out after {}", duration_label(opts.timeout));
+        return done(false, CheckKind::TimedOut, cmd, format!("{}\n{note}", r.output));
+    }
+    done(r.ok, if r.ok { CheckKind::Pass } else { CheckKind::Fail }, cmd, r.output)
 }
 
 #[cfg(test)]
@@ -149,10 +295,41 @@ mod tests {
     #[test]
     fn run_reports_success_failure_and_output() {
         let d = tmp("run");
-        let ok = run(&d, "echo hello");
-        assert!(ok.ok && ok.output_tail.contains("hello"));
-        let bad = run(&d, "echo boom 1>&2 && exit 3");
-        assert!(!bad.ok && bad.output_tail.contains("boom"));
+        let opts = RunOptions { timeout: Duration::from_secs(60), install: false };
+        let ok = run(&d, "echo hello", opts);
+        assert!(ok.ok && ok.kind == CheckKind::Pass && ok.output_tail.contains("hello"));
+        let bad = run(&d, "echo boom 1>&2 && exit 3", opts);
+        assert!(!bad.ok && bad.kind == CheckKind::Fail && bad.output_tail.contains("boom"));
+    }
+
+    #[test]
+    fn a_sleeping_command_is_killed_on_timeout() {
+        let d = tmp("timeout");
+        #[cfg(windows)]
+        let sleeper = "ping -n 60 127.0.0.1 > nul";
+        #[cfg(not(windows))]
+        let sleeper = "sleep 60";
+        let started = Instant::now();
+        let r = run(&d, sleeper, RunOptions { timeout: Duration::from_secs(1), install: false });
+        assert!(!r.ok && r.kind == CheckKind::TimedOut, "{r:?}");
+        assert!(r.output_tail.contains("timed out after 1 s"));
+        assert!(started.elapsed() < Duration::from_secs(20), "should not wait out the sleep");
+    }
+
+    #[test]
+    fn install_is_needed_only_without_node_modules() {
+        let d = tmp("install");
+        assert_eq!(install_command(&d), None, "no package.json");
+        std::fs::write(d.join("package.json"), "{}").unwrap();
+        assert_eq!(install_command(&d).as_deref(), Some("npm ci"));
+        std::fs::write(d.join("yarn.lock"), "").unwrap();
+        assert_eq!(install_command(&d).as_deref(), Some("yarn install --frozen-lockfile"));
+        std::fs::write(d.join("pnpm-lock.yaml"), "").unwrap();
+        assert_eq!(install_command(&d).as_deref(), Some("pnpm install --frozen-lockfile"));
+        std::fs::write(d.join("bun.lockb"), "").unwrap();
+        assert_eq!(install_command(&d).as_deref(), Some("bun install"));
+        std::fs::create_dir(d.join("node_modules")).unwrap();
+        assert_eq!(install_command(&d), None, "already installed");
     }
 
     #[test]

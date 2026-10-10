@@ -19,6 +19,7 @@ pub const SYNC_MODES: &[&str] = &["off", "suggest", "auto"];
 pub const LOCAL_PROVIDERS: &[&str] = &["ollama", "openai"];
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 pub const DEFAULT_OPENAI_URL: &str = "http://localhost:1234";
+pub const SIMPLIFY_MODELS: &[&str] = &["haiku", "sonnet", "opus"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -49,6 +50,10 @@ pub struct Settings {
     pub squash_wip: bool,
     /// off | warn (inbox only, Ship proceeds) | block (Ship refused, "Ship anyway" in the inbox).
     pub checks_mode: String,
+    /// Per-run limit for a check (and for the dependency install before it); the process tree is killed after.
+    pub check_timeout_minutes: u32,
+    /// Install JS dependencies in a worktree that has a package.json but no node_modules before checking.
+    pub install_before_checks: bool,
     /// off | suggest (record how far behind, inbox only) | auto (rebase idle, clean workspaces).
     pub sync_mode: String,
     pub sync_interval_minutes: u32,
@@ -72,6 +77,12 @@ pub struct Settings {
     pub model_pr_description: String,
     /// Experimental: offer "Local: <model>" in the New Workspace model picker.
     pub local_agents: bool,
+    // simplify (simplify.rs)
+    /// Model for the read-only find pass (always run through Claude): haiku | sonnet | opus.
+    pub simplify_model: String,
+    pub simplify_max_candidates: u32,
+    /// Show "Apply all low-risk" in the Simplify panel.
+    pub simplify_low_risk_button: bool,
     // mobile bridge
     pub remote_enabled: bool,
     pub remote_port: u16,
@@ -100,6 +111,8 @@ impl Default for Settings {
             save_commits: true,
             squash_wip: true,
             checks_mode: "block".into(),
+            check_timeout_minutes: 10,
+            install_before_checks: true,
             sync_mode: "auto".into(),
             sync_interval_minutes: 10,
             stale_days: 3,
@@ -118,6 +131,9 @@ impl Default for Settings {
             model_routine_summary: "default".into(),
             model_pr_description: "default".into(),
             local_agents: false,
+            simplify_model: "sonnet".into(),
+            simplify_max_candidates: 12,
+            simplify_low_risk_button: true,
             remote_enabled: false,
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
@@ -226,6 +242,13 @@ impl Settings {
         if !(1..=600).contains(&self.local_timeout_secs) {
             return Err(format!("invalid localTimeoutSecs {} (expected 1-600)", self.local_timeout_secs));
         }
+        check("simplifyModel", &self.simplify_model, SIMPLIFY_MODELS)?;
+        if !(1..=30).contains(&self.simplify_max_candidates) {
+            return Err(format!("invalid simplifyMaxCandidates {} (expected 1-30)", self.simplify_max_candidates));
+        }
+        if !(1..=240).contains(&self.check_timeout_minutes) {
+            return Err(format!("invalid checkTimeoutMinutes {} (expected 1-240)", self.check_timeout_minutes));
+        }
         if self.remote_port < 1024 {
             return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
         }
@@ -328,6 +351,9 @@ mod tests {
         assert!(d.patched(&json!({ "checksMode": "maybe" })).is_err());
         assert!(d.patched(&json!({ "syncMode": "always" })).is_err());
         assert!(d.patched(&json!({ "syncIntervalMinutes": 0 })).is_err());
+        assert_eq!((d.check_timeout_minutes, d.install_before_checks), (10, true));
+        assert!(d.patched(&json!({ "checkTimeoutMinutes": 0 })).is_err());
+        assert_eq!(d.patched(&json!({ "checkTimeoutMinutes": 30, "installBeforeChecks": false })).unwrap().check_timeout_minutes, 30);
         assert!(d.patched(&json!({ "staleBehind": -1 })).is_err());
     }
 
@@ -352,6 +378,17 @@ mod tests {
         assert_eq!(normalize_url("box:8080", DEFAULT_OPENAI_URL), "http://box:8080");
         let s = Settings { local_provider: "openai".into(), ..Default::default() };
         assert_eq!(s.local_base_url(), "http://localhost:1234");
+    }
+
+    #[test]
+    fn simplify_settings_defaults_and_validation() {
+        let d = Settings::default();
+        assert_eq!((d.simplify_model.as_str(), d.simplify_max_candidates, d.simplify_low_risk_button), ("sonnet", 12, true));
+        let s = d.patched(&json!({ "simplifyModel": "opus", "simplifyMaxCandidates": 5, "simplifyLowRiskButton": false })).unwrap();
+        assert_eq!((s.simplify_model.as_str(), s.simplify_max_candidates, s.simplify_low_risk_button), ("opus", 5, false));
+        assert!(d.patched(&json!({ "simplifyModel": "gpt" })).is_err());
+        assert!(d.patched(&json!({ "simplifyMaxCandidates": 0 })).is_err());
+        assert!(d.patched(&json!({ "simplifyMaxCandidates": 31 })).is_err());
     }
 
     #[test]
