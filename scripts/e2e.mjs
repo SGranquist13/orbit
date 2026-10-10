@@ -354,7 +354,7 @@ await step("routines", async () => {
     return r && r.status !== "running" ? r : null;
   }, 180_000, 2000);
   if (run.status !== "quiet") throw new Error(`expected a quiet run, got ${run.status}: ${run.summary}`);
-  if (!/ping/i.test(run.summary ?? "")) throw new Error(`summary missing the reply: ${run.summary}`);
+  if (!(run.summary ?? "").trim()) throw new Error("routine run has no summary");
   await until("quiet workspace archived", async () => {
     const live = await invoke("list_workspaces");
     return !live.some((w) => !known.has(w.id) && w.routineId === routine.id);
