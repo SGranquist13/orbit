@@ -57,6 +57,8 @@ pub struct Settings {
     pub remote_enabled: bool,
     pub remote_port: u16,
     pub remote_push: bool,
+    // routines
+    pub routine_concurrency: u32,
 }
 
 impl Default for Settings {
@@ -88,6 +90,7 @@ impl Default for Settings {
             remote_enabled: false,
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
+            routine_concurrency: 2,
         }
     }
 }
@@ -145,6 +148,9 @@ impl Settings {
         }
         if self.remote_port < 1024 {
             return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
+        }
+        if !(1..=8).contains(&self.routine_concurrency) {
+            return Err(format!("invalid routineConcurrency {} (expected 1-8)", self.routine_concurrency));
         }
         self.branch_prefix = normalize_prefix(&self.branch_prefix);
         self.extra_models_claude = normalize_models(&self.extra_models_claude);

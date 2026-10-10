@@ -6,6 +6,7 @@ mod git;
 mod maintenance;
 mod related;
 mod remote;
+mod routines;
 mod settings;
 mod skills;
 mod trunk;
@@ -157,10 +158,17 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
             _ => {}
         }
     }
-    // The user stopped it themselves, so no notification for interruptions.
-    if let AgentEvent::TurnCompleted { is_error, error, interrupted: false, .. } = &ev {
-        notify_turn_done(app, &state.settings(), updated.as_ref(), *is_error, error.as_deref());
-        remote::on_turn_completed(state, updated.as_ref(), *is_error, error.as_deref());
+    if let AgentEvent::TurnCompleted { is_error, error, interrupted, .. } = &ev {
+        // A routine run defers its notification until it knows whether the run was worth reporting.
+        let routine = routines::finish_turn(app, state, ws_id, updated.as_ref(), *is_error, error.as_deref(), *interrupted);
+        // The user stopped it themselves, so no notification for interruptions.
+        if !routine && !*interrupted {
+            notify_turn_done(app, &state.settings(), updated.as_ref(), *is_error, error.as_deref());
+            remote::on_turn_completed(state, updated.as_ref(), *is_error, error.as_deref());
+        }
+    }
+    if let AgentEvent::Exited { .. } = &ev {
+        routines::finish_exited(app, state, ws_id);
     }
     // Save point + sync bookkeeping happen off the event thread (and after the status update above).
     if matches!(ev, AgentEvent::TurnCompleted { .. }) {
@@ -175,7 +183,7 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     }
 }
 
-fn notify_turn_done(app: &AppHandle, settings: &settings::Settings, ws: Option<&Workspace>, is_error: bool, error: Option<&str>) {
+pub(crate) fn notify_turn_done(app: &AppHandle, settings: &settings::Settings, ws: Option<&Workspace>, is_error: bool, error: Option<&str>) {
     if !settings.notifications {
         return;
     }
@@ -313,18 +321,20 @@ fn list_workspaces(state: State<AppState>) -> CmdResult<Vec<Workspace>> {
     state.db().workspaces().map_err(err)
 }
 
-#[tauri::command]
-async fn create_workspace(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    repo_id: String,
-    name: String,
-    agent: String,
-    model: Option<String>,
-    prompt: Option<String>,
-    issue_number: Option<i64>,
-    profile: Option<String>,
-) -> CmdResult<Workspace> {
+pub(crate) struct NewWorkspaceArgs {
+    pub repo_id: String,
+    pub name: String,
+    pub agent: String,
+    pub model: Option<String>,
+    pub issue_number: Option<i64>,
+    pub profile: Option<String>,
+    /// Set when a routine run creates the workspace.
+    pub routine_id: Option<String>,
+}
+
+/// Worktree + branch + DB row + attachments; shared by `create_workspace` and routine runs.
+pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, args: NewWorkspaceArgs) -> CmdResult<Workspace> {
+    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id } = args;
     AgentKind::parse(&agent).ok_or("unknown agent")?;
     let repo = state.db().repo(&repo_id).map_err(err)?;
     let slug = match issue_number {
@@ -361,6 +371,7 @@ async fn create_workspace(
         dismissed_seq: 0,
         profile: profile.filter(|p| !p.is_empty()),
         snoozed_until: 0,
+        routine_id,
         ..Default::default()
     };
     state.db().insert_workspace(&ws).map_err(err)?;
@@ -373,7 +384,23 @@ async fn create_workspace(
             }
         }
     }
-    emit_workspace(&app, &ws);
+    emit_workspace(app, &ws);
+    Ok(ws)
+}
+
+#[tauri::command]
+async fn create_workspace(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    repo_id: String,
+    name: String,
+    agent: String,
+    model: Option<String>,
+    prompt: Option<String>,
+    issue_number: Option<i64>,
+    profile: Option<String>,
+) -> CmdResult<Workspace> {
+    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         send(&app, &state, &ws.id, p.clone(), None, p).map_err(err)?;
     }
@@ -593,17 +620,23 @@ async fn send_message(app: AppHandle, state: State<'_, AppState>, id: String, te
 /// Runs a pack skill/command: natively as a slash command for Claude, expanded inline for Codex.
 #[tauri::command]
 async fn run_skill(app: AppHandle, state: State<'_, AppState>, id: String, skill_id: String, args: String) -> CmdResult<()> {
-    let ws = state.db().workspace(&id).map_err(err)?;
+    run_skill_with(&app, &state, &id, &skill_id, &args, &args)
+}
+
+/// `display_args` is what the transcript shows; `payload_args` is what the agent receives
+/// (routines append their unattended-run note there).
+pub(crate) fn run_skill_with(app: &AppHandle, state: &AppState, id: &str, skill_id: &str, display_args: &str, payload_args: &str) -> CmdResult<()> {
+    let ws = state.db().workspace(id).map_err(err)?;
     let skill = skills::list_skills(&state.packs().map_err(err)?)
         .into_iter()
         .find(|s| s.id == skill_id)
         .ok_or_else(|| format!("skill {skill_id} not found or its pack is disabled"))?;
-    let args = args.trim().to_string();
+    let (display, args) = (display_args.trim().to_string(), payload_args.trim().to_string());
     let payload = match AgentKind::parse(&ws.agent) {
         Some(AgentKind::Codex) => skills::expand(&skill, &args).map_err(err)?,
         _ => format!("/{} {args}", skill.id).trim_end().to_string(),
     };
-    send(&app, &state, &id, args, Some(skill.id), payload).map_err(err)
+    send(app, state, id, display, Some(skill.id), payload).map_err(err)
 }
 
 /// Skill ids shown as one-click chips above the composer.
@@ -816,6 +849,11 @@ async fn workspace_changes(state: State<'_, AppState>, id: String) -> CmdResult<
 
 #[tauri::command]
 async fn archive_workspace(state: State<'_, AppState>, id: String, remove_worktree: bool) -> CmdResult<()> {
+    archive_inner(&state, &id, remove_worktree).await
+}
+
+pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: bool) -> CmdResult<()> {
+    let id = id.to_string();
     if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
         h.send(Command::Shutdown);
     }
@@ -1047,10 +1085,11 @@ pub fn run() {
             app.manage::<AppState>(state.clone());
             // Phone bridge: listens only while Settings > Mobile allows it.
             let handle = app.handle().clone();
-            let (sync_app, sync_state) = (handle.clone(), state.clone());
-            tauri::async_runtime::spawn(async move { remote::apply(&handle, &state).await });
+            let remote_state = state.clone();
+            tauri::async_runtime::spawn(async move { remote::apply(&handle, &remote_state).await });
             // Keeps idle workspaces close to base (Settings > Git).
-            trunk::start(sync_app, sync_state);
+            trunk::start(app.handle().clone(), state.clone());
+            routines::start(app.handle().clone(), state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1118,6 +1157,13 @@ pub fn run() {
             remote::remote_pairing,
             remote::remote_devices,
             remote::remote_revoke,
+            routines::list_routines,
+            routines::save_routine,
+            routines::delete_routine,
+            routines::set_routine_enabled,
+            routines::run_routine_now,
+            routines::routine_runs,
+            routines::preview_schedule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

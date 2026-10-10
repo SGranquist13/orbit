@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, CircleDot, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
 import { useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import type { Repo, Workspace } from "../lib/ipc";
@@ -25,8 +25,9 @@ export function Sidebar() {
   const summaries = useApp((s) => s.summaries);
   const prs = useApp((s) => s.prs);
   const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id])).length;
+  const activeRoutines = useApp((s) => s.routines.filter((r) => r.enabled).length);
   const collapsed = useApp((s) => s.sidebarCollapsed);
-  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} />;
+  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} />;
 
   return (
     <aside className="relative flex h-full w-[216px] shrink-0 flex-col border-r-[1.5px] border-line bg-panel">
@@ -60,6 +61,14 @@ export function Sidebar() {
           active={view === "inbox"}
           count={needsYou}
           onClick={() => useApp.getState().setView(view === "inbox" ? "workspace" : "inbox")}
+        />
+        <NavItem
+          icon={<Clock className="size-3.5" strokeWidth={2.5} />}
+          label="Routines"
+          kbd="Ctrl Shift E"
+          active={view === "routines"}
+          count={activeRoutines}
+          onClick={() => useApp.getState().setView(view === "routines" ? "workspace" : "routines")}
         />
         <NavItem
           icon={<CircleDot className="size-3.5" strokeWidth={2.5} />}
@@ -100,7 +109,7 @@ export function Sidebar() {
 }
 
 /** Icon-only sidebar: nav actions plus one status dot per workspace. */
-function Rail({ workspaces, needsYou }: { workspaces: Workspace[]; needsYou: number }) {
+function Rail({ workspaces, needsYou, activeRoutines }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number }) {
   const view = useApp((s) => s.view);
   const selectedId = useApp((s) => s.selectedId);
   const summaries = useApp((s) => s.summaries);
@@ -123,6 +132,18 @@ function Rail({ workspaces, needsYou }: { workspaces: Workspace[]; needsYou: num
           {needsYou > 0 && (
             <span className="absolute right-0.5 top-0.5 rounded-[3px] bg-fg px-1 text-[9px] font-semibold leading-3.5 tabular-nums text-bg">
               {needsYou}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => useApp.getState().setView(view === "routines" ? "workspace" : "routines")}
+          title="Routines (Ctrl Shift E)"
+          className={cn(btn, view === "routines" && "bg-raised text-fg")}
+        >
+          <Clock className="size-3.5" strokeWidth={2.5} />
+          {activeRoutines > 0 && (
+            <span className="absolute right-0.5 top-0.5 rounded-[3px] bg-fg px-1 text-[9px] font-semibold leading-3.5 tabular-nums text-bg">
+              {activeRoutines}
             </span>
           )}
         </button>
@@ -255,6 +276,11 @@ function WorkspaceRow({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-30" />}
         <StatusDot status={ws.status} unread={unread} />
         <span className={cn("relative min-w-0 flex-1 truncate", unread && "text-fg")}>{ws.name}</span>
+        {ws.routineId && (
+          <span title="Started by a routine" className="relative shrink-0 text-mute">
+            <Clock className="size-3" />
+          </span>
+        )}
         <DiffStat {...totals} className={cn("relative", !selected && "hidden group-hover:inline")} />
         <AgentIcon agent={ws.agent} className="relative size-3 opacity-70" />
       </button>
