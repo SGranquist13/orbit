@@ -5,6 +5,7 @@ import {
   type AgentEvent,
   type AgentEventPayload,
   type Attachment,
+  type Overlap,
   type FileChange,
   type Pack,
   type PrStatus,
@@ -93,6 +94,13 @@ interface AppState {
   setProfile: (workspaceId: string, profile: string) => Promise<boolean>;
   togglePin: (skillId: string) => Promise<void>;
   runSkill: (workspaceId: string, skillId: string, args?: string) => Promise<void>;
+  /** Orbit's ship gate (checks + squash save points), then `shipkit:ship` if allowed. `anyway` skips the checks. */
+  ship: (workspaceId: string, anyway?: boolean) => Promise<void>;
+  undoLastTurn: (workspaceId: string) => Promise<void>;
+  syncNow: (workspaceId: string) => Promise<void>;
+  /** Workspace pairs that edit the same files. */
+  overlaps: Overlap[];
+  refreshOverlaps: () => Promise<void>;
   setPacksOpen: (open: boolean) => void;
   setNewWorkspaceOpen: (open: boolean) => void;
   setTicketOpen: (open: boolean) => void;
@@ -358,6 +366,47 @@ export const useApp = create<AppState>((set, get) => ({
       await api.runSkill(workspaceId, skillId, args);
     } catch (e) {
       get().setError(String(e));
+    }
+  },
+
+  ship: async (workspaceId, anyway = false) => {
+    try {
+      const res = await api.prepareShip(workspaceId, anyway);
+      if (!res.ok) {
+        const cmd = res.checks?.command ?? "the check command";
+        get().setError(`Checks failed (${cmd}). Fix them from the inbox, or Ship anyway.`);
+        return;
+      }
+      await api.runSkill(workspaceId, "shipkit:ship", "");
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  undoLastTurn: async (workspaceId) => {
+    try {
+      await api.undoLastTurn(workspaceId);
+      void get().refreshChanges(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  syncNow: async (workspaceId) => {
+    try {
+      get().upsertWorkspace(await api.syncNow(workspaceId));
+      void get().refreshChanges(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  overlaps: [],
+  refreshOverlaps: async () => {
+    try {
+      set({ overlaps: await api.workspaceOverlaps() });
+    } catch {
+      // Overlap is a hint; keep the last known pairs.
     }
   },
 

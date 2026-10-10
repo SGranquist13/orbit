@@ -10,7 +10,7 @@
 // <scratch-dir> gets a fresh `home/` (ORBIT_HOME) and `repo/` (a local git repo, no remote),
 // so the user's real ~/.orbit state is never touched. Screenshots land in <scratch-dir>/shots.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { TURN_ENDS, createHarness, sleep, uiHelpers } from "./e2e-harness.mjs";
@@ -299,6 +299,40 @@ await step("profiles", async () => {
   await waitFor("builder turn completed", `${turnEnds} > ${before}`, 120_000);
   if (!fs.existsSync(path.join(planWs.path, "PLAN_TEST.md"))) throw new Error("builder did not create PLAN_TEST.md after switching");
   await shot("14-builder");
+});
+
+await step("trunk-save-points", async () => {
+  // Orbit commits the worktree after a turn (save point), can undo it, and gates Ship on checks.
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Create a file TRUNK_TEST.md containing the word hello. Don't commit it." });
+  await waitFor("trunk turn completed", `${turnEnds} >= 1`, 120_000);
+  const g = (...a) => execFileSync("git", a, { cwd: ws.path, encoding: "utf8" }).trim();
+  await h.until("save-point commit", async () => g("log", "-1", "--format=%s").startsWith("wip:") && fs.existsSync(path.join(ws.path, "TRUNK_TEST.md")), 30_000, 500);
+  if (g("status", "--porcelain")) throw new Error("worktree still dirty after the save point");
+
+  // Undo last turn drops the save point and its file.
+  const head = g("rev-parse", "HEAD");
+  await invoke("undo_last_turn", { workspaceId: ws.id });
+  if (g("rev-parse", "HEAD") === head || fs.existsSync(path.join(ws.path, "TRUNK_TEST.md"))) throw new Error("undo_last_turn did not drop the save point");
+
+  // prepare_ship: a failing check blocks (and flags the workspace); a passing one squashes the save points.
+  const wip = () => {
+    fs.writeFileSync(path.join(ws.path, "SAVED.md"), "saved\n");
+    g("add", "-A");
+    g("-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qm", "wip: simulated turn");
+  };
+  wip();
+  const repoRow = (await invoke("list_repos"))[0];
+  await invoke("set_check_command", { repoId: repoRow.id, cmd: "exit 1" });
+  const blocked = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: false });
+  if (blocked.ok || blocked.checks?.ok !== false) throw new Error(`failing check did not block: ${JSON.stringify(blocked)}`);
+  if (!g("log", "-1", "--format=%s").startsWith("wip:")) throw new Error("blocked ship squashed anyway");
+  const flagged = (await invoke("list_workspaces")).find((w) => w.id === ws.id);
+  if (!flagged.checksFailed) throw new Error("checksFailed not set on the workspace");
+  await invoke("set_check_command", { repoId: repoRow.id, cmd: "exit 0" });
+  const ok = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: false });
+  if (!ok.ok || ok.squashed < 1) throw new Error(`passing check did not ship-prepare: ${JSON.stringify(ok)}`);
+  if (g("log", "-1", "--format=%s").startsWith("wip:")) throw new Error("save points were not squashed");
+  await invoke("set_check_command", { repoId: repoRow.id, cmd: null });
 });
 
 await step("resume-after-restart", async () => {

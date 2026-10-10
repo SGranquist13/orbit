@@ -14,6 +14,8 @@ pub const SANDBOXES: &[&str] = &["danger-full-access", "workspace-write"];
 pub const MERGE_METHODS: &[&str] = &["squash", "merge", "rebase"];
 pub const SUGGESTION_MODELS: &[&str] = &["haiku", "sonnet"];
 pub const AGENTS: &[&str] = &["claude", "codex"];
+pub const CHECKS_MODES: &[&str] = &["off", "warn", "block"];
+pub const SYNC_MODES: &[&str] = &["off", "suggest", "auto"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -36,6 +38,21 @@ pub struct Settings {
     // inbox
     pub ai_suggestions: bool,
     pub suggestion_model: String,
+    // git handling (trunk.rs)
+    /// Commit the worktree after each agent turn as a `wip:` save point.
+    pub save_commits: bool,
+    /// Squash Orbit's unpushed `wip:` commits before Ship.
+    pub squash_wip: bool,
+    /// off | warn (inbox only, Ship proceeds) | block (Ship refused, "Ship anyway" in the inbox).
+    pub checks_mode: String,
+    /// off | suggest (record how far behind, inbox only) | auto (rebase idle, clean workspaces).
+    pub sync_mode: String,
+    pub sync_interval_minutes: u32,
+    /// Inbox "stale" thresholds; 0 disables that test.
+    pub stale_days: u32,
+    pub stale_behind: u32,
+    pub archive_on_merge: bool,
+    pub delete_local_branch: bool,
     // mobile bridge
     pub remote_enabled: bool,
     pub remote_port: u16,
@@ -59,6 +76,15 @@ impl Default for Settings {
             delete_branch_on_merge: false,
             ai_suggestions: true,
             suggestion_model: "haiku".into(),
+            save_commits: true,
+            squash_wip: true,
+            checks_mode: "block".into(),
+            sync_mode: "auto".into(),
+            sync_interval_minutes: 10,
+            stale_days: 3,
+            stale_behind: 20,
+            archive_on_merge: true,
+            delete_local_branch: true,
             remote_enabled: false,
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
@@ -112,6 +138,11 @@ impl Settings {
         check("mergeMethod", &self.merge_method, MERGE_METHODS)?;
         check("suggestionModel", &self.suggestion_model, SUGGESTION_MODELS)?;
         check("defaultAgent", &self.default_agent, AGENTS)?;
+        check("checksMode", &self.checks_mode, CHECKS_MODES)?;
+        check("syncMode", &self.sync_mode, SYNC_MODES)?;
+        if !(1..=1440).contains(&self.sync_interval_minutes) {
+            return Err(format!("invalid syncIntervalMinutes {} (expected 1-1440)", self.sync_interval_minutes));
+        }
         if self.remote_port < 1024 {
             return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
         }
@@ -195,6 +226,20 @@ mod tests {
         assert!(!d.remote_enabled && d.remote_push && d.remote_port == 47821);
         // Unknown keys are ignored rather than stored.
         assert!(d.patched(&json!({ "bogus": 1 })).is_ok());
+    }
+
+    #[test]
+    fn git_settings_defaults_and_validation() {
+        let d = Settings::default();
+        assert!(d.save_commits && d.squash_wip && d.archive_on_merge && d.delete_local_branch);
+        assert_eq!((d.checks_mode.as_str(), d.sync_mode.as_str()), ("block", "auto"));
+        assert_eq!((d.sync_interval_minutes, d.stale_days, d.stale_behind), (10, 3, 20));
+        let s = d.patched(&json!({ "checksMode": "warn", "syncMode": "suggest", "staleDays": 0 })).unwrap();
+        assert_eq!((s.checks_mode.as_str(), s.sync_mode.as_str(), s.stale_days), ("warn", "suggest", 0));
+        assert!(d.patched(&json!({ "checksMode": "maybe" })).is_err());
+        assert!(d.patched(&json!({ "syncMode": "always" })).is_err());
+        assert!(d.patched(&json!({ "syncIntervalMinutes": 0 })).is_err());
+        assert!(d.patched(&json!({ "staleBehind": -1 })).is_err());
     }
 
     #[test]

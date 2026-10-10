@@ -1,10 +1,14 @@
 // Pure rules for the attention inbox: which workspaces need the user, and why.
 import type { PrStatus, Summary, Workspace } from "./ipc";
 
-export type Reason = "error" | "question" | "checks" | "changes" | "done";
+export type Reason = "error" | "question" | "checksFailed" | "needsSync" | "checks" | "changes" | "done" | "stale";
 
 export type Suggestion =
   | { label: string; kind: "skill"; skillId: string }
+  /** Orbit's ship gate (checks + squash) first, then `shipkit:ship`; `anyway` skips the checks. */
+  | { label: string; kind: "ship"; anyway: boolean }
+  /** Fetch and rebase onto base now. */
+  | { label: string; kind: "sync" }
   | { label: string; kind: "text"; text: string }
   /** Switch the workspace to another profile, then send `text`. */
   | { label: string; kind: "handoff"; profileId: string; text: string };
@@ -50,7 +54,24 @@ function asksQuestion(text: string | null) {
   return /[\p{L}\p{N})"'”]\?(\s|$)/u.test(trimmed.slice(-200));
 }
 
-export function attentionReason(ws: Workspace, summary: Summary | undefined, pr: PrStatus | null | undefined): Reason | null {
+const DAY_MS = 86_400_000;
+
+/** Branch open for `days` or more, or `behind` commits behind base. 0 disables a test. */
+export function isStale(
+  ws: Pick<Workspace, "createdAt" | "behind">,
+  limits: { days: number; behind: number } | undefined,
+  now = Date.now(),
+) {
+  if (!limits) return false;
+  return (limits.days > 0 && now - ws.createdAt >= limits.days * DAY_MS) || (limits.behind > 0 && ws.behind >= limits.behind);
+}
+
+export function attentionReason(
+  ws: Workspace,
+  summary: Summary | undefined,
+  pr: PrStatus | null | undefined,
+  staleLimits?: { days: number; behind: number },
+): Reason | null {
   if (!summary || ws.status === "running") return null;
   if (isSnoozed(ws)) return null;
   if (ws.dismissedSeq >= summary.lastSeq) return null;
@@ -58,31 +79,75 @@ export function attentionReason(ws: Workspace, summary: Summary | undefined, pr:
   const failed = ws.status === "error" || (!!summary.lastTurnError && !summary.lastTurnInterrupted);
   // PR signals stay until dismissed or new activity, even once the workspace has been seen.
   const open = pr?.state === "OPEN";
-  // Priority: error > question > checks > changes > done.
+  // Priority: error > question > Orbit's checks > needs sync > PR checks > changes > done > stale.
   if (unseen && failed) return "error";
   if (unseen && asksQuestion(summary.lastAssistantText)) return "question";
+  if (ws.checksFailed) return "checksFailed";
+  if (ws.syncConflicts.length > 0) return "needsSync";
   if (open && pr.checks.failed > 0) return "checks";
   if (open && pr.reviewDecision === "CHANGES_REQUESTED") return "changes";
   if (unseen && summary.lastTurnSeq > ws.seenSeq) return "done";
+  if (isStale(ws, staleLimits)) return "stale";
   return null;
 }
 
 const meta: Record<Reason, { label: string; tone: string }> = {
   error: { label: "Failed", tone: "text-bad" },
   question: { label: "Asked you", tone: "text-info" },
+  checksFailed: { label: "Checks failed", tone: "text-bad" },
+  needsSync: { label: "Needs sync", tone: "text-warn" },
   checks: { label: "Checks failing", tone: "text-bad" },
   changes: { label: "Changes requested", tone: "text-warn" },
   done: { label: "Finished", tone: "text-ok" },
+  stale: { label: "Stale branch", tone: "text-warn" },
 };
+
+/** The prompt behind "Fix checks": the command and the tail of its output. */
+export function fixChecksPrompt(ws: Pick<Workspace, "checksCommand" | "checksOutput">) {
+  const cmd = ws.checksCommand ?? "the check command";
+  return (
+    `The check command \`${cmd}\` failed in this workspace. Fix the failures and re-run it until it passes, ` +
+    `then tell me it is ready to ship.\n\nLast output:\n\`\`\`\n${ws.checksOutput ?? ""}\n\`\`\``
+  );
+}
+
+/** The prompt behind "Resolve conflicts": a focused rebase brief naming the conflicting files. */
+export function resolveConflictsPrompt(ws: Pick<Workspace, "syncConflicts">, baseBranch: string) {
+  return (
+    `Your branch is behind origin/${baseBranch} and Orbit's automatic rebase hit conflicts in: ${ws.syncConflicts.join(", ")}.\n` +
+    `Run \`git fetch origin ${baseBranch}\` and \`git rebase origin/${baseBranch}\`. Resolve each conflict keeping the intent of both sides, ` +
+    `\`git add\` the files and \`git rebase --continue\` until it finishes. Then run the project's checks and fix anything the merge broke. ` +
+    `Don't push; just tell me when it is done.`
+  );
+}
 
 export function reasonMeta(reason: Reason) {
   return meta[reason];
 }
 
-export function ruleSuggestions(reason: Reason, ctx: { hasPr: boolean; changedFiles: number; planner?: boolean }): Suggestion[] {
+export function ruleSuggestions(
+  reason: Reason,
+  ctx: { hasPr: boolean; changedFiles: number; planner?: boolean; ws?: Workspace; baseBranch?: string },
+): Suggestion[] {
   const text = (label: string): Suggestion => ({ label, kind: "text", text: label });
   const skill = (label: string, skillId: string): Suggestion => ({ label, kind: "skill", skillId });
+  const ship = (label: string, anyway = false): Suggestion => ({ label, kind: "ship", anyway });
   switch (reason) {
+    case "checksFailed":
+      return [
+        { label: "Fix checks", kind: "text", text: ctx.ws ? fixChecksPrompt(ctx.ws) : "Fix the failing checks" },
+        ship("Ship anyway", true),
+      ];
+    case "needsSync":
+      return [
+        {
+          label: "Resolve conflicts",
+          kind: "text",
+          text: ctx.ws ? resolveConflictsPrompt(ctx.ws, ctx.baseBranch ?? "main") : "Rebase onto the base branch and resolve conflicts",
+        },
+      ];
+    case "stale":
+      return [{ label: "Sync now", kind: "sync" }, text("Keep going")];
     case "error":
       return [text("Try that again"), text("Explain what went wrong and propose a fix")];
     case "question":
@@ -96,8 +161,8 @@ export function ruleSuggestions(reason: Reason, ctx: { hasPr: boolean; changedFi
       if (ctx.planner) {
         out.push({ label: "Build this plan", kind: "handoff", profileId: "shipkit:builder", text: "Implement the plan above." });
       }
-      if (ctx.hasPr) out.push(skill("Push updates", "shipkit:ship"));
-      else if (ctx.changedFiles > 0) out.push(skill("Ship it", "shipkit:ship"));
+      if (ctx.hasPr) out.push(ship("Push updates"));
+      else if (ctx.changedFiles > 0) out.push(ship("Ship it"));
       out.push(text("Keep going"), text("Summarize what changed"));
       return out.slice(0, 3);
     }

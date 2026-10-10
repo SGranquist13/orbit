@@ -172,12 +172,12 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Routines: scheduled prompt/skill runs per repo (presets + cron), fresh or standing workspace, Routines view from a sidebar button, Run now, history; runs only while Orbit is open, missed runs catch up once on launch | P2 | ⬜ | |
-| Per-repo check command (auto-detected, overridable) run by Orbit itself | P1 | ⬜ | Shared by the ship gate and Simplify |
-| Save-point commits by Orbit after each turn with changes; unpushed `wip:` commits squashed before Ship; Undo last turn | P1 | ⬜ | |
-| Ship gate: Orbit runs checks before Ship; failing → inbox "Checks failed" with Fix / Ship anyway | P1 | ⬜ | |
-| Auto-sync idle, clean workspaces onto `origin/<base>`; conflicts → inbox "Needs sync" with agent resolve | P1 | ⬜ | Never while the agent is running |
-| Overlap detection between live workspaces; after a merge, overlapping workspaces sync first | P2 | ⬜ | |
-| After merge: auto archive + remove worktree + delete branch; long-lived/far-behind branches surface in the inbox | P2 | ⬜ | |
+| Per-repo check command (auto-detected, overridable) run by Orbit itself | P1 | 🟢 | `checks.rs` (`detect` / `run`, reusable by Simplify); override per repo in Settings > Git. Rust unit-tested; real-app e2e step `trunk-save-points` written, not yet run. Fresh worktrees have no `node_modules`, so a JS check can fail until the agent installs deps |
+| Save-point commits by Orbit after each turn with changes; unpushed `wip:` commits squashed before Ship; Undo last turn | P1 | 🟢 | `trunk.rs`; temp-repo unit tests for commit, squash range, undo (incl. pushed refusal). Settings: save points, squash. Palette: Undo last turn. e2e step written, not run |
+| Ship gate: Orbit runs checks before Ship; failing → inbox "Checks failed" with Fix / Ship anyway | P1 | 🟢 | `prepare_ship`; Settings > Git: Off / Warn / Block (unit-tested gate logic). Ship panel buttons and inbox "Ship it" / "Push updates" go through it. Checks run in the worktree; no timeout yet |
+| Auto-sync idle, clean workspaces onto `origin/<base>`; conflicts → inbox "Needs sync" with agent resolve | P1 | 🟢 | Background loop + `sync_now`; Off / Suggest only / Automatic and interval in Settings > Git; stale thresholds. Rebase conflict + abort tested on temp repos. Never while the agent is running (re-checked before rebasing). Checks are not re-run after an auto-rebase |
+| Overlap detection between live workspaces; after a merge, overlapping workspaces sync first | P2 | 🟢 | Changed-file intersection (not a `merge-tree` dry run); quiet line in the Ship panel |
+| After merge: auto archive + remove worktree + delete branch; long-lived/far-behind branches surface in the inbox | P2 | 🟢 | `merge_pr` returns `{ archived }`; both steps are Settings toggles; skipped when the worktree is dirty or has unpushed commits. Stale reason in the inbox |
 | Simplify button: read-only find pass → candidate list → apply one at a time, Orbit checks + commits `refactor:` or reverts | P2 | ⬜ | |
 
 ## Mock vs real

@@ -31,25 +31,6 @@ export function GitHub() {
           <span className="selectable max-w-[320px] text-right text-[11.5px] text-mute">{gh.scopes.join(", ")}</span>
         </Row>
       )}
-      <Row label="Merge method" field="mergeMethod" description="Used by the Merge button in the Ship panel.">
-        <Segmented<"squash" | "merge" | "rebase">
-          label="Merge method"
-          value={s.mergeMethod}
-          options={[
-            { value: "squash", label: "Squash" },
-            { value: "merge", label: "Merge commit" },
-            { value: "rebase", label: "Rebase" },
-          ]}
-          onChange={(v) => void save({ mergeMethod: v })}
-        />
-      </Row>
-      <Row
-        label="Delete remote branch after merge"
-        field="deleteBranchOnMerge"
-        description="Removes the branch on GitHub. The local branch stays, because its worktree is still checked out."
-      >
-        <Toggle label="Delete remote branch after merge" checked={s.deleteBranchOnMerge} onChange={(v) => void save({ deleteBranchOnMerge: v })} />
-      </Row>
     </>
   );
 }
@@ -181,3 +162,5 @@ export function About() {
     </>
   );
 }
+
+export { Git } from "./Git";
