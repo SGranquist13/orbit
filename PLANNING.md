@@ -12,75 +12,79 @@ _(empty: ideas 6–8 moved straight to Shaping)_
 
 Ideas we're actively working through: the problem, a rough sketch, open questions.
 
-### 6. Routines (scheduled prompts)
+### 6. Routines (scheduled runs)
 
-**Want:** Prompts that run on a schedule or trigger without you starting them, e.g. "every weekday at 9: triage new issues", "nightly: run the test suite and fix anything flaky", "every Friday: simplification pass on this week's changes" (#8).
+**Decided (2026-10-10):** a built-in app feature (Rust scheduler + Routines page), not a skill.
 
-**Problem:** Orbit only acts when you type. Recurring chores (triage, dependency bumps, CI babysitting, cleanup) need you to remember them, open a workspace and paste the same prompt.
+**Want:** Work that runs on a schedule without you starting it, e.g. "every weekday at 9: triage new issues", "nightly: run the checks and fix anything broken", "every Friday: simplify this week's changes" (#8).
+
+**Problem:** Orbit only acts when you type. Recurring chores (triage, dependency bumps, CI babysitting, cleanup) depend on you remembering them, opening a workspace and pasting the same prompt.
 
 **Sketch:**
-- **A routine** = name + repo + schedule + prompt (or a skill, e.g. `/shipkit:fix-ci`) + agent/profile + **where it runs**:
+- **A routine** = name + repo + schedule + action + agent/profile + **where it runs**:
+  - *action*: a free prompt, or one of Orbit's built-in actions (Simplify #8, Sync with base #7, Fix CI, Clean up merged worktrees);
   - *fresh workspace each run* (new worktree + branch, named `<routine>-<date>`): for jobs that produce a PR;
   - *one standing workspace* reused every run: for running logs / triage notes.
-- **Schedule:** simple presets (hourly, daily at HH:MM, weekdays, weekly on X) with cron underneath; plus event triggers later (PR checks failed, new issue labelled X, branch merged).
-- **Runs land in the attention inbox (#2)** as a normal workspace with reason "Routine finished" / "Routine failed", so nothing new to learn. Quiet runs ("nothing to do") auto-archive.
-- **Routines page** (palette + Settings-style list): enable/pause, next run time, last run status, "Run now", run history linking to each workspace.
-- **Runs in the app process** (a scheduler tick in Rust alongside the session manager, schedule stored in SQLite). Missed runs while Orbit was closed: run once on launch, don't replay every miss.
-- **Guardrails:** max concurrent routine runs, per-routine budget cap (tokens via `usage.rs`), and routines never merge on their own: they stop at a draft PR.
-- **Phone:** routine results push to the mobile app like any finished turn.
+- **Schedule:** presets (hourly, daily at HH:MM, weekdays, weekly on X) with cron underneath. Event triggers later (checks failed, new issue labelled X, base moved).
+- **Scheduler in the Rust core** (`routines.rs`: a tick task beside the session manager; routines + run history in SQLite). Missed runs while Orbit was closed: run once on launch, never replay every miss.
+- **Runs land in the attention inbox (#2)** as a normal workspace with reason "Routine finished" / "Routine failed". Runs with nothing to do archive themselves.
+- **Routines page** (palette entry + shortcut): enable/pause, next run, last status, Run now, history linking to each run's workspace. Built-in templates (issue triage, nightly checks, weekly simplify, stale-branch sweep), off by default.
+- **Guardrails:** max concurrent routine runs, per-routine token budget (`usage.rs`), and routines can open a draft PR but never merge.
+- **Phone:** routine results reach the mobile app like any finished turn.
 
 **Open questions (proposed defaults in brackets):**
-- Only while Orbit is open, or a background service / OS scheduled task that launches it? [only while open, run missed on launch]
+- Only while Orbit is open, or a background service / OS scheduled task that launches it? [only while open; missed runs catch up on launch]
 - Fresh workspace per run or standing workspace? [per-routine choice, default fresh]
 - Time triggers only for v1, or event triggers too? [time only; events next]
-- Ship a few starter routines in shipkit (issue triage, nightly CI check, weekly simplify, stale-branch sweep)? [yes, disabled by default]
-- Should a routine be allowed to auto-ship (push + draft PR), or only commit locally? [draft PR allowed, never merge]
+- Can a routine push + open a draft PR, or only commit locally? [draft PR allowed, never merge]
 
-### 7. Trunk-based worktree flow
+### 7. Trunk-based worktree flow (built into Orbit's git layer)
 
-Source: [addyosmani/agent-skills: git-workflow-and-versioning](https://github.com/addyosmani/agent-skills/blob/main/skills/git-workflow-and-versioning/SKILL.md). Core ideas: `main` always deployable; short-lived branches (merge within 1–3 days); atomic commits each tested ("save points"); separate refactors from features; ~100 lines per change, split above ~1000; a change summary with "didn't touch" and "concerns"; one worktree per parallel agent.
+Source: [addyosmani/agent-skills: git-workflow-and-versioning](https://github.com/addyosmani/agent-skills/blob/main/skills/git-workflow-and-versioning/SKILL.md). Core ideas: `main` always deployable; short-lived branches (merge within 1–3 days); atomic, tested commits as "save points"; refactors separate from features; ~100 lines per change, split above ~1000; one worktree per parallel agent.
 
-**What Orbit already does:** one worktree + branch per workspace, branched from fresh `origin/<base>`; conventional commits in `ship`; `rebase` skill; merged-worktree cleanup.
+**Decided (2026-10-10):** a built-in app feature. Orbit's own git code (`git.rs`, a new `trunk.rs`) does the bookkeeping and enforcement deterministically; an agent is only called in where judgment is needed (resolving a conflict, writing commit messages). Not a set of shipkit prompts the agent may or may not follow.
 
-**Gaps (where Orbit could actively enforce the flow):**
-- **Branch age and drift.** Nothing tells you a workspace has lived 5 days or is 40 commits behind base. Show age + behind/ahead on the sidebar row (colour only when it matters: `warn` past N days or N commits behind), and add an inbox reason "Drifting from base" with a "Rebase" suggestion.
-- **Auto-sync with base.** Optionally rebase idle, clean workspaces onto base when base moves (or when another Orbit workspace merges), so conflicts show up early and small. Fits a routine (#6).
-- **Cross-workspace conflict warning.** Several agents in parallel worktrees touching the same files is the main merge pain (`mock.ts`, `Palette.tsx`). Orbit sees every worktree's diff, so it can flag "ws A and ws B both edit `Palette.tsx`" before either ships, and suggest merging the smaller one first.
-- **Save-point commits.** Have agents commit after each verified slice instead of one big commit at Ship time (workspace context instruction, maybe a Builder-profile rule). The transcript could show commits as markers, and "Undo to last save point" = `git reset --hard` to the previous agent commit (confirm first).
-- **Change size nudge.** Diff stats are already known: warn when a workspace passes ~400 changed lines ("consider splitting"), and offer a `/shipkit:split` skill that splits work into stacked branches/PRs (refactor vs feature).
-- **Change summary in PRs.** Extend `ship`'s PR template with *Didn't touch (intentionally)* and *Concerns* sections.
-- **Merge method.** Our default is squash; the skill argues for keeping clean incremental commits. With save-point commits, rebase-merge keeps the narrative. Revisit the default.
-- **Release & versioning (later):** a `/shipkit:release` skill (semver bump from conventional commits, tag, curated changelog entry). Probably its own idea.
-
-**Open questions (proposed defaults in brackets):**
-- How opinionated? Nudges and inbox reasons only, or enforce (e.g. block Ship over a size limit)? [nudges only, matches preflight being advisory]
-- Drift thresholds? [warn at 3 days or 20 commits behind]
-- Auto-rebase idle workspaces automatically, or only suggest? [suggest; auto via an opt-in routine]
-- Save-point commits by default for every profile, or Builder/Debugger only? [all editing profiles]
-- Default merge method: keep squash or switch to rebase? [keep squash until save-point commits land, then revisit]
-- Is "trunking" also meant as stacked PRs (branch on top of another workspace's branch)? That's a bigger feature: worth its own item?
-
-### 8. Simplification pass
-
-Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyosmani/agent-skills/blob/main/skills/code-simplification/SKILL.md). Core ideas: preserve behaviour exactly (tests pass unmodified); follow project conventions (CLAUDE.md, neighbouring code); clarity over cleverness, not fewer lines; scope to what changed; understand before touching (Chesterton's fence, git blame); one simplification at a time, test, commit; refactors go in separate commits/PRs from features.
-
-**Problem:** Agents iterate fast and leave residue: duplicated helpers, dead branches, over-nested logic, inconsistent patterns across parallel workspaces. Nothing in the flow cleans it up before shipping.
+**What Orbit already does:** one worktree + branch per workspace from fresh `origin/<base>`; merged-worktree cleanup. Rebasing and commit discipline currently live in shipkit prompts (`rebase`, `ship`), so they're up to the agent.
 
 **Sketch:**
-- **`/shipkit:simplify` skill** (bundled), adapted from the source: scope = the workspace's diff against base by default (or a path/arg); checklist of concrete signals (nesting ≥3, functions >50 lines, nested ternaries, boolean flag params, duplicated 5+ lines, dead code, wrapper-adds-nothing); each change tested and committed separately as `refactor:`; ends with a before/after summary and anything flagged-but-not-changed.
-- **Simplifier profile** (#3): Builder-like, but instructed never to change behaviour or tests; could run on the other agent for a second pair of eyes.
-- **Where it shows up:**
-  - a pinned chip / button next to Preflight in the Ship panel ("Simplify before shipping");
-  - an inbox suggestion when a turn finishes with a large diff;
-  - a weekly routine (#6) over the last week's merged changes on base, opening a separate `refactor/` PR.
-- **Keep it separate from feature work:** when run in a feature workspace, its commits stay `refactor:` so they can be reviewed or reverted on their own; optionally it opens its own branch/PR (ties to #7's split idea).
+- **Save points, made by Orbit.** After every agent turn that changed files, Orbit commits the worktree itself (`wip:` commit, message from the turn). The transcript shows a marker per save point; **Undo turn** resets to the previous save point (with confirm). At Ship, Orbit squashes the `wip:` commits into one or a few conventional commits (agent-written messages), so history stays clean without trusting the agent to commit.
+- **Drift tracking.** A background poll (`git fetch` + `rev-list --count`) per workspace: branch age, commits behind/ahead of base. Shown on the sidebar row and workspace header; `warn` colour past the threshold. New inbox reason **"Drifting from base"**.
+- **Sync with base (built-in action).** Orbit rebases the worktree onto `origin/<base>` itself. Clean: done, no agent involved. Conflicts: Orbit aborts, hands the agent a focused "resolve these conflicts in X, Y" turn, then re-runs checks. Optional auto-sync for idle, clean workspaces when base moves (e.g. right after another Orbit workspace merges).
+- **Overlap detection.** Orbit already sees every worktree's diff, so it computes which files two or more live workspaces both touch. Overlap badge on both rows ("also edited in *ws B*"), with a hint to land the smaller one first, then sync the other. A dry-run merge (`git merge-tree`) separates real conflicts from mere overlap.
+- **Change-size meter.** Lines changed vs base next to the context meter: neutral up to ~300, `warn` past ~400. A "Split this change" action (stacked branches) is bigger and gets its own item later.
+- **Ship gate (Orbit-side).** Before pushing, Orbit itself runs the repo's check command (auto-detected per repo, editable in Settings: `bun run typecheck`, `cargo test`, …) and refuses to open/update the PR on failure, offering "Fix with agent". Today this is a line in `ship.md` the agent may skip.
+- **Short-lived by design:** after merge, Orbit archives the workspace and deletes the branch (cleanup + delete-branch setting already exist; this makes it automatic). A routine (#6) sweeps stale branches.
+- **Later, own item:** releases (semver bump from conventional commits, tag, changelog) as an Orbit action.
 
 **Open questions (proposed defaults in brackets):**
-- Skill only, or skill + profile? [skill first; profile if it drifts]
-- Same PR as the feature (separate commits) or its own PR? [same PR, separate `refactor:` commits; own PR when run as a routine]
-- Advisory (report only, you approve) or apply directly? [apply, since every step is tested and committed and easy to revert]
-- Run it automatically before Ship, or only on click? [only on click, like preflight]
-- Should it also target the user's own codebase-wide cleanup (not just the diff)? [diff-scoped by default; a path argument widens it]
+- Orbit-made save-point commits after each turn: always, or a setting? [on by default, setting to turn off]
+- What happens to `wip:` commits at Ship? [Orbit squashes them into conventional commits; the GitHub merge method setting still applies]
+- How strict is the ship gate? [block on failing checks, with an explicit "Ship anyway"]; the size meter only nudges
+- Drift thresholds? [warn at 3 days or 20 commits behind]
+- Auto-sync idle workspaces, or only suggest? [suggest in the inbox; auto via a setting or routine]
+- Is "trunking" also meant as stacked PRs (a workspace branching off another workspace's branch)? If so, that's its own item.
+
+### 8. Simplification pass (built-in action)
+
+Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyosmani/agent-skills/blob/main/skills/code-simplification/SKILL.md). Core ideas: preserve behaviour exactly (tests pass unmodified); follow project conventions; clarity over cleverness, not fewer lines; scope to what changed; understand before touching (Chesterton's fence); one simplification at a time, tested, committed; refactors kept separate from features.
+
+**Decided (2026-10-10):** a built-in app feature. Orbit runs and polices the loop; the agent only proposes and makes edits. The prompt lives inside Orbit, not as a `/skill` the user sees or the agent can reinterpret.
+
+**Problem:** Agents iterate fast and leave residue: duplicated helpers, dead branches, deep nesting, inconsistent patterns across parallel workspaces. Nothing in the flow cleans it up before shipping.
+
+**Sketch (Orbit-driven loop):**
+1. **Scope:** Orbit computes the workspace's diff against base (or selected files) and passes only that.
+2. **Find:** a read-only agent turn (enforced, like Planner) returns a structured candidate list via JSON schema: file, lines, signal (deep nesting, long function, nested ternary, boolean flag params, duplication, dead code, needless wrapper), proposed change, risk.
+3. **Review in the UI:** a Simplify panel lists the candidates; you tick which to apply (or "Apply all low-risk").
+4. **Apply one at a time:** an edit turn per candidate, then **Orbit runs the repo's check command** (#7). Pass: Orbit commits it as `refactor: …`. Fail, or the edit touched test files: Orbit reverts it and marks the row skipped with the reason. Behaviour preservation is checked by Orbit, not promised by the agent.
+5. **Result:** a before/after summary in the panel (applied / skipped / lines removed), commits kept separate from feature commits.
+- **Entry points:** Simplify button in the workspace header / Ship panel, palette entry, inbox suggestion when a turn ends with a large diff, and the weekly routine (#6) over the last week's merged changes, which opens its own `refactor/` PR.
+
+**Open questions (proposed defaults in brackets):**
+- Review the candidate list first, or apply straight away? [review first; "Apply all low-risk" for speed]
+- Same PR as the feature (separate `refactor:` commits) or its own PR? [same PR when run in a feature workspace; own PR when run as a routine]
+- Which agent finds vs applies? [the workspace's agent; option to let the other agent find, for a second view]
+- Run automatically before Ship, or only on click? [only on click / routine]
 
 ### 1. Focus on the main workspace (chat / editor) (built)
 
