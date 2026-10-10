@@ -52,6 +52,21 @@ export function Git() {
         <Toggle label="Save points" checked={s.saveCommits} onChange={(v) => void save({ saveCommits: v })} />
       </Row>
       <Row
+        label="Save-point messages"
+        field="commitMessages"
+        description="How each wip: save point is worded. From the prompt uses the first line of your message. Written by a model reads the staged diff and your message and writes a real subject, using the model chosen for Commit messages in Settings > Models (it can be local). A call slower than the local timeout falls back to the prompt."
+      >
+        <Segmented<Settings["commitMessages"]>
+          label="Save-point messages"
+          value={s.commitMessages}
+          options={[
+            { value: "prompt", label: "From the prompt" },
+            { value: "model", label: "Written by a model" },
+          ]}
+          onChange={(v) => void save({ commitMessages: v })}
+        />
+      </Row>
+      <Row
         label="Squash save points before Ship"
         field="squashWip"
         description="Folds Orbit's unpushed wip: commits back into one staged change so the agent's ship writes clean conventional commits. Commits the agent made itself are never touched."

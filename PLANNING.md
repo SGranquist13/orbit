@@ -6,7 +6,7 @@ Working notes for features we're thinking about. **Nothing here gets built until
 
 Raw ideas, as they come. Unsorted, unfiltered.
 
-_(empty: ideas 6–8 moved straight to Shaping)_
+- Phone mirror: a workspace that Orbit archives itself (a quiet routine run) or the user archives never reaches the phone as gone, because `Workspace` has no archived flag and the protocol has no "workspace removed" message; it only disappears at the next `snapshot`. Needs a protocol change in `ide_mobile/docs/protocol.md` first (e.g. `{"t":"workspace-removed","workspaceId"}`), then `remote::publish_*` from `archive_inner`.
 
 ## Shaping
 
@@ -259,7 +259,7 @@ Agreed ideas, each with a line on where it landed in FEATURES.md.
 - **#3 Agent profiles**: built as workspace profiles (B); e2e verified.
 - **#4 Pre-ship spot check**: `/shipkit:preflight` written and pinned; needs a real cross-project run.
 - **#5 Multi-folder sessions**: built; e2e verified (attach, discovery, editable worktrees).
-- **#6 Routines, #7 Trunk-based git handling, #8 Simplify**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted); building. FEATURES.md: Routines, git flow, simplify.
+- **#6 Routines, #7 Trunk-based git handling, #8 Simplify, #9 Local models**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted) and built the same day, then connected (Simplify as a routine action, routine summaries / save-point messages / PR drafts through `llm.rs`). All 🟢: none has had a real-app e2e run yet. FEATURES.md: Routines, git flow, simplify; Local models.
 - **#1 Focus on the main workspace**: built (Ship button + hidden panel, slimmer collapsible sidebar, wider chat, focus mode).
 
 ## Parked

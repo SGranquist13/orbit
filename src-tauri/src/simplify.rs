@@ -359,9 +359,37 @@ pub fn assemble_scope(files: &[ScopeFile], budget: usize, per_file: usize) -> (S
 
 const FIND_SCHEMA: &str = r#"{"type":"object","properties":{"candidates":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"file":{"type":"string"},"startLine":{"type":"integer"},"endLine":{"type":"integer"},"signal":{"type":"string","enum":["nesting","longFunction","nestedTernary","booleanFlags","duplication","deadCode","needlessWrapper","naming","other"]},"title":{"type":"string"},"rationale":{"type":"string"},"proposedChange":{"type":"string"},"risk":{"type":"string","enum":["low","medium","high"]}},"required":["id","file","startLine","endLine","signal","title","rationale","proposedChange","risk"]}}},"required":["candidates"]}"#;
 
-pub fn find_prompt(base: &str, scope: &str, max: usize) -> String {
+/// What the find pass looks at. `Diff` is the workspace's own changes against base (the panel's
+/// button); `Since` is the work that landed on base in the last `days` days, for a workspace that has
+/// no changes of its own yet (the Simplify routine).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Scope {
+    Diff,
+    Since { days: u32 },
+}
+
+impl Scope {
+    fn subject(self) -> &'static str {
+        match self {
+            Scope::Diff => "the changes made on this git branch",
+            Scope::Since { .. } => "recently merged changes on this repository's base branch",
+        }
+    }
+
+    fn framing(self, base: &str) -> String {
+        match self {
+            Scope::Diff => format!("The branch is compared against `{base}`."),
+            Scope::Since { days } => format!(
+                "The working tree is `{base}` as it is now. These are the changes that landed on it in the last {days} days (a unified diff per file)."
+            ),
+        }
+    }
+}
+
+pub fn find_prompt(kind: Scope, base: &str, scope: &str, max: usize) -> String {
+    let (subject, framing) = (kind.subject(), kind.framing(base));
     format!(
-        "You are reviewing the changes made on this git branch for code that can be simplified. \
+        "You are reviewing {subject} for code that can be simplified. \
 This is analysis only: you cannot edit anything and must not try to. Use Read, Grep and Glob.\n\n\
 Goal: list concrete simplifications that make the changed code easier to read and maintain while preserving its behaviour exactly.\n\n\
 Rules\n\
@@ -375,7 +403,7 @@ Rules\n\
 - At most {max} candidates, most valuable first. Each must stand alone: applying one must not depend on another, and candidates must not overlap in lines.\n\n\
 Signals: nesting (deep nesting that early returns or guard clauses would flatten), longFunction (one function doing several jobs that splits cleanly), nestedTernary, booleanFlags (boolean parameters that switch behaviour), duplication, deadCode, needlessWrapper (an abstraction that only forwards), naming (misleading names, only when clearly worth it), other.\n\n\
 For each candidate give: id (c1, c2, ...), file (path relative to the repository root), startLine and endLine of the code in its current state, signal, a short imperative title (under 70 characters, no trailing period), rationale (why it is harder to read now), proposedChange (what to do, concretely enough that an engineer who has not seen this analysis could do it) and risk (low: mechanical and local; medium: touches several call sites or subtle control flow; high: could plausibly change behaviour).\n\n\
-The branch is compared against `{base}`. The changes (a unified diff per file, possibly cut short) follow.\n\n<changes>\n{scope}</changes>\n\n\
+{framing} The changes (a unified diff per file, possibly cut short) follow.\n\n<changes>\n{scope}</changes>\n\n\
 Respond only with the structured result."
     )
 }
@@ -410,13 +438,41 @@ fn merge_base(wt: &Path, base: &str) -> String {
     git::run(wt, &["merge-base", "HEAD", &trunk::base_ref(wt, base)]).unwrap_or_else(|_| "HEAD".into())
 }
 
-struct Scope {
+struct Built {
     text: String,
     files: usize,
     omitted: usize,
 }
 
-fn build_scope(wt: &Path, base: &str) -> anyhow::Result<Scope> {
+/// The empty tree, the "before" side of a window that reaches back past the repo's first commit. Git
+/// knows its hash but only has the object once something writes it, so write it (from an empty file).
+fn empty_tree(wt: &Path) -> anyhow::Result<String> {
+    let file = std::env::temp_dir().join(format!("orbit-empty-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&file, b"")?;
+    let out = git::run(wt, &["hash-object", "-t", "tree", "-w", &file.to_string_lossy()]);
+    let _ = std::fs::remove_file(&file);
+    out
+}
+
+/// The scope for `Scope::Since`: files that changed on base in the last `days` days, biggest change
+/// first. Files that no longer exist in the worktree (deleted since) and non-source files are left out.
+fn build_scope_since(wt: &Path, base: &str, days: u32) -> anyhow::Result<Built> {
+    let target = trunk::base_ref(wt, base);
+    // The last commit before the window; everything after it is "recent".
+    let before = git::run(wt, &["rev-list", "-1", &format!("--before={days}.days.ago"), &target]).unwrap_or_default();
+    let before = if before.trim().is_empty() { empty_tree(wt)? } else { before.trim().to_string() };
+    let numstat = git::run(wt, &["diff", "--numstat", "--no-renames", &before, &target])?;
+    let mut files: Vec<ScopeFile> = vec![];
+    for c in git::parse_numstat_lines(&numstat).into_iter().filter(|c| is_simplifiable(&c.path) && wt.join(&c.path).is_file()) {
+        let diff = git::run(wt, &["diff", &before, &target, "--", &c.path]).unwrap_or_default();
+        files.push(ScopeFile { path: c.path, additions: c.additions, deletions: c.deletions, diff });
+    }
+    files.sort_by_key(|f| std::cmp::Reverse(f.additions + f.deletions));
+    let (text, omitted) = assemble_scope(&files, SCOPE_BUDGET, SCOPE_PER_FILE);
+    Ok(Built { text, files: files.len(), omitted })
+}
+
+fn build_scope(wt: &Path, base: &str) -> anyhow::Result<Built> {
     let mb = merge_base(wt, base);
     let mut files: Vec<ScopeFile> = vec![];
     for c in git::changes(wt, base)?.into_iter().filter(|c| is_simplifiable(&c.path)) {
@@ -430,7 +486,7 @@ fn build_scope(wt: &Path, base: &str) -> anyhow::Result<Scope> {
     // Biggest changes first: they matter most and are the likeliest to be cut when the budget runs out.
     files.sort_by_key(|f| std::cmp::Reverse(f.additions + f.deletions));
     let (text, omitted) = assemble_scope(&files, SCOPE_BUDGET, SCOPE_PER_FILE);
-    Ok(Scope { text, files: files.len(), omitted })
+    Ok(Built { text, files: files.len(), omitted })
 }
 
 fn head(wt: &Path) -> anyhow::Result<String> {
@@ -472,14 +528,20 @@ fn commit_step(wt: &Path, pre: &str, title: &str) -> anyhow::Result<(String, i64
 
 // ---- find ----
 
-async fn run_find(ws: &Workspace, base: String, model: String, max: usize) -> Result<(Vec<Candidate>, usize, Option<String>), String> {
+async fn run_find(ws: &Workspace, base: String, kind: Scope, model: String, max: usize) -> Result<(Vec<Candidate>, usize, Option<String>), String> {
     let wt = PathBuf::from(&ws.path);
     let (wt2, base2) = (wt.clone(), base.clone());
-    let scope = tauri::async_runtime::spawn_blocking(move || build_scope(&wt2, &base2)).await.map_err(err)?.map_err(err)?;
+    let scope = tauri::async_runtime::spawn_blocking(move || match kind {
+        Scope::Diff => build_scope(&wt2, &base2),
+        Scope::Since { days } => build_scope_since(&wt2, &base2, days),
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
     if scope.files == 0 {
         return Ok((vec![], 0, None));
     }
-    let prompt = find_prompt(&base, &scope.text, max);
+    let prompt = find_prompt(kind, &base, &scope.text, max);
     // Enforced read-only: the built-in tool set itself is limited to Read/Grep/Glob (no Edit, Write or Bash
     // exists for this process), on top of the default permission mode and an explicit allowlist. The prompt
     // goes through stdin because a big diff would not fit a Windows command line.
@@ -708,49 +770,57 @@ pub fn simplify_state(workspace_id: String) -> SimplifyState {
     snapshot(&workspace_id)
 }
 
-/// Starts the read-only analysis; progress and the result arrive as `simplify` events.
-#[tauri::command]
-pub async fn simplify_find(app: AppHandle, state: State<'_, AppState>, workspace_id: String) -> CmdResult<SimplifyState> {
-    let state: AppState = state.inner().clone();
-    let ws = state.db().workspace(&workspace_id).map_err(err)?;
+/// Checks the workspace can be analysed and flips its state to Finding; returns the base branch.
+fn begin_find(app: &AppHandle, state: &AppState, ws: &Workspace) -> CmdResult<String> {
     if ws.status == "running" {
         return Err("Wait for the current turn to finish before simplifying".into());
     }
-    if matches!(snapshot(&workspace_id).phase, Phase::Finding | Phase::Applying) {
+    if matches!(snapshot(&ws.id).phase, Phase::Finding | Phase::Applying) {
         return Err("Simplify is already running for this workspace".into());
     }
-    let settings = state.settings();
     let base = state.db().repo(&ws.repo_id).map_err(err)?.base_branch;
-    let cmd = trunk::resolve_command(&state, &ws);
-    update(&app, &ws.id, |r| {
+    let cmd = trunk::resolve_command(state, ws);
+    update(app, &ws.id, |r| {
         r.state = SimplifyState::new(&ws.id);
         r.state.phase = Phase::Finding;
         r.state.check_command = cmd;
         r.cancel.store(false, Ordering::SeqCst);
     });
-    let (app2, ws2) = (app.clone(), ws.clone());
-    let handle = tauri::async_runtime::spawn(async move {
-        let found = run_find(&ws2, base, settings.simplify_model.clone(), settings.simplify_max_candidates as usize).await;
-        update(&app2, &ws2.id, |r| {
-            r.find_task = None;
-            match found {
-                Ok((candidates, files, note)) => {
-                    r.state.rows = candidates
-                        .iter()
-                        .map(|c| Row { candidate_id: c.id.clone(), status: "queued".into(), detail: None, commit: None, lines_removed: 0, unchecked: false })
-                        .collect();
-                    r.state.candidates = candidates;
-                    r.state.scope_files = files;
-                    r.state.scope_note = note;
-                    r.state.phase = Phase::Ready;
-                }
-                Err(e) => {
-                    r.state.error = Some(e);
-                    r.state.phase = Phase::Idle;
-                }
+    Ok(base)
+}
+
+/// Runs the analysis and records the outcome: Ready with the candidates, or Idle with the error.
+async fn find_and_record(app: AppHandle, state: AppState, ws: Workspace, base: String, scope: Scope) {
+    let settings = state.settings();
+    let found = run_find(&ws, base, scope, settings.simplify_model.clone(), settings.simplify_max_candidates as usize).await;
+    update(&app, &ws.id, |r| {
+        r.find_task = None;
+        match found {
+            Ok((candidates, files, note)) => {
+                r.state.rows = candidates
+                    .iter()
+                    .map(|c| Row { candidate_id: c.id.clone(), status: "queued".into(), detail: None, commit: None, lines_removed: 0, unchecked: false })
+                    .collect();
+                r.state.candidates = candidates;
+                r.state.scope_files = files;
+                r.state.scope_note = note;
+                r.state.phase = Phase::Ready;
             }
-        });
+            Err(e) => {
+                r.state.error = Some(e);
+                r.state.phase = Phase::Idle;
+            }
+        }
     });
+}
+
+/// Starts the read-only analysis; progress and the result arrive as `simplify` events.
+#[tauri::command]
+pub async fn simplify_find(app: AppHandle, state: State<'_, AppState>, workspace_id: String) -> CmdResult<SimplifyState> {
+    let state: AppState = state.inner().clone();
+    let ws = state.db().workspace(&workspace_id).map_err(err)?;
+    let base = begin_find(&app, &state, &ws)?;
+    let handle = tauri::async_runtime::spawn(find_and_record(app.clone(), state, ws.clone(), base, Scope::Diff));
     update(&app, &ws.id, |r| r.find_task = Some(handle));
     Ok(snapshot(&workspace_id))
 }
@@ -760,10 +830,18 @@ pub async fn simplify_find(app: AppHandle, state: State<'_, AppState>, workspace
 pub async fn simplify_apply(app: AppHandle, state: State<'_, AppState>, workspace_id: String, candidate_ids: Vec<String>) -> CmdResult<SimplifyState> {
     let state: AppState = state.inner().clone();
     let ws = state.db().workspace(&workspace_id).map_err(err)?;
+    let (ids, cancel, wake) = begin_apply(&app, &state, &ws, &candidate_ids).await?;
+    tauri::async_runtime::spawn(apply_loop(app.clone(), state.clone(), workspace_id.clone(), ids, cancel, wake));
+    Ok(snapshot(&workspace_id))
+}
+
+/// Everything before the first edit turn: guards, a clean tree, and the state flipped to Applying.
+async fn begin_apply(app: &AppHandle, state: &AppState, ws: &Workspace, candidate_ids: &[String]) -> CmdResult<(Vec<String>, Arc<AtomicBool>, Arc<Notify>)> {
+    let workspace_id = ws.id.clone();
     if ws.status == "running" {
         return Err("Wait for the current turn to finish before applying".into());
     }
-    if crate::resolve_profile(&state, &ws).is_some_and(|p| p.readonly) {
+    if crate::resolve_profile(state, ws).is_some_and(|p| p.readonly) {
         return Err("This workspace's profile is read-only, so it can't make edits. Switch profile first.".into());
     }
     let current = snapshot(&workspace_id);
@@ -798,15 +876,95 @@ pub async fn simplify_apply(app: AppHandle, state: State<'_, AppState>, workspac
         run.cancel.store(false, Ordering::SeqCst);
         run.state.phase = Phase::Applying;
         run.state.cancelled = false;
-        run.state.check_command = trunk::resolve_command(&state, &ws);
+        run.state.check_command = trunk::resolve_command(state, ws);
         for row in run.state.rows.iter_mut().filter(|r| ids.contains(&r.candidate_id)) {
             *row = Row { candidate_id: row.candidate_id.clone(), status: "queued".into(), detail: None, commit: None, lines_removed: 0, unchecked: false };
         }
         (run.cancel.clone(), run.wake.clone())
     };
-    update(&app, &workspace_id, |_| {});
-    tauri::async_runtime::spawn(apply_loop(app.clone(), state.clone(), workspace_id.clone(), ids, cancel, wake));
-    Ok(snapshot(&workspace_id))
+    update(app, &workspace_id, |_| {});
+    Ok((ids, cancel, wake))
+}
+
+// ---- unattended pass (Routines) ----
+
+/// Candidates the unattended pass applies: the low-risk ones, in list order.
+pub fn low_risk_ids(candidates: &[Candidate]) -> Vec<String> {
+    candidates.iter().filter(|c| c.risk == "low").map(|c| c.id.clone()).collect()
+}
+
+/// What an unattended pass ended with; `summary` reads as a routine run's summary.
+pub struct Outcome {
+    pub applied: usize,
+    pub summary: String,
+    pub error: Option<String>,
+}
+
+/// A one-paragraph account of a pass for the routine run row (and the summary model's input).
+pub fn run_summary(scope_files: usize, candidates: &[Candidate], rows: &[Row], days: u32) -> String {
+    let low = low_risk_ids(candidates).len();
+    let head = format!(
+        "Looked at {scope_files} {} changed in the last {days} days and found {} {} ({low} low-risk).",
+        if scope_files == 1 { "file" } else { "files" },
+        candidates.len(),
+        if candidates.len() == 1 { "candidate" } else { "candidates" }
+    );
+    if low == 0 {
+        return head;
+    }
+    let applied = rows.iter().filter(|r| r.status == "applied").count();
+    let mut out = format!("{head} Applied {applied} of {low}.");
+    let skipped: Vec<String> = rows
+        .iter()
+        .filter(|r| r.status == "skipped")
+        .filter_map(|r| {
+            let title = candidates.iter().find(|c| c.id == r.candidate_id).map(|c| c.title.as_str())?;
+            let why = r.detail.as_deref().and_then(|d| d.lines().next()).unwrap_or("skipped");
+            Some(format!("{title} ({why})"))
+        })
+        .collect();
+    if !skipped.is_empty() {
+        out.push_str(&format!(" Skipped: {}.", skipped.join("; ")));
+    }
+    out
+}
+
+/// Find, then apply every low-risk candidate, without anyone clicking. The caller owns what happens
+/// next (ship if anything was applied). Medium and high-risk candidates are never applied unattended.
+pub async fn run_unattended(app: &AppHandle, state: &AppState, ws_id: &str, days: u32) -> Outcome {
+    let fail = |e: String| Outcome { applied: 0, summary: format!("Simplify failed: {e}"), error: Some(e) };
+    let ws = match state.db().workspace(ws_id) {
+        Ok(ws) => ws,
+        Err(e) => return fail(err(e)),
+    };
+    let base = match begin_find(app, state, &ws) {
+        Ok(b) => b,
+        Err(e) => return fail(e),
+    };
+    find_and_record(app.clone(), state.clone(), ws.clone(), base, Scope::Since { days }).await;
+    let found = snapshot(ws_id);
+    if let Some(e) = found.error {
+        return fail(e);
+    }
+    let ids = low_risk_ids(&found.candidates);
+    if ids.is_empty() {
+        update(app, ws_id, |r| r.state.phase = Phase::Done);
+        return Outcome { applied: 0, summary: run_summary(found.scope_files, &found.candidates, &[], days), error: None };
+    }
+    let (ids, cancel, wake) = match begin_apply(app, state, &ws, &ids).await {
+        Ok(t) => t,
+        Err(e) => {
+            update(app, ws_id, |r| r.state.phase = Phase::Ready);
+            return fail(e);
+        }
+    };
+    apply_loop(app.clone(), state.clone(), ws_id.to_string(), ids, cancel, wake).await;
+    let done = snapshot(ws_id);
+    Outcome {
+        applied: done.rows.iter().filter(|r| r.status == "applied").count(),
+        summary: run_summary(found.scope_files, &done.candidates, &done.rows, days),
+        error: None,
+    }
 }
 
 /// Stops a running analysis, or the apply sequence after reverting the step in flight.
@@ -931,7 +1089,7 @@ mod tests {
 
     #[test]
     fn prompts_carry_their_inputs() {
-        let p = find_prompt("main", "--- a.ts\n", 7);
+        let p = find_prompt(Scope::Diff, "main", "--- a.ts\n", 7);
         assert!(p.contains("At most 7 candidates") && p.contains("`main`") && p.contains("--- a.ts") && p.contains("Preserve behaviour exactly"));
         let c = Candidate {
             id: "c1".into(), file: "src/a.ts".into(), start_line: 3, end_line: 9, signal: "nesting".into(),
@@ -1048,6 +1206,69 @@ mod tests {
         assert!(s.text.contains("+export const z = 9;") && s.text.contains("hello") && s.text.contains("(new file)") && !s.text.contains("a.test.ts"));
     }
 
+    fn commit_dated(d: &Path, msg: &str, date: &str) {
+        let ok = std::process::Command::new("git")
+            .args(["commit", "-q", "-m", msg])
+            .current_dir(d)
+            .env("GIT_COMMITTER_DATE", date)
+            .env("GIT_AUTHOR_DATE", date)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+    }
+
+    #[test]
+    fn since_scope_reads_what_landed_on_base_in_the_window() {
+        let d = tmp_repo();
+        // The repo's first commit is long ago, with a file nobody has touched since.
+        std::fs::write(d.join("old.ts"), "export const old = 1;\n").unwrap();
+        std::fs::write(d.join("gone.ts"), "export const gone = 1;\n").unwrap();
+        git::run(&d, &["add", "-A"]).unwrap();
+        commit_dated(&d, "ancient", "2020-01-01T00:00:00");
+        // Recent work on main: an edit, a new file, a test, and a deletion.
+        std::fs::write(d.join("a.ts"), "export const a = 1;\nexport const z = 9;\n").unwrap();
+        std::fs::write(d.join("b.ts"), "export const b = 2;\n").unwrap();
+        std::fs::write(d.join("b.test.ts"), "t\n").unwrap();
+        std::fs::remove_file(d.join("gone.ts")).unwrap();
+        git::run(&d, &["add", "-A"]).unwrap();
+        git::run(&d, &["commit", "-q", "-m", "recent"]).unwrap();
+
+        let s = build_scope_since(&d, "main", 7).unwrap();
+        assert_eq!(s.files, 2, "a.ts and b.ts only: old.ts is outside the window, gone.ts is deleted, tests are out of scope");
+        assert!(s.text.contains("+export const z = 9;") && s.text.contains("--- b.ts") && !s.text.contains("old.ts") && !s.text.contains("gone.ts"));
+
+        // A window reaching past the first commit counts everything that still exists.
+        let all = build_scope_since(&d, "main", 4_000).unwrap();
+        assert_eq!(all.files, 3, "a.ts, b.ts, old.ts");
+    }
+
+    #[test]
+    fn since_prompt_and_unattended_summary() {
+        let p = find_prompt(Scope::Since { days: 7 }, "main", "--- a.ts\n", 4);
+        assert!(p.contains("recently merged") && p.contains("last 7 days") && p.contains("At most 4") && p.contains("--- a.ts"));
+        // The button's scope reads as before.
+        let diff = find_prompt(Scope::Diff, "main", "x", 4);
+        assert!(diff.contains("compared against `main`") && diff.contains("the changes made on this git branch") && !diff.contains("last 7 days"));
+
+        let cand = |id: &str, title: &str, risk: &str| Candidate {
+            id: id.into(), file: "a.ts".into(), start_line: 1, end_line: 2, signal: "other".into(), title: title.into(),
+            rationale: String::new(), proposed_change: String::new(), risk: risk.into(),
+        };
+        let cands = vec![cand("c1", "Flatten parse", "low"), cand("c2", "Split run", "medium"), cand("c3", "Drop wrapper", "low")];
+        assert_eq!(low_risk_ids(&cands), ["c1", "c3"]);
+        let row = |id: &str, status: &str, detail: Option<&str>| Row {
+            candidate_id: id.into(), status: status.into(), detail: detail.map(String::from), commit: None, lines_removed: 0, unchecked: false,
+        };
+        let rows = vec![row("c1", "applied", None), row("c3", "skipped", Some("checks failed\nfull output"))];
+        let s = run_summary(5, &cands, &rows, 7);
+        assert_eq!(
+            s,
+            "Looked at 5 files changed in the last 7 days and found 3 candidates (2 low-risk). Applied 1 of 2. Skipped: Drop wrapper (checks failed)."
+        );
+        assert_eq!(run_summary(1, &[], &[], 7), "Looked at 1 file changed in the last 7 days and found 0 candidates (0 low-risk).");
+    }
+
     /// Needs `claude` on PATH and costs a few cents: `cargo test -- --include-ignored live_find`.
     #[tokio::test]
     #[ignore]
@@ -1063,7 +1284,7 @@ mod tests {
         git::run(&d, &["commit", "-q", "-m", "feat: shipping"]).unwrap();
 
         let scope = build_scope(&d, "main").unwrap();
-        let prompt = find_prompt("main", &scope.text, 5);
+        let prompt = find_prompt(Scope::Diff, "main", &scope.text, 5);
         let args: Vec<String> = [
             "-p", "--model", "haiku", "--output-format", "json", "--no-session-persistence", "--setting-sources", "local", "--permission-mode", "default",
             "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash", "--json-schema", FIND_SCHEMA,

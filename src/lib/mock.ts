@@ -275,6 +275,7 @@ let settings: Settings = {
   suggestionModel: "haiku",
   saveCommits: true,
   squashWip: true,
+  commitMessages: "prompt",
   checksMode: "block",
   checkTimeoutMinutes: 10,
   installBeforeChecks: true,
@@ -316,6 +317,7 @@ const ENUMS: Record<string, string[]> = {
   suggestionModel: ["haiku", "sonnet"],
   defaultAgent: ["claude", "codex"],
   checksMode: ["off", "warn", "block"],
+  commitMessages: ["prompt", "model"],
   syncMode: ["off", "suggest", "auto"],
   simplifyModel: ["haiku", "sonnet", "opus"],
 };
@@ -369,6 +371,9 @@ let routines: Routine[] = [
   rt("rt4", "r2", "Ship the hero update", { kind: "once", at: new Date(now - day).toISOString().slice(0, 16) }, "Finish the homepage hero and open a draft PR.", {
     enabled: false, mode: "standing", standingWorkspaceId: "w4", lastRunAt: now - day, lastStatus: "done",
   }),
+  rt("rt5", "r1", "Weekly simplify", { kind: "weekly", weekday: 5, time: "16:00" }, "", {
+    action: { kind: "simplify" }, lastRunAt: now - 6 * day, lastStatus: "done",
+  }),
 ];
 const run = (id: string, routineId: string, ageMin: number, status: RoutineRun["status"], summary: string | null, workspaceId: string | null = null): RoutineRun => ({
   id, routineId, workspaceId, startedAt: now - ageMin * min, finishedAt: status === "running" ? null : now - ageMin * min + 4 * min, status, summary,
@@ -381,11 +386,13 @@ let routineRuns: RoutineRun[] = [
   run("ru5", "rt2", 33 * 60, "skipped", "The previous run was still going"),
   run("ru6", "rt3", 3 * 24 * 60, "error", "Build failed: cannot resolve ./hero.png", "w4"),
   run("ru7", "rt4", 24 * 60, "done", "Hero updated; opened draft PR #31.", "w4"),
+  run("ru8", "rt5", 6 * 24 * 60, "done", "Simplified 3 spots in the slug and session code and opened draft PR #34. One candidate was skipped because the checks failed.", "w2"),
+  run("ru9", "rt5", 13 * 24 * 60, "quiet", "Looked at 4 files changed in the last 7 days and found 2 candidates (0 low-risk)."),
 ];
 
 function saveMockRoutine(input: RoutineInput): Routine {
   if (input.action.kind === "prompt" && !input.action.text.trim()) throw "write the message to send";
-  const first = input.action.kind === "prompt" ? input.action.text.trim().split("\n")[0] : `/${input.action.skillId}`;
+  const first = input.action.kind === "prompt" ? input.action.text.trim().split("\n")[0] : input.action.kind === "simplify" ? "Simplify recent changes" : `/${input.action.skillId}`;
   const name = input.name.trim() || (first.length > 48 ? `${first.slice(0, 47)}…` : first) || "Routine";
   const times = previewTimes(input.schedule, 1);
   if (input.enabled && !times.length) throw input.schedule.kind === "once" ? "that time has already passed" : "this schedule never fires";
@@ -661,10 +668,10 @@ export function installMockBackend() {
           const skip = (args as { skipChecks?: boolean }).skipChecks;
           if (w?.checksFailed && !skip) {
             const checks = { ok: false, kind: "fail", command: w.checksCommand ?? "bun run typecheck", outputTail: w.checksOutput ?? "", durationMs: 2100 };
-            return settings.checksMode === "block" ? { ok: false, checks, squashed: 0 } : { ok: true, checks, squashed: 2 };
+            return settings.checksMode === "block" ? { ok: false, checks, squashed: 0, notes: null } : { ok: true, checks, squashed: 2, notes: null };
           }
           if (w && skip) w.checksFailed = false;
-          return { ok: true, checks: null, squashed: 2 };
+          return { ok: true, checks: null, squashed: 2, notes: null };
         }
         case "undo_last_turn":
           return null;

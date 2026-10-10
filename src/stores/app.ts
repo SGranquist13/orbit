@@ -422,7 +422,7 @@ export const useApp = create<AppState>((set, get) => ({
         get().setError(`Checks failed (${cmd}). Fix them from the inbox, or Ship anyway.`);
         return;
       }
-      await api.runSkill(workspaceId, "shipkit:ship", "");
+      await api.runSkill(workspaceId, "shipkit:ship", res.notes ?? "");
     } catch (e) {
       get().setError(String(e));
     }

@@ -36,6 +36,109 @@ pub fn wip_message(user_text: &str) -> String {
     if subject.is_empty() { format!("{WIP_PREFIX} save point") } else { format!("{WIP_PREFIX} {subject}") }
 }
 
+/// Prompts for model-written text stay small: a diff is cut to this many characters.
+const DIFF_CAP: usize = 8_000;
+
+fn clip_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}\n(cut short)", s.chars().take(max).collect::<String>())
+    }
+}
+
+pub const COMMIT_SYSTEM: &str = "You write git commit messages. Reply with a subject of at most 60 characters in the imperative mood \
+(\"Add retry to the sync loop\"), no trailing period and no type prefix, and a body of at most two short sentences saying why. \
+Describe what the diff does, not what the user asked.";
+
+pub fn commit_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "subject": { "type": "string" }, "body": { "type": "string" } },
+        "required": ["subject", "body"]
+    })
+}
+
+/// The prompt for a model-written save-point message: the user's message, the stat, and a capped diff.
+pub fn commit_prompt(user_text: &str, stat: &str, diff: &str) -> String {
+    format!(
+        "The user asked the coding agent:\n{}\n\nStaged changes (stat):\n{}\n\nStaged diff:\n{}",
+        clip_chars(user_text.trim(), 600),
+        clip_chars(stat.trim(), 1_500),
+        clip_chars(diff, DIFF_CAP)
+    )
+}
+
+/// `wip: <subject>` (plus a body) from the model's reply; None when the reply has no usable subject.
+pub fn model_message(reply: &serde_json::Value) -> Option<String> {
+    let subject = reply["subject"].as_str()?.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let subject = subject.trim_matches(|c: char| c == '"' || c == '`' || c == '\'');
+    let subject = subject.strip_prefix("wip:").or_else(|| subject.strip_prefix("WIP:")).unwrap_or(subject).trim().trim_end_matches('.');
+    if subject.is_empty() {
+        return None;
+    }
+    let mut cut: String = subject.chars().take(60).collect();
+    if subject.chars().count() > 60 {
+        cut.push('…');
+    }
+    let body = reply["body"].as_str().map(str::trim).filter(|b| !b.is_empty()).map(|b| clip_chars(b, 400));
+    Some(match body {
+        Some(b) => format!("{WIP_PREFIX} {cut}\n\n{b}"),
+        None => format!("{WIP_PREFIX} {cut}"),
+    })
+}
+
+/// The save-point message: the model's when it produced one in time, otherwise today's prompt-derived one.
+pub fn choose_message(reply: Option<&serde_json::Value>, user_text: &str) -> String {
+    reply.and_then(model_message).unwrap_or_else(|| wip_message(user_text))
+}
+
+/// Awaits a model call for at most `limit`; a timeout, an error and an Off task all read as None.
+pub async fn bounded<T>(limit: Duration, call: impl std::future::Future<Output = anyhow::Result<Option<T>>>) -> Option<T> {
+    tokio::time::timeout(limit, call).await.ok().and_then(Result::ok).flatten()
+}
+
+/// Only an explicit non-default model drafts PR text: a Claude draft would cost a call to produce what
+/// the shipping agent writes anyway, while a local model does the drafting for free.
+pub fn pr_draft_enabled(task_setting: &str) -> bool {
+    task_setting.starts_with("local:")
+}
+
+pub const PR_SYSTEM: &str = "You draft pull request descriptions. The title is conventional-commit style (\"feat: ...\", \"fix: ...\"), \
+at most 70 characters. The body has a \"What\" paragraph (1-3 sentences, why the change exists) and a \"Changes\" bullet list. \
+Describe only what the diff shows; do not invent testing that was not run.";
+
+pub fn pr_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "title": { "type": "string" }, "body": { "type": "string" } },
+        "required": ["title", "body"]
+    })
+}
+
+pub fn pr_prompt(branch: &str, base: &str, issue: Option<i64>, stat: &str, diff: &str) -> String {
+    let issue = issue.map(|n| format!("Linked GitHub issue: #{n} (the body must end with \"Closes #{n}\").\n")).unwrap_or_default();
+    format!(
+        "Branch `{branch}`, opened against `{base}`.\n{issue}\nChanges (stat):\n{}\n\nDiff:\n{}",
+        clip_chars(stat.trim(), 2_000),
+        clip_chars(diff, DIFF_CAP)
+    )
+}
+
+/// The extra-notes argument for `shipkit:ship`: the draft, flagged as something to verify.
+pub fn pr_notes(reply: &serde_json::Value) -> Option<String> {
+    let title = reply["title"].as_str()?.trim();
+    let body = reply["body"].as_str()?.trim();
+    if title.is_empty() || body.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Orbit drafted this PR text from the diff. Check it against the changes, fix anything wrong, and use it for the PR.\nTitle: {}\n\n{}",
+        title.lines().next().unwrap_or(title).trim(),
+        clip_chars(body, 1_500)
+    ))
+}
+
 pub fn is_wip(subject: &str) -> bool {
     subject.starts_with(WIP_PREFIX)
 }
@@ -194,7 +297,7 @@ pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
     // A Simplify step commits (or reverts) its own result; a save point would swallow it as `wip:`.
     if settings.save_commits && !crate::simplify::active(ws_id) {
         let text = state.db().last_user_text(ws_id).unwrap_or_default();
-        let msg = wip_message(&text);
+        let msg = if settings.commit_messages == "model" { written_message(state, &settings, Path::new(&ws.path), &text) } else { wip_message(&text) };
         let _g = lock();
         if let Err(e) = commit_save_point(Path::new(&ws.path), &msg) {
             eprintln!("save point for {} failed: {e}", ws.name);
@@ -204,6 +307,28 @@ pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
     if let Some(w) = sync_one(state, ws_id, &base, "suggest") {
         emit_workspace(app, &w);
     }
+}
+
+/// Stages everything and returns (stat, diff) of what a save point would commit; None when the tree is clean.
+fn staged_summary(worktree: &Path) -> Option<(String, String)> {
+    let _g = lock();
+    if git::is_clean(worktree) {
+        return None;
+    }
+    git::run(worktree, &["add", "-A"]).ok()?;
+    Some((git::run(worktree, &["diff", "--cached", "--stat"]).ok()?, git::run(worktree, &["diff", "--cached"]).unwrap_or_default()))
+}
+
+/// The save-point message when "Written by a model" is on. Runs on the blocking save-point thread with
+/// no git lock held; any failure or a call slower than the local timeout falls back to the prompt-derived
+/// message, so a save point never waits on a model for long.
+fn written_message(state: &AppState, settings: &crate::settings::Settings, worktree: &Path, user_text: &str) -> String {
+    let Some((stat, diff)) = staged_summary(worktree) else { return wip_message(user_text) };
+    let prompt = commit_prompt(user_text, &stat, &diff);
+    let schema = commit_schema();
+    let call = crate::llm::complete_json(state, crate::llm::Task::CommitMessage, COMMIT_SYSTEM, &prompt, &schema);
+    let reply = tauri::async_runtime::block_on(bounded(Duration::from_secs(settings.local_timeout_secs), call));
+    choose_message(reply.as_ref(), user_text)
 }
 
 /// Syncs one workspace per `mode`; returns the updated row if anything stored changed.
@@ -417,6 +542,9 @@ pub struct PrepareShip {
     pub ok: bool,
     pub checks: Option<CheckResult>,
     pub squashed: usize,
+    /// A PR title and body Orbit drafted (only when Settings > Models points PR drafts at a local model);
+    /// pass it to `shipkit:ship` as its extra-notes argument.
+    pub notes: Option<String>,
 }
 
 /// The Ship gate: runs checks per `checksMode`, then squashes unpushed save points. `ok: false`
@@ -428,35 +556,39 @@ pub async fn prepare_ship(
     workspace_id: String,
     skip_checks: Option<bool>,
 ) -> CmdResult<PrepareShip> {
-    let state: AppState = state.inner().clone();
-    let ws = state.db().workspace(&workspace_id).map_err(err)?;
+    prepare_ship_inner(&app, state.inner(), &workspace_id, skip_checks == Some(true)).await
+}
+
+pub(crate) async fn prepare_ship_inner(app: &AppHandle, state: &AppState, workspace_id: &str, skip_checks: bool) -> CmdResult<PrepareShip> {
+    let ws = state.db().workspace(workspace_id).map_err(err)?;
     if ws.status == "running" {
         return Err("Wait for the current turn to finish before shipping".into());
     }
     let settings = state.settings();
     let mut result = None;
-    if skip_checks == Some(true) {
+    if skip_checks {
         if ws.checks_failed {
             if let Ok(true) = state.db().clear_checks_failed(&ws.id) {
                 if let Ok(w) = state.db().workspace(&ws.id) {
-                    emit_workspace(&app, &w);
+                    emit_workspace(app, &w);
                 }
             }
         }
     } else if settings.checks_mode != "off" {
-        if let Some(cmd) = resolve_command(&state, &ws) {
-            let r = run_and_record(&app, &state, &ws, cmd, true).await?;
+        if let Some(cmd) = resolve_command(state, &ws) {
+            let r = run_and_record(app, state, &ws, cmd, true).await?;
             let (proceed, _) = gate(&settings.checks_mode, r.ok);
             result = Some(r);
             if !proceed {
-                return Ok(PrepareShip { ok: false, checks: result, squashed: 0 });
+                return Ok(PrepareShip { ok: false, checks: result, squashed: 0, notes: None });
             }
         }
     }
+    let base = state.db().repo(&ws.repo_id).map_err(err)?.base_branch;
+    let wt = PathBuf::from(&ws.path);
     let mut squashed = 0;
     if settings.squash_wip {
-        let base = state.db().repo(&ws.repo_id).map_err(err)?.base_branch;
-        let wt = PathBuf::from(&ws.path);
+        let (wt, base) = (wt.clone(), base.clone());
         squashed = tauri::async_runtime::spawn_blocking(move || {
             let _g = lock();
             squash_wip(&wt, &base)
@@ -465,7 +597,29 @@ pub async fn prepare_ship(
         .map_err(err)?
         .map_err(err)?;
     }
-    Ok(PrepareShip { ok: true, checks: result, squashed })
+    let notes = if pr_draft_enabled(&settings.model_pr_description) { draft_pr(state, &settings, &ws, &wt, &base).await } else { None };
+    Ok(PrepareShip { ok: true, checks: result, squashed, notes })
+}
+
+/// Drafts the PR title and body from the branch's diff. Best effort: any failure or a call slower than
+/// the local timeout just means the shipping agent writes the PR itself, as it always did.
+async fn draft_pr(state: &AppState, settings: &crate::settings::Settings, ws: &Workspace, wt: &Path, base: &str) -> Option<String> {
+    let (wt, base2) = (wt.to_path_buf(), base.to_string());
+    let (stat, diff) = tauri::async_runtime::spawn_blocking(move || {
+        // Working tree against the merge-base: committed work plus anything the squash left staged.
+        let mb = git::run(&wt, &["merge-base", "HEAD", &base_ref(&wt, &base2)]).ok()?;
+        Some((git::run(&wt, &["diff", "--stat", &mb]).ok()?, git::run(&wt, &["diff", &mb]).ok()?))
+    })
+    .await
+    .ok()??;
+    if diff.trim().is_empty() {
+        return None;
+    }
+    let prompt = pr_prompt(&ws.branch, base, ws.issue_number, &stat, &diff);
+    let schema = pr_schema();
+    let call = crate::llm::complete_json(state, crate::llm::Task::PrDescription, PR_SYSTEM, &prompt, &schema);
+    let reply = bounded(Duration::from_secs(settings.local_timeout_secs), call).await?;
+    pr_notes(&reply)
 }
 
 #[tauri::command]
@@ -557,6 +711,63 @@ mod tests {
         assert_eq!(long.chars().count(), "wip: ".len() + 61);
         assert!(long.ends_with('…'));
         assert!(is_wip("wip: a") && !is_wip("feat: wip: a"));
+    }
+
+    #[test]
+    fn commit_prompt_is_capped_and_carries_the_inputs() {
+        let big = "+line\n".repeat(10_000);
+        let p = commit_prompt("Fix the login bug\nplease", " a.ts | 2 +-", &big);
+        assert!(p.contains("Fix the login bug") && p.contains("a.ts | 2 +-") && p.contains("(cut short)"));
+        assert!(p.chars().count() < DIFF_CAP + 1_000, "the prompt must stay small, got {}", p.chars().count());
+        let small = commit_prompt("hi", "", "+x");
+        assert!(small.contains("+x") && !small.contains("(cut short)"));
+    }
+
+    #[test]
+    fn model_messages_keep_the_wip_prefix_and_fall_back() {
+        use serde_json::json;
+        assert_eq!(model_message(&json!({ "subject": "Add retry to sync.", "body": "" })).unwrap(), "wip: Add retry to sync");
+        assert_eq!(
+            model_message(&json!({ "subject": "\"wip: Add retry\"\nignored", "body": " Because flaky. " })).unwrap(),
+            "wip: Add retry\n\nBecause flaky."
+        );
+        let long = model_message(&json!({ "subject": "x".repeat(100), "body": "" })).unwrap();
+        assert!(is_wip(&long) && long.chars().count() <= "wip: ".len() + 61);
+        assert_eq!(model_message(&json!({ "subject": "  ", "body": "b" })), None);
+        assert_eq!(model_message(&json!({ "body": "b" })), None);
+        // choose_message: a usable reply wins, anything else is today's prompt-derived message.
+        let ok = json!({ "subject": "Add retry", "body": "" });
+        assert_eq!(choose_message(Some(&ok), "Fix the login bug"), "wip: Add retry");
+        assert_eq!(choose_message(None, "Fix the login bug"), "wip: Fix the login bug");
+        assert_eq!(choose_message(Some(&json!({ "subject": "" })), "Fix the login bug"), "wip: Fix the login bug");
+    }
+
+    #[tokio::test]
+    async fn a_slow_or_failed_model_call_reads_as_none() {
+        let limit = Duration::from_millis(50);
+        assert_eq!(bounded(limit, async { Ok(Some(1)) }).await, Some(1));
+        assert_eq!(bounded::<i32>(limit, async { Ok(None) }).await, None);
+        assert_eq!(bounded::<i32>(limit, async { anyhow::bail!("down") }).await, None);
+        let slow = async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(Some(2))
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(bounded(limit, slow).await, None);
+        assert!(started.elapsed() < Duration::from_secs(2), "the timeout must cut the call short");
+    }
+
+    #[test]
+    fn pr_drafts_only_for_a_chosen_local_model() {
+        use serde_json::json;
+        assert!(!pr_draft_enabled("default") && pr_draft_enabled("local:llama3.2:3b"));
+        let p = pr_prompt("feat/x", "main", Some(12), " a.ts | 2 +-", "+x");
+        assert!(p.contains("`feat/x`") && p.contains("`main`") && p.contains("#12") && p.contains("+x"));
+        assert!(!pr_prompt("b", "main", None, "", "").contains("issue"));
+        let notes = pr_notes(&json!({ "title": "feat: add x\nextra", "body": "## What\nx" })).unwrap();
+        assert!(notes.contains("Title: feat: add x\n") && notes.contains("## What") && notes.contains("Check it against the changes"));
+        assert_eq!(pr_notes(&json!({ "title": "", "body": "b" })), None);
+        assert_eq!(pr_notes(&json!({ "title": "t" })), None);
     }
 
     #[test]

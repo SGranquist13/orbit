@@ -239,7 +239,14 @@ pub enum Action {
         #[serde(default)]
         args: String,
     },
+    /// Orbit's Simplify pass over what landed on base in the last 7 days: apply the low-risk
+    /// candidates, and if anything stuck, ship them as a draft `refactor/` PR.
+    Simplify,
 }
+
+/// How far back a Simplify routine looks.
+const SIMPLIFY_DAYS: u32 = 7;
+const SIMPLIFY_PREFIX: &str = "refactor/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -350,6 +357,61 @@ pub fn is_quiet(mode: Mode, status: &str, changed_files: usize, own_commits: boo
     mode == Mode::Fresh && status == "done" && changed_files == 0 && !own_commits
 }
 
+/// The summary model's verdict can also make a fresh, cleanly finished run quiet, but only when it left
+/// no file changes behind (the model never archives work).
+pub fn is_quiet_by_model(mode: Mode, status: &str, changed_files: usize, nothing_to_do: bool) -> bool {
+    mode == Mode::Fresh && status == "done" && changed_files == 0 && nothing_to_do
+}
+
+pub const SUMMARY_SYSTEM: &str = "You summarize what a scheduled coding-agent run did, for a history list. Reply with one or two plain \
+sentences (under 300 characters) saying what was done or found, not how. Set nothingToDo to true only when the run found nothing to do \
+and changed nothing.";
+
+pub fn summary_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": { "summary": { "type": "string" }, "nothingToDo": { "type": "boolean" } },
+        "required": ["summary", "nothingToDo"]
+    })
+}
+
+/// The summary prompt: the agent's closing message(s) and the files it changed (both capped).
+pub fn summary_prompt(routine: &str, messages: &[String], files: &[String]) -> String {
+    let said: String = messages.iter().map(|m| m.trim()).filter(|m| !m.is_empty()).collect::<Vec<_>>().join("\n---\n");
+    let said: String = said.chars().rev().take(3_000).collect::<Vec<_>>().into_iter().rev().collect();
+    let changed = if files.is_empty() {
+        "none".to_string()
+    } else {
+        let shown: Vec<&str> = files.iter().take(30).map(String::as_str).collect();
+        let more = files.len().saturating_sub(shown.len());
+        format!("{}{}", shown.join(", "), if more > 0 { format!(" and {more} more") } else { String::new() })
+    };
+    format!("Routine: {routine}\n\nThe agent's closing message(s):\n{said}\n\nFiles changed: {changed}")
+}
+
+/// `(summary, nothingToDo)` from the model's reply; None when the summary is empty.
+pub fn parse_summary(reply: &serde_json::Value) -> Option<(String, bool)> {
+    let summary = reply["summary"].as_str()?.trim();
+    (!summary.is_empty()).then(|| (trim_summary(summary), reply["nothingToDo"].as_bool().unwrap_or(false)))
+}
+
+/// The agent's messages from its last turn(s): back to the most recent user message, oldest first, at most `n`.
+pub fn last_assistant_texts(events: &[db::StoredEvent], n: usize) -> Vec<String> {
+    use crate::agent::AgentEvent;
+    let mut out: Vec<String> = events
+        .iter()
+        .rev()
+        .take_while(|e| !matches!(e.event, AgentEvent::UserMessage { .. }))
+        .filter_map(|e| match &e.event {
+            AgentEvent::Message { text } => Some(text.clone()),
+            _ => None,
+        })
+        .take(n)
+        .collect();
+    out.reverse();
+    out
+}
+
 fn trim_summary(text: &str) -> String {
     let t = text.trim();
     if t.chars().count() <= SUMMARY_CHARS {
@@ -364,6 +426,7 @@ fn default_name(action: &Action) -> String {
     let line = match action {
         Action::Prompt { text } => text.trim().lines().next().unwrap_or("").trim().to_string(),
         Action::Skill { skill_id, .. } => format!("/{skill_id}"),
+        Action::Simplify => "Simplify recent changes".to_string(),
     };
     let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() > 48 {
@@ -501,6 +564,7 @@ async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<
                     issue_number: None,
                     profile: routine.profile.clone(),
                     routine_id: Some(routine.id.clone()),
+                    branch_prefix: (routine.action == Action::Simplify).then(|| SIMPLIFY_PREFIX.to_string()),
                 },
             )
             .await?;
@@ -519,17 +583,115 @@ async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<
         Action::Skill { skill_id, args } => {
             run_skill_with(app, state, &ws.id, skill_id, args, &format!("{args}\n\n{note}"))?;
         }
+        Action::Simplify => {
+            set_stage(&ws.id, Some(Stage::Simplifying));
+            tauri::async_runtime::spawn(run_simplify(app.clone(), state.clone(), ws.id.clone(), routine.name.clone()));
+        }
     }
     Ok(ws)
 }
 
-/// Called from `on_agent_event` on every non-interrupted-or-not `TurnCompleted`. If the workspace
-/// has a running routine run, finishes it and returns true; the caller then skips its own
-/// notification, because a quiet run should not ping anyone (the notification is sent here instead
-/// once we know the run was worth looking at).
+// ---------------------------------------------------------------- simplify action
+
+/// Where an unattended Simplify run is. The agent's own turns (one per candidate, then the ship turn)
+/// all end in a `TurnCompleted`, but only the ship turn ends the run, so `finish_turn` consults this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Simplifying,
+    Shipping,
+}
+
+static STAGES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Stage>>> = std::sync::LazyLock::new(Default::default);
+
+fn set_stage(ws_id: &str, stage: Option<Stage>) {
+    let mut map = STAGES.lock().unwrap_or_else(|p| p.into_inner());
+    match stage {
+        Some(s) => map.insert(ws_id.to_string(), s),
+        None => map.remove(ws_id),
+    };
+}
+
+fn stage(ws_id: &str) -> Option<Stage> {
+    STAGES.lock().unwrap_or_else(|p| p.into_inner()).get(ws_id).copied()
+}
+
+const SHIP_NOTES: &str = "This is an unattended Simplify run. Every commit on this branch is a behaviour-preserving `refactor:` cleanup of code merged \
+to the base branch in the last 7 days. Open a draft PR titled `refactor: ...` that lists them; do not add or change behaviour.";
+
+/// Find and apply the low-risk simplifications; if any stuck, run the ship gate and hand the agent the
+/// ship skill (the run then finishes with that turn). Otherwise the run finishes here: quiet when the
+/// workspace is untouched.
+async fn run_simplify(app: AppHandle, state: AppState, ws_id: String, name: String) {
+    let mut outcome = crate::simplify::run_unattended(&app, &state, &ws_id, SIMPLIFY_DAYS).await;
+    let mut shipped = false;
+    if outcome.applied > 0 {
+        match ship_refactors(&app, &state, &ws_id, &name).await {
+            Ok(None) => shipped = true,
+            Ok(Some(why)) => outcome.summary = format!("{} {why}", outcome.summary),
+            Err(e) => {
+                outcome.summary = format!("{} Could not ship: {e}", outcome.summary);
+                outcome.error = Some(e);
+            }
+        }
+    }
+    if shipped {
+        return; // finish_turn ends the run when the ship turn completes
+    }
+    set_stage(&ws_id, None);
+    let run = state.db().running_run_for_workspace(&ws_id).ok().flatten();
+    let ws = state.db().workspace(&ws_id).ok();
+    let Some(run) = run else { return };
+    let status = if outcome.error.is_some() { "error" } else { "done" };
+    let finish = Finish {
+        status,
+        summary: trim_summary(&outcome.summary),
+        digest: vec![outcome.summary.clone()],
+        is_error: status == "error",
+        error: outcome.error.clone(),
+        interrupted: false,
+        // Reverted steps leave reset entries in the branch's reflog; they are not work of its own.
+        ignore_reflog: true,
+    };
+    finish_run_with(&app, &state, run, &ws_id, ws, finish);
+}
+
+/// The ship gate, then `shipkit:ship` with notes. Ok(None) = shipping started; Ok(Some(why)) = not shipped.
+async fn ship_refactors(app: &AppHandle, state: &AppState, ws_id: &str, name: &str) -> Result<Option<String>, String> {
+    // The last edit turn's status update can trail the apply loop by a moment.
+    for _ in 0..50 {
+        if state.db().workspace(ws_id).map(|w| w.status != "running").unwrap_or(true) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let prep = crate::trunk::prepare_ship_inner(app, state, ws_id, false).await?;
+    if !prep.ok {
+        return Ok(Some("The checks failed on the combined result, so nothing was shipped; the commits stay on the branch.".into()));
+    }
+    let mut notes = SHIP_NOTES.to_string();
+    if let Some(draft) = prep.notes {
+        notes = format!("{notes}\n\n{draft}");
+    }
+    set_stage(ws_id, Some(Stage::Shipping));
+    if let Err(e) = run_skill_with(app, state, ws_id, "shipkit:ship", "", &format!("{notes}\n\n{}", routine_note(name))) {
+        set_stage(ws_id, Some(Stage::Simplifying));
+        return Err(e);
+    }
+    Ok(None)
+}
+
+/// Called from `on_agent_event` on every `TurnCompleted`. If the workspace has a running routine run,
+/// finishes it and returns true; the caller then skips its own notification, because a quiet run should
+/// not ping anyone (the notification is sent here instead once we know the run was worth looking at).
+/// Mid-way through an unattended Simplify run the turn belongs to the pass, not the run: swallowed.
 pub fn finish_turn(app: &AppHandle, state: &AppState, ws_id: &str, ws: Option<&Workspace>, is_error: bool, error: Option<&str>, interrupted: bool) -> bool {
     let run = state.db().running_run_for_workspace(ws_id).ok().flatten();
     let Some(run) = run else { return false };
+    match stage(ws_id) {
+        Some(Stage::Simplifying) => return true,
+        Some(Stage::Shipping) => set_stage(ws_id, None),
+        None => {}
+    }
     let last_text = state.db().summary(ws_id).ok().and_then(|s| s.last_assistant_text);
     let (status, summary) = if interrupted {
         ("error", "Stopped before finishing".to_string())
@@ -538,50 +700,116 @@ pub fn finish_turn(app: &AppHandle, state: &AppState, ws_id: &str, ws: Option<&W
     } else {
         ("done", trim_summary(last_text.as_deref().unwrap_or("Finished")))
     };
-    let _ = state.db().finish_run(&run.id, status, Some(&summary), db::now());
-    changed(app);
-    let (app, state) = (app.clone(), state.clone());
-    let (ws, ws_id, error) = (ws.cloned(), ws_id.to_string(), error.map(str::to_string));
-    tauri::async_runtime::spawn(async move {
-        let routine = state.db().routine(&run.routine_id).ok();
-        let mut quiet = false;
-        if let Some(routine) = routine.filter(|r| r.mode == Mode::Fresh && status == "done") {
-            quiet = check_quiet(&state, &ws_id, routine.mode).await;
-        }
-        if quiet {
-            let _ = state.db().set_run_status_if(&run.id, "done", "quiet");
-            if archive_inner(&state, &ws_id, true).await.is_ok() {
-                let _ = app.emit("workspace-archived", &ws_id);
-            }
-            changed(&app);
-        } else if !interrupted {
-            crate::notify_turn_done(&app, &state.settings(), ws.as_ref(), is_error, error.as_deref());
-            crate::remote::on_turn_completed(&state, ws.as_ref(), is_error, error.as_deref());
-        }
-    });
+    let finish = Finish {
+        status,
+        summary,
+        digest: vec![],
+        is_error,
+        error: error.map(str::to_string),
+        interrupted,
+        ignore_reflog: false,
+    };
+    finish_run_with(app, state, run, ws_id, ws.cloned(), finish);
     true
 }
 
-/// True when the fresh workspace has no file changes and no commits of its own.
-async fn check_quiet(state: &AppState, ws_id: &str, mode: Mode) -> bool {
+/// How a run ended, before the summary model has had its say.
+struct Finish {
+    status: &'static str,
+    /// Stored on the row right away; the summary model may replace it a moment later.
+    summary: String,
+    /// What the summary model reads. Empty = the agent's last message(s), read from the transcript.
+    digest: Vec<String>,
+    is_error: bool,
+    error: Option<String>,
+    interrupted: bool,
+    /// The branch's reflog counts reverted Simplify steps as the run's own commits; this ignores that.
+    ignore_reflog: bool,
+}
+
+/// Finishes the run row synchronously, then (off the event thread) decides whether the run was quiet,
+/// notifies if not, and asks the summary model for a better summary. The row never waits on the model.
+fn finish_run_with(app: &AppHandle, state: &AppState, run: RoutineRun, ws_id: &str, ws: Option<Workspace>, f: Finish) {
+    let _ = state.db().finish_run(&run.id, f.status, Some(&f.summary), db::now());
+    changed(app);
+    let (app, state, ws_id) = (app.clone(), state.clone(), ws_id.to_string());
+    tauri::async_runtime::spawn(async move {
+        let routine = state.db().routine(&run.routine_id).ok();
+        let fresh = routine.as_ref().is_some_and(|r| r.mode == Mode::Fresh);
+        let probe = if fresh && f.status == "done" { probe_workspace(&state, &ws_id).await } else { None };
+        let quiet = probe.as_ref().is_some_and(|p| is_quiet(Mode::Fresh, "done", p.files.len(), p.own_commits && !f.ignore_reflog));
+        if quiet {
+            if state.db().set_run_status_if(&run.id, "done", "quiet").unwrap_or(false) {
+                archive_quiet(&app, &state, &ws_id).await;
+            }
+        } else if !f.interrupted {
+            crate::notify_turn_done(&app, &state.settings(), ws.as_ref(), f.is_error, f.error.as_deref());
+            crate::remote::on_turn_completed(&state, ws.as_ref(), f.is_error, f.error.as_deref());
+        }
+        if f.status != "done" {
+            return;
+        }
+        let name = routine.map(|r| r.name).unwrap_or_default();
+        let digest = if f.digest.is_empty() {
+            let events = state.db().events(&ws_id).unwrap_or_default();
+            last_assistant_texts(&events, 3)
+        } else {
+            f.digest.clone()
+        };
+        let files = probe.as_ref().map(|p| p.files.clone());
+        refine_summary(&app, &state, &run.id, &ws_id, &name, &digest, files.as_deref(), quiet).await;
+    });
+}
+
+/// Asks the summary model (`llm::Task::RoutineSummary`) for the run's summary and whether there was
+/// nothing to do. Any failure leaves the fallback summary in place.
+async fn refine_summary(app: &AppHandle, state: &AppState, run_id: &str, ws_id: &str, name: &str, digest: &[String], files: Option<&[String]>, already_quiet: bool) {
+    let prompt = summary_prompt(name, digest, files.unwrap_or(&[]));
+    let schema = summary_schema();
+    let call = crate::llm::complete_json(state, crate::llm::Task::RoutineSummary, SUMMARY_SYSTEM, &prompt, &schema);
+    let Some(reply) = crate::trunk::bounded(std::time::Duration::from_secs(90), call).await else { return };
+    let Some((summary, nothing_to_do)) = parse_summary(&reply) else { return };
+    let _ = state.db().set_run_summary(run_id, &summary);
+    // Only a probe that saw the worktree can vouch for "no file changes".
+    if !already_quiet && files.is_some_and(|f| is_quiet_by_model(Mode::Fresh, "done", f.len(), nothing_to_do)) {
+        if state.db().set_run_status_if(run_id, "done", "quiet").unwrap_or(false) {
+            archive_quiet(app, state, ws_id).await;
+        }
+    }
+    changed(app);
+}
+
+async fn archive_quiet(app: &AppHandle, state: &AppState, ws_id: &str) {
+    if archive_inner(state, ws_id, true).await.is_ok() {
+        let _ = app.emit("workspace-archived", ws_id);
+    }
+    changed(app);
+}
+
+/// What a finished fresh workspace holds: changed files vs base, and whether its branch has commits of its own.
+struct Probe {
+    files: Vec<String>,
+    own_commits: bool,
+}
+
+/// None when git can't tell us: better a visible run than a lost one.
+async fn probe_workspace(state: &AppState, ws_id: &str) -> Option<Probe> {
     let ws = state.db().workspace(ws_id).ok();
     let repo = ws.as_ref().and_then(|w| state.db().repo(&w.repo_id).ok());
-    let (Some(ws), Some(repo)) = (ws, repo) else { return false };
+    let (ws, repo) = (ws?, repo?);
     let (path, base, repo_path, branch) = (PathBuf::from(&ws.path), repo.base_branch.clone(), PathBuf::from(&repo.path), ws.branch.clone());
-    let probe = tauri::async_runtime::spawn_blocking(move || {
-        let changes = git::changes(&path, &base).map(|c| c.len());
-        (changes, git::branch_has_own_commits(&repo_path, &branch))
+    tauri::async_runtime::spawn_blocking(move || {
+        let files = git::changes(&path, &base).ok()?.into_iter().map(|c| c.path).collect();
+        Some(Probe { files, own_commits: git::branch_has_own_commits(&repo_path, &branch) })
     })
-    .await;
-    match probe {
-        // If git can't tell us, keep the workspace: better a visible run than a lost one.
-        Ok((Ok(files), own)) => is_quiet(mode, "done", files, own),
-        _ => false,
-    }
+    .await
+    .ok()
+    .flatten()
 }
 
 /// The agent process died mid-run: no `TurnCompleted` will ever come.
 pub fn finish_exited(app: &AppHandle, state: &AppState, ws_id: &str) {
+    set_stage(ws_id, None);
     let run = state.db().running_run_for_workspace(ws_id).ok().flatten();
     if let Some(run) = run {
         let _ = state.db().finish_run(&run.id, "error", Some("The agent process exited"), db::now());
@@ -884,6 +1112,53 @@ mod tests {
     }
 
     #[test]
+    fn simplify_action_shape_and_name() {
+        let a: Action = serde_json::from_str(r#"{"kind":"simplify"}"#).unwrap();
+        assert_eq!(a, Action::Simplify);
+        assert_eq!(serde_json::to_string(&Action::Simplify).unwrap(), r#"{"kind":"simplify"}"#);
+        assert_eq!(default_name(&Action::Simplify), "Simplify recent changes");
+    }
+
+    #[test]
+    fn the_summary_model_can_only_quiet_a_clean_fresh_run() {
+        assert!(is_quiet_by_model(Mode::Fresh, "done", 0, true));
+        assert!(!is_quiet_by_model(Mode::Fresh, "done", 0, false), "the model has to agree");
+        assert!(!is_quiet_by_model(Mode::Fresh, "done", 1, true), "never over file changes");
+        assert!(!is_quiet_by_model(Mode::Standing, "done", 0, true));
+        assert!(!is_quiet_by_model(Mode::Fresh, "error", 0, true));
+    }
+
+    #[test]
+    fn summary_prompt_parse_and_transcript_digest() {
+        use crate::agent::AgentEvent;
+        use serde_json::json;
+        let files: Vec<String> = (0..40).map(|i| format!("f{i}.ts")).collect();
+        let p = summary_prompt("Triage", &["Labelled 4 issues.".into(), "  ".into()], &files);
+        assert!(p.contains("Routine: Triage") && p.contains("Labelled 4 issues.") && p.contains("f29.ts") && !p.contains("f30.ts") && p.contains("and 10 more"));
+        assert!(summary_prompt("x", &[], &[]).contains("Files changed: none"));
+        let long = summary_prompt("x", &["é".repeat(5_000)], &[]);
+        assert!(long.chars().count() < 3_300, "the agent's text is capped");
+
+        assert_eq!(parse_summary(&json!({ "summary": " Fixed two tests. ", "nothingToDo": false })), Some(("Fixed two tests.".into(), false)));
+        assert_eq!(parse_summary(&json!({ "summary": "All clear", "nothingToDo": true })), Some(("All clear".into(), true)));
+        assert_eq!(parse_summary(&json!({ "summary": "  ", "nothingToDo": true })), None);
+        assert_eq!(parse_summary(&json!({ "nothingToDo": true })), None);
+
+        let ev = |seq: i64, event: AgentEvent| db::StoredEvent { seq, ts: 0, event };
+        let events = vec![
+            ev(1, AgentEvent::Message { text: "old run".into() }),
+            ev(2, AgentEvent::UserMessage { text: "go".into(), skill: None }),
+            ev(3, AgentEvent::Message { text: "one".into() }),
+            ev(4, AgentEvent::TurnStarted),
+            ev(5, AgentEvent::Message { text: "two".into() }),
+            ev(6, AgentEvent::Message { text: "three".into() }),
+        ];
+        assert_eq!(last_assistant_texts(&events, 2), ["two", "three"]);
+        assert_eq!(last_assistant_texts(&events, 9), ["one", "two", "three"], "stops at the last user message");
+        assert!(last_assistant_texts(&[], 3).is_empty());
+    }
+
+    #[test]
     fn summary_and_default_name() {
         assert_eq!(trim_summary("  short  "), "short");
         let long = "é".repeat(600);
@@ -947,6 +1222,8 @@ mod tests {
         assert!(db.running_run_for_workspace("ws1").unwrap().is_none());
         assert!(db.set_run_status_if("b", "done", "quiet").unwrap());
         assert!(!db.set_run_status_if("b", "done", "quiet").unwrap(), "only flips from the expected status");
+        db.set_run_summary("b", "model summary").unwrap();
+        assert_eq!(db.routine_runs("rt1", 1).unwrap()[0].summary.as_deref(), Some("model summary"));
         assert_eq!(db.routine("rt1").unwrap().last_status.as_deref(), Some("quiet"));
         assert_eq!(db.fail_stale_runs(40, "closed").unwrap(), 1);
         let runs = db.routine_runs("rt1", 10).unwrap();

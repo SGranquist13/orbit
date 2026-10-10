@@ -335,11 +335,13 @@ pub(crate) struct NewWorkspaceArgs {
     pub profile: Option<String>,
     /// Set when a routine run creates the workspace.
     pub routine_id: Option<String>,
+    /// Replaces the Settings branch prefix for this workspace (Simplify routines use `refactor/`).
+    pub branch_prefix: Option<String>,
 }
 
 /// Worktree + branch + DB row + attachments; shared by `create_workspace` and routine runs.
 pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, args: NewWorkspaceArgs) -> CmdResult<Workspace> {
-    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id } = args;
+    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix } = args;
     AgentKind::parse(&agent).ok_or("unknown agent")?;
     let repo = state.db().repo(&repo_id).map_err(err)?;
     let slug = match issue_number {
@@ -349,7 +351,7 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
     // Unique suffix keeps re-used names from colliding with existing branches/dirs.
     let suffix = &uuid::Uuid::new_v4().simple().to_string()[..4];
     let dir_name = format!("{slug}-{suffix}");
-    let branch = format!("{}{slug}-{suffix}", state.branch_prefix());
+    let branch = format!("{}{slug}-{suffix}", branch_prefix.unwrap_or_else(|| state.branch_prefix()));
     let path = state.home.join("worktrees").join(&repo.name).join(&dir_name);
 
     let (repo_path, base, wt_path, br) = (PathBuf::from(&repo.path), repo.base_branch.clone(), path.clone(), branch.clone());
@@ -405,7 +407,7 @@ async fn create_workspace(
     issue_number: Option<i64>,
     profile: Option<String>,
 ) -> CmdResult<Workspace> {
-    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None }).await?;
+    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
         if issue_number.is_none() && is_derived_name(&ws.name, &p) {

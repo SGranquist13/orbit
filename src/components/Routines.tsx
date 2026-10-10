@@ -2,7 +2,7 @@ import { ChevronRight, Clock, LoaderCircle, Play, Plus, Trash2 } from "lucide-re
 import { useEffect, useMemo, useState } from "react";
 import { confirmAction } from "../lib/confirm";
 import { DEFAULT_PROFILE, api, type AgentKind, type Routine, type RoutineMode, type RoutineRun, type RunStatus, type Schedule } from "../lib/ipc";
-import { TEMPLATES, WEEKDAYS, actionText, defaultOnce, defaultSchedule, describeSchedule, formatNext, textToAction, toLocalInput } from "../lib/routines";
+import { SIMPLIFY_NAME, TEMPLATES, WEEKDAYS, actionText, defaultOnce, defaultSchedule, describeSchedule, formatNext, textToAction, toLocalInput } from "../lib/routines";
 import { defaultAgentModel, modelsFor } from "../lib/settings";
 import { timeAgo } from "../lib/attention";
 import { useApp } from "../stores/app";
@@ -250,7 +250,8 @@ function Editor({ routine }: { routine: Routine | null }) {
   const selectedRepo = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId)?.repoId);
   const initial = useMemo(() => defaultAgentModel(), []);
 
-  const [prompt, setPrompt] = useState(routine ? actionText(routine.action) : "");
+  const [what, setWhat] = useState<"message" | "simplify">(routine?.action.kind === "simplify" ? "simplify" : "message");
+  const [prompt, setPrompt] = useState(routine && routine.action.kind !== "simplify" ? actionText(routine.action) : "");
   const [name, setName] = useState(routine && routine.name !== autoName(actionText(routine.action)) ? routine.name : "");
   const [repoId, setRepoId] = useState(routine?.repoId ?? localStorage.getItem("lastRepo") ?? selectedRepo ?? repos[0]?.id ?? "");
   const [schedule, setSchedule] = useState<Schedule>(routine?.schedule ?? defaultSchedule("weekdays"));
@@ -263,9 +264,10 @@ function Editor({ routine }: { routine: Routine | null }) {
 
   const models = modelsFor(agent, settings);
   if (model && !models.includes(model)) models.push(model);
+  const canSave = (what === "simplify" || !!prompt.trim()) && !!repoId && !saving;
 
   const save = async () => {
-    if (!prompt.trim() || !repoId || saving) return;
+    if (!canSave) return;
     setSaving(true);
     try {
       // A finished one-off switches itself off; picking a new time re-arms it.
@@ -275,7 +277,7 @@ function Editor({ routine }: { routine: Routine | null }) {
         repoId,
         name: name.trim(),
         schedule,
-        action: textToAction(prompt, skills),
+        action: what === "simplify" ? { kind: "simplify" } : textToAction(prompt, skills),
         agent,
         model: model || null,
         profile: profile || null,
@@ -303,6 +305,7 @@ function Editor({ routine }: { routine: Routine | null }) {
   };
 
   const pickTemplate = (t: (typeof TEMPLATES)[number]) => {
+    setWhat(t.what);
     setPrompt(t.prompt);
     setSchedule(t.schedule);
     setName(t.label);
@@ -325,15 +328,35 @@ function Editor({ routine }: { routine: Routine | null }) {
         </div>
       )}
 
-      <textarea
-        aria-label="Message"
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        rows={5}
-        autoFocus={!routine}
-        placeholder="What should the agent do? Starts like a chat message; a leading /skill works too."
-        className="block w-full resize-y rounded-[6px] border-[1.5px] border-line-strong bg-raised px-3.5 py-3 text-[13.5px] font-medium leading-relaxed text-fg placeholder:text-mute focus:border-fg focus:outline-none"
-      />
+      <div className="flex items-center gap-2.5">
+        <span className="label text-mute">What</span>
+        <Segmented<"message" | "simplify">
+          label="What the routine does"
+          value={what}
+          options={[
+            { value: "message", label: "Message" },
+            { value: "simplify", label: SIMPLIFY_NAME },
+          ]}
+          onChange={setWhat}
+        />
+      </div>
+
+      {what === "message" ? (
+        <textarea
+          aria-label="Message"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          rows={5}
+          autoFocus={!routine}
+          placeholder="What should the agent do? Starts like a chat message; a leading /skill works too."
+          className="block w-full resize-y rounded-[6px] border-[1.5px] border-line-strong bg-raised px-3.5 py-3 text-[13.5px] font-medium leading-relaxed text-fg placeholder:text-mute focus:border-fg focus:outline-none"
+        />
+      ) : (
+        <p className="rounded-[6px] border-[1.5px] border-line bg-raised px-3.5 py-3 text-[12.5px] leading-relaxed text-dim">
+          Looks over what landed on the base branch in the last 7 days and applies the low-risk simplifications, each one checked and committed on its own. If
+          anything stuck, it opens a draft PR from a <span className="font-medium text-fg">refactor/</span> branch. Nothing to simplify means a quiet run.
+        </p>
+      )}
 
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -354,7 +377,7 @@ function Editor({ routine }: { routine: Routine | null }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         spellCheck={false}
-        placeholder={prompt.trim() ? `Name (optional): ${autoName(prompt)}` : "Name (optional)"}
+        placeholder={what === "simplify" ? `Name (optional): ${SIMPLIFY_NAME}` : prompt.trim() ? `Name (optional): ${autoName(prompt)}` : "Name (optional)"}
         className={cn(field, "w-full placeholder:text-mute")}
       />
 
@@ -419,7 +442,7 @@ function Editor({ routine }: { routine: Routine | null }) {
       </div>
 
       <div className="flex items-center gap-2 pt-1">
-        <Button variant="primary" onClick={() => void save()} disabled={!prompt.trim() || !repoId || saving}>
+        <Button variant="primary" onClick={() => void save()} disabled={!canSave}>
           {saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Clock className="size-3.5" />}
           {routine ? "Save" : "Create routine"}
         </Button>

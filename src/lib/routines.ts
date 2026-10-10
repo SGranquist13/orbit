@@ -82,8 +82,11 @@ export function formatNext(ts: number | null, now = Date.now()): string {
 
 /** Text shown in the prompt box for an action; a skill reads back as `/skill args`. */
 export function actionText(a: RoutineAction): string {
+  if (a.kind === "simplify") return SIMPLIFY_NAME;
   return a.kind === "prompt" ? a.text : `/${a.skillId} ${a.args}`.trim();
 }
+
+export const SIMPLIFY_NAME = "Simplify recent changes";
 
 /** A leading `/skill args` runs that skill, like in the composer; anything else is a plain message. */
 export function textToAction(text: string, skills: Skill[]): RoutineAction {
@@ -100,6 +103,8 @@ export function textToAction(text: string, skills: Skill[]): RoutineAction {
 
 export interface RoutineTemplate {
   label: string;
+  /** What the routine does: send `prompt`, or run Orbit's Simplify pass (no prompt). */
+  what: "message" | "simplify";
   prompt: string;
   schedule: Schedule;
 }
@@ -108,21 +113,30 @@ export interface RoutineTemplate {
 export const TEMPLATES: RoutineTemplate[] = [
   {
     label: "Triage new issues",
+    what: "message",
     prompt:
       "Look at the open GitHub issues that are new since yesterday (use `gh issue list`). For each one, add suitable labels, flag duplicates, and note which look like quick wins. Don't change any code. Finish with a short list of what needs a human.",
     schedule: { kind: "weekdays", time: "09:00" },
   },
   {
     label: "Nightly checks",
+    what: "message",
     prompt:
       "Run this project's checks (tests, type check, lint). If anything fails, fix it with the smallest correct change, commit, and open a draft PR describing what you fixed. If everything passes, say so in one line.",
     schedule: { kind: "daily", time: "02:00" },
   },
   {
     label: "Stale branch sweep",
+    what: "message",
     prompt:
       "List local and remote branches with no commits in the last 30 days and no open PR. Don't delete anything; report each with its last commit date and author so a human can decide.",
     schedule: { kind: "weekly", weekday: 1, time: "09:00" },
+  },
+  {
+    label: "Weekly simplify",
+    what: "simplify",
+    prompt: "",
+    schedule: { kind: "weekly", weekday: 5, time: "16:00" },
   },
 ];
 

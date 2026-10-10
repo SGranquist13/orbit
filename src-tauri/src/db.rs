@@ -728,6 +728,11 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_run_summary(&self, run_id: &str, summary: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE routine_runs SET summary = ?2 WHERE id = ?1", params![run_id, summary])?;
+        Ok(())
+    }
+
     /// Changes the status only if it is currently `from`; true when a row changed.
     pub fn set_run_status_if(&self, run_id: &str, from: &str, to: &str) -> anyhow::Result<bool> {
         Ok(self.conn.execute("UPDATE routine_runs SET status = ?3 WHERE id = ?1 AND status = ?2", params![run_id, from, to])? > 0)

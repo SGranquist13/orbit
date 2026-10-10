@@ -148,6 +148,11 @@ pub fn changes(worktree: &Path, base: &str) -> anyhow::Result<Vec<FileChange>> {
     Ok(out)
 }
 
+/// Every line of `git diff --numstat --no-renames` output as a (tracked) file change.
+pub fn parse_numstat_lines(out: &str) -> Vec<FileChange> {
+    out.lines().filter_map(parse_numstat).collect()
+}
+
 fn parse_numstat(line: &str) -> Option<FileChange> {
     let mut parts = line.splitn(3, '\t');
     let add = parts.next()?;

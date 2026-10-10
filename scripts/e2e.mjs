@@ -363,6 +363,10 @@ await step("routines", async () => {
   await waitFor("routines view lists the routine", `return document.body.innerText.includes('Routines') && document.body.innerText.includes('Reply with exactly one word')`, 10_000);
   await shot("11-routines");
   await invoke("delete_routine", { id: routine.id });
+  // The Simplify action round-trips (it is only stored here, not run: that needs a real Friday afternoon of merged work).
+  const simp = await invoke("save_routine", { input: { ...input, name: "", action: { kind: "simplify" }, schedule: { kind: "weekly", weekday: 5, time: "16:00" } } });
+  if (simp.action.kind !== "simplify" || simp.name !== "Simplify recent changes") throw new Error(`bad simplify routine: ${JSON.stringify(simp)}`);
+  await invoke("delete_routine", { id: simp.id });
   await key("e", { ctrl: true, shift: true });
 });
 
