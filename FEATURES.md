@@ -167,6 +167,19 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Settings > Mobile: allow connections, port, status + addresses (Tailscale first), pairing QR with countdown, paired phones + Revoke, push toggle; palette "Pair a phone" | P2 | ✅ | Allow, status, pairing QR and paired list used for real on 2026-10-09. Revoke not yet tried in the real app |
 | Push notification on finished turn (Expo; name + status only) | P3 | 🟢 | Body builder unit-tested; EAS project linked in the phone app, real delivery not yet confirmed |
 
+## Routines, git flow, simplify (PLANNING #6–#8, decided 2026-10-10)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| Routines: scheduled prompt/skill runs per repo (presets + cron), fresh or standing workspace, Routines view from a sidebar button, Run now, history; runs only while Orbit is open, missed runs catch up once on launch | P2 | ⬜ | |
+| Per-repo check command (auto-detected, overridable) run by Orbit itself | P1 | ⬜ | Shared by the ship gate and Simplify |
+| Save-point commits by Orbit after each turn with changes; unpushed `wip:` commits squashed before Ship; Undo last turn | P1 | ⬜ | |
+| Ship gate: Orbit runs checks before Ship; failing → inbox "Checks failed" with Fix / Ship anyway | P1 | ⬜ | |
+| Auto-sync idle, clean workspaces onto `origin/<base>`; conflicts → inbox "Needs sync" with agent resolve | P1 | ⬜ | Never while the agent is running |
+| Overlap detection between live workspaces; after a merge, overlapping workspaces sync first | P2 | ⬜ | |
+| After merge: auto archive + remove worktree + delete branch; long-lived/far-behind branches surface in the inbox | P2 | ⬜ | |
+| Simplify button: read-only find pass → candidate list → apply one at a time, Orbit checks + commits `refactor:` or reverts | P2 | ⬜ | |
+
 ## Mock vs real
 
 The mock (`bun run dev` in a browser) renders the **same components** as the real app, so styling matches exactly. The differences are all in the data:

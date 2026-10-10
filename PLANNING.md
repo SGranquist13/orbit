@@ -224,6 +224,7 @@ Agreed ideas, each with a line on where it landed in FEATURES.md.
 - **#3 Agent profiles**: built as workspace profiles (B); e2e verified.
 - **#4 Pre-ship spot check**: `/shipkit:preflight` written and pinned; needs a real cross-project run.
 - **#5 Multi-folder sessions**: built; e2e verified (attach, discovery, editable worktrees).
+- **#6 Routines, #7 Trunk-based git handling, #8 Simplify**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted); building. FEATURES.md: Routines, git flow, simplify.
 - **#1 Focus on the main workspace**: built (Ship button + hidden panel, slimmer collapsible sidebar, wider chat, focus mode).
 
 ## Parked
