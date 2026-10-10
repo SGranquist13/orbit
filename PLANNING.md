@@ -14,7 +14,7 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 
 ### 6. Routines (scheduled runs)
 
-**Decided (2026-10-10):** a built-in app feature (Rust scheduler + Routines page), not a skill.
+**Decided (2026-10-10):** a built-in app feature, not a skill: a **Routines button in the sidebar** opens the Routines view; the scheduler runs in the Rust core.
 
 **Want:** Work that runs on a schedule without you starting it, e.g. "every weekday at 9: triage new issues", "nightly: run the checks and fix anything broken", "every Friday: simplify this week's changes" (#8).
 
@@ -28,7 +28,7 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 - **Schedule:** presets (hourly, daily at HH:MM, weekdays, weekly on X) with cron underneath. Event triggers later (checks failed, new issue labelled X, base moved).
 - **Scheduler in the Rust core** (`routines.rs`: a tick task beside the session manager; routines + run history in SQLite). Missed runs while Orbit was closed: run once on launch, never replay every miss.
 - **Runs land in the attention inbox (#2)** as a normal workspace with reason "Routine finished" / "Routine failed". Runs with nothing to do archive themselves.
-- **Routines page** (palette entry + shortcut): enable/pause, next run, last status, Run now, history linking to each run's workspace. Built-in templates (issue triage, nightly checks, weekly simplify, stale-branch sweep), off by default.
+- **Routines view**, opened from its sidebar button (next to the inbox, with a small count of active routines; also in the palette): New routine, enable/pause, next run, last status, Run now, history linking to each run's workspace. Built-in templates (issue triage, nightly checks, weekly simplify, stale-branch sweep), off by default.
 - **Guardrails:** max concurrent routine runs, per-routine token budget (`usage.rs`), and routines can open a draft PR but never merge.
 - **Phone:** routine results reach the mobile app like any finished turn.
 
@@ -38,37 +38,35 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 - Time triggers only for v1, or event triggers too? [time only; events next]
 - Can a routine push + open a draft PR, or only commit locally? [draft PR allowed, never merge]
 
-### 7. Trunk-based worktree flow (built into Orbit's git layer)
+### 7. Trunk-based git handling (general application logic)
 
-Source: [addyosmani/agent-skills: git-workflow-and-versioning](https://github.com/addyosmani/agent-skills/blob/main/skills/git-workflow-and-versioning/SKILL.md). Core ideas: `main` always deployable; short-lived branches (merge within 1–3 days); atomic, tested commits as "save points"; refactors separate from features; ~100 lines per change, split above ~1000; one worktree per parallel agent.
+Source: [addyosmani/agent-skills: git-workflow-and-versioning](https://github.com/addyosmani/agent-skills/blob/main/skills/git-workflow-and-versioning/SKILL.md). Core ideas: `main` always deployable; short-lived branches (merge within 1–3 days); atomic, tested commits as "save points"; refactors separate from features; one worktree per parallel agent.
 
-**Decided (2026-10-10):** a built-in app feature. Orbit's own git code (`git.rs`, a new `trunk.rs`) does the bookkeeping and enforcement deterministically; an agent is only called in where judgment is needed (resolving a conflict, writing commit messages). Not a set of shipkit prompts the agent may or may not follow.
+**Decided (2026-10-10):** not a feature with its own button or view. It's how Orbit handles worktrees, branches, commits and merges under the hood (`git.rs`, a new `trunk.rs`), applied to every workspace. Deterministic git code does the work; an agent is only pulled in where judgement is needed (resolving a conflict, writing a commit message). You mostly shouldn't notice it, except that branches stay fresh, merges stay small and leftovers get cleaned up.
 
-**What Orbit already does:** one worktree + branch per workspace from fresh `origin/<base>`; merged-worktree cleanup. Rebasing and commit discipline currently live in shipkit prompts (`rebase`, `ship`), so they're up to the agent.
+**What Orbit already does:** one worktree + branch per workspace from fresh `origin/<base>`; merged-worktree cleanup (manual, Settings > Data). Rebasing and commit discipline currently live in shipkit prompts (`rebase`, `ship`), so they're up to the agent.
 
-**Sketch:**
-- **Save points, made by Orbit.** After every agent turn that changed files, Orbit commits the worktree itself (`wip:` commit, message from the turn). The transcript shows a marker per save point; **Undo turn** resets to the previous save point (with confirm). At Ship, Orbit squashes the `wip:` commits into one or a few conventional commits (agent-written messages), so history stays clean without trusting the agent to commit.
-- **Drift tracking.** A background poll (`git fetch` + `rev-list --count`) per workspace: branch age, commits behind/ahead of base. Shown on the sidebar row and workspace header; `warn` colour past the threshold. New inbox reason **"Drifting from base"**.
-- **Sync with base (built-in action).** Orbit rebases the worktree onto `origin/<base>` itself. Clean: done, no agent involved. Conflicts: Orbit aborts, hands the agent a focused "resolve these conflicts in X, Y" turn, then re-runs checks. Optional auto-sync for idle, clean workspaces when base moves (e.g. right after another Orbit workspace merges).
-- **Overlap detection.** Orbit already sees every worktree's diff, so it computes which files two or more live workspaces both touch. Overlap badge on both rows ("also edited in *ws B*"), with a hint to land the smaller one first, then sync the other. A dry-run merge (`git merge-tree`) separates real conflicts from mere overlap.
-- **Change-size meter.** Lines changed vs base next to the context meter: neutral up to ~300, `warn` past ~400. A "Split this change" action (stacked branches) is bigger and gets its own item later.
-- **Ship gate (Orbit-side).** Before pushing, Orbit itself runs the repo's check command (auto-detected per repo, editable in Settings: `bun run typecheck`, `cargo test`, …) and refuses to open/update the PR on failure, offering "Fix with agent". Today this is a line in `ship.md` the agent may skip.
-- **Short-lived by design:** after merge, Orbit archives the workspace and deletes the branch (cleanup + delete-branch setting already exist; this makes it automatic). A routine (#6) sweeps stale branches.
-- **Later, own item:** releases (semver bump from conventional commits, tag, changelog) as an Orbit action.
+**Behaviour:**
+- **Save points.** After every agent turn that changed files, Orbit commits the worktree itself (`wip:` commit). This makes any turn revertible and means work is never only on disk. At Ship, Orbit squashes the `wip:` commits into one or a few conventional commits (agent-written messages), so history stays clean without trusting the agent to commit.
+- **Stay close to base.** Orbit fetches periodically and rebases idle, clean workspaces onto `origin/<base>` when base moves (immediately after another Orbit workspace merges). Clean rebase: silent. Conflict: Orbit aborts and the workspace lands in the inbox ("Needs sync: conflicts in X, Y") with one click to let the agent resolve them; Orbit re-runs checks afterwards.
+- **Merge order.** Orbit knows every live worktree's diff, so before shipping it checks for overlap with other workspaces (`git merge-tree` dry-run). After a merge, every overlapping workspace is synced next, so conflicts surface one at a time and small.
+- **Checks before push.** Orbit runs the repo's check command itself (auto-detected per repo from `package.json` / `Cargo.toml`, overridable in Settings) and won't push a failing branch; the workspace goes to the inbox with "Checks failed".
+- **Short-lived branches.** After merge Orbit archives the workspace, removes the worktree and deletes the branch automatically (today's manual cleanup becomes the default). Branches open for a long time or far behind base surface in the inbox, not as new chrome.
+- **Shipkit's `rebase` and `ship` prompts** shrink to just the judgement parts (conflict resolution, commit/PR text) or are retired.
+- **Later, own item:** stacked branches / splitting large changes; releases (semver bump, tag, changelog).
 
 **Open questions (proposed defaults in brackets):**
-- Orbit-made save-point commits after each turn: always, or a setting? [on by default, setting to turn off]
-- What happens to `wip:` commits at Ship? [Orbit squashes them into conventional commits; the GitHub merge method setting still applies]
-- How strict is the ship gate? [block on failing checks, with an explicit "Ship anyway"]; the size meter only nudges
-- Drift thresholds? [warn at 3 days or 20 commits behind]
-- Auto-sync idle workspaces, or only suggest? [suggest in the inbox; auto via a setting or routine]
-- Is "trunking" also meant as stacked PRs (a workspace branching off another workspace's branch)? If so, that's its own item.
+- `wip:` save-point commits on every turn: always, or a setting? [always; squashed at Ship]
+- Auto-rebase idle workspaces silently, or ask first? [silent when clean; inbox when conflicting]
+- Never rebase a workspace while its agent is running? [yes: only idle + clean worktrees]
+- Hard block on failing checks, or allow an override? [block, with "Ship anyway" in the inbox row]
+- "Long-lived" threshold for the inbox? [3 days or 20 commits behind]
 
 ### 8. Simplification pass (built-in action)
 
 Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyosmani/agent-skills/blob/main/skills/code-simplification/SKILL.md). Core ideas: preserve behaviour exactly (tests pass unmodified); follow project conventions; clarity over cleverness, not fewer lines; scope to what changed; understand before touching (Chesterton's fence); one simplification at a time, tested, committed; refactors kept separate from features.
 
-**Decided (2026-10-10):** a built-in app feature. Orbit runs and polices the loop; the agent only proposes and makes edits. The prompt lives inside Orbit, not as a `/skill` the user sees or the agent can reinterpret.
+**Decided (2026-10-10):** a built-in app feature: a **Simplify button in the workspace UI** (workspace header, beside Ship). Orbit runs and polices the loop; the agent only proposes and makes edits. The prompt lives inside Orbit, not as a `/skill` the user sees or the agent can reinterpret.
 
 **Problem:** Agents iterate fast and leave residue: duplicated helpers, dead branches, deep nesting, inconsistent patterns across parallel workspaces. Nothing in the flow cleans it up before shipping.
 
@@ -76,9 +74,9 @@ Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyos
 1. **Scope:** Orbit computes the workspace's diff against base (or selected files) and passes only that.
 2. **Find:** a read-only agent turn (enforced, like Planner) returns a structured candidate list via JSON schema: file, lines, signal (deep nesting, long function, nested ternary, boolean flag params, duplication, dead code, needless wrapper), proposed change, risk.
 3. **Review in the UI:** a Simplify panel lists the candidates; you tick which to apply (or "Apply all low-risk").
-4. **Apply one at a time:** an edit turn per candidate, then **Orbit runs the repo's check command** (#7). Pass: Orbit commits it as `refactor: …`. Fail, or the edit touched test files: Orbit reverts it and marks the row skipped with the reason. Behaviour preservation is checked by Orbit, not promised by the agent.
+4. **Apply one at a time:** an edit turn per candidate, then **Orbit runs the repo's check command** (same one as #7). Pass: Orbit commits it as `refactor: …`. Fail, or the edit touched test files: Orbit reverts it and marks the row skipped with the reason. Behaviour preservation is checked by Orbit, not promised by the agent.
 5. **Result:** a before/after summary in the panel (applied / skipped / lines removed), commits kept separate from feature commits.
-- **Entry points:** Simplify button in the workspace header / Ship panel, palette entry, inbox suggestion when a turn ends with a large diff, and the weekly routine (#6) over the last week's merged changes, which opens its own `refactor/` PR.
+- **Entry point:** the Simplify button (plus a palette entry, per convention). It can also be picked as a routine's action (#6), e.g. weekly over the last week's merged changes, opening its own `refactor/` PR.
 
 **Open questions (proposed defaults in brackets):**
 - Review the candidate list first, or apply straight away? [review first; "Apply all low-risk" for speed]
