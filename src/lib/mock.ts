@@ -282,12 +282,29 @@ let settings: Settings = {
   staleBehind: 20,
   archiveOnMerge: true,
   deleteLocalBranch: true,
+  localProvider: "ollama",
+  localUrl: "",
+  localApiKey: "",
+  localTimeoutSecs: 60,
+  localDefaultModel: "",
+  modelSuggestions: "default",
+  modelWorkspaceName: "off",
+  modelCommitMessage: "default",
+  modelRoutineSummary: "default",
+  modelPrDescription: "default",
+  localAgents: false,
   remoteEnabled: false,
   remotePort: 47821,
   remotePush: true,
   routineConcurrency: 2,
 };
+const MOCK_LOCAL_MODELS = [
+  { name: "llama3.2:3b", sizeBytes: 2_019_393_189, family: "llama", parameterSize: "3.2B", quantization: "Q4_K_M" },
+  { name: "qwen2.5-coder:7b", sizeBytes: 4_683_087_332, family: "qwen2", parameterSize: "7.6B", quantization: "Q4_K_M" },
+  { name: "gpt-oss:20b", sizeBytes: 13_780_173_839, family: "gptoss", parameterSize: "20.9B", quantization: "MXFP4" },
+];
 const ENUMS: Record<string, string[]> = {
+  localProvider: ["ollama", "openai"],
   claudePermissionMode: ["bypassPermissions", "acceptEdits"],
   codexSandbox: ["danger-full-access", "workspace-write"],
   mergeMethod: ["squash", "merge", "rebase"],
@@ -480,6 +497,17 @@ export function installMockBackend() {
         case "remote_revoke":
           remoteDevices = remoteDevices.filter((d) => d.id !== id);
           return null;
+        case "local_models_status":
+          await new Promise((r) => setTimeout(r, 250));
+          return {
+            ollama: { running: true, version: "0.16.1", url: "http://localhost:11434", models: MOCK_LOCAL_MODELS },
+            openaiCompat: { reachable: false, url: "http://localhost:1234", models: [] },
+            lastErrors: {},
+          };
+        case "test_local_model": {
+          await new Promise((r) => setTimeout(r, 900));
+          return { ok: true, latencyMs: 912, output: '{"reply":"pong"}', error: null };
+        }
         case "get_settings":
           return settings;
         case "update_settings": {

@@ -21,7 +21,17 @@ export function NewWorkspace() {
   const [agent, setAgent] = useState<AgentKind>(() => settings?.defaultAgent ?? "claude");
   const [model, setModel] = useState(() => defaultModelFor(settings?.defaultAgent ?? "claude", settings));
   const models = modelsFor(agent, settings);
-  if (model && !models.includes(model)) models.push(model);
+  // Experimental: installed Ollama models, offered for both agents (`local:<name>` in the workspace's model).
+  const [localModels, setLocalModels] = useState<string[]>([]);
+  useEffect(() => {
+    if (!settings?.localAgents) return setLocalModels([]);
+    let live = true;
+    api.localModelsStatus().then((s) => live && setLocalModels(s.ollama.running ? s.ollama.models.map((m) => m.name) : []), () => {});
+    return () => {
+      live = false;
+    };
+  }, [settings?.localAgents]);
+  if (model && !models.includes(model) && !model.startsWith("local:")) models.push(model);
   const profiles = useApp((s) => s.profiles);
   // Always start from Builder: silently inheriting a read-only profile from last time is a trap.
   const [profileId, setProfileId] = useState(DEFAULT_PROFILE);
@@ -156,6 +166,15 @@ export function NewWorkspace() {
                 {m || "default model"}
               </option>
             ))}
+            {localModels.length > 0 && (
+              <optgroup label="Local (Ollama) · Experimental">
+                {localModels.map((m) => (
+                  <option key={m} value={`local:${m}`}>
+                    Local: {m}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
 
           <span className="flex-1" />

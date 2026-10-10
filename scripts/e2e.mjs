@@ -366,6 +366,26 @@ await step("routines", async () => {
   await key("e", { ctrl: true, shift: true });
 });
 
+// Skipped unless an Ollama server with at least one model is reachable on localhost:11434.
+await step("local-model-suggestions", async () => {
+  const tags = await fetch("http://localhost:11434/api/tags").then((r) => r.json(), () => null);
+  const models = (tags?.models ?? []).filter((m) => !/cloud/.test(m.name)).sort((a, b) => a.size - b.size);
+  if (!models.length) return console.log("      (skipped: no Ollama on :11434)");
+  const model = models.find((m) => m.name === "llama3.2:3b") ?? models[0];
+  const status = await invoke("local_models_status");
+  if (!status.ollama.running || !status.ollama.models.some((m) => m.name === model.name)) throw new Error("status does not list the Ollama model");
+  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  await invoke("update_settings", { patch: { modelSuggestions: `local:${model.name}`, localTimeoutSecs: 120 } });
+  try {
+    const out = await invoke("suggest_prompts", { id: claudeWs.id, reason: "Finished", offered: [] });
+    if (!Array.isArray(out) || !out.length || out.some((s) => typeof s !== "string" || !s.trim())) throw new Error(`no local suggestions: ${JSON.stringify(out)}`);
+    const after = await invoke("local_models_status");
+    if (after.lastErrors.ollama) throw new Error(`ollama call recorded an error: ${after.lastErrors.ollama}`);
+  } finally {
+    await invoke("update_settings", { patch: { modelSuggestions: "default", localTimeoutSecs: 60 } });
+  }
+});
+
 await step("resume-after-restart", async () => {
   await quit();
   await launch();

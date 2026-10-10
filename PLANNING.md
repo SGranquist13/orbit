@@ -86,6 +86,8 @@ Source: [addyosmani/agent-skills: code-simplification](https://github.com/addyos
 
 ### 9. Local models via Ollama (for utility tasks)
 
+**Decided (2026-10-10):** build it all: utility tasks, OpenAI-compatible servers, experimental local agent.
+
 **Want:** Let people point some of Orbit's small, behind-the-scenes model calls at a local Ollama model, if they want to. Claude / Codex stay the default and the only coding agents; nobody has to touch this.
 
 **Position (proposed):** Ollama is **not a chat provider**. Local models are far behind frontier models at agentic coding, and most machines can't run the ones that come close. It's a **utility model** option: the short, cheap, structured calls around the agents, where a 3–8B model is good enough and "free, private, offline" is a real win.

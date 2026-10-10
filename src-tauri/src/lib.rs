@@ -3,6 +3,7 @@ mod checks;
 mod db;
 mod gh;
 mod git;
+mod llm;
 mod maintenance;
 mod related;
 mod remote;
@@ -259,6 +260,7 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
     };
     let profile = resolve_profile(state, ws);
     let settings = state.settings();
+    let settings_local_ollama_url = settings.ollama_url();
     let cfg = SessionConfig {
         kind,
         cwd: PathBuf::from(&ws.path),
@@ -270,6 +272,7 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         readonly: profile.as_ref().is_some_and(|p| p.readonly),
         permission_mode: settings.claude_permission_mode,
         sandbox: settings.codex_sandbox,
+        local_url: Some(settings_local_ollama_url),
     };
     let (app2, state2, id) = (app.clone(), state.clone(), ws.id.clone());
     let generation = agent::next_generation();
@@ -402,9 +405,52 @@ async fn create_workspace(
 ) -> CmdResult<Workspace> {
     let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
+        // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
+        if issue_number.is_none() && is_derived_name(&ws.name, &p) {
+            tauri::async_runtime::spawn(name_workspace(app.clone(), state.inner().clone(), ws.id.clone(), ws.name.clone(), p.clone()));
+        }
         send(&app, &state, &ws.id, p.clone(), None, p).map_err(err)?;
     }
     Ok(ws)
+}
+
+/// True when `name` is just the (possibly truncated) first line of `prompt`, as the UI derives it.
+fn is_derived_name(name: &str, prompt: &str) -> bool {
+    let first_line = prompt.trim().lines().next().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+    let n = name.trim_end_matches('…').trim();
+    !n.is_empty() && first_line.starts_with(n)
+}
+
+/// Cleans a model-written workspace name: strips quotes and punctuation, at most 5 words, 40 chars.
+fn clean_name(raw: &str) -> Option<String> {
+    let words: Vec<&str> = raw
+        .trim()
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '.')
+        .split_whitespace()
+        .take(5)
+        .collect();
+    let name: String = words.join(" ").chars().take(40).collect();
+    let name = name.trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Replaces a workspace's prompt-derived display name with a short model-written one. Silent on
+/// any failure (the original name stays); never touches the branch or worktree path.
+async fn name_workspace(app: AppHandle, state: AppState, id: String, original: String, prompt: String) {
+    let schema = serde_json::json!({ "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] });
+    let system = "You name coding tasks. Reply with a short name of 2 to 5 words in sentence case, no quotes, no trailing punctuation.";
+    let clipped: String = prompt.chars().take(800).collect();
+    let Ok(Some(v)) = llm::complete_json(&state, llm::Task::WorkspaceName, system, &format!("Task:\n{clipped}"), &schema).await else { return };
+    let Some(name) = v["name"].as_str().and_then(clean_name) else { return };
+    // Bind each db result first: the guard must be dropped before the next lock.
+    let current = state.db().workspace(&id);
+    if !current.is_ok_and(|w| w.name == original) {
+        return;
+    }
+    let updated = state.db().set_name(&id, &name);
+    if let Ok(ws) = updated {
+        emit_workspace(&app, &ws);
+    }
 }
 
 /// Creates a workspace for a GitHub issue (no prompt) and runs `shipkit:start-issue` on it,
@@ -900,7 +946,7 @@ fn snooze_workspace(app: AppHandle, state: State<AppState>, id: String, until: i
     Ok(ws)
 }
 
-/// Up to 3 next-prompt ideas for the inbox, from a one-shot Haiku call (no tools, ~$0.0002).
+/// Up to 3 next-prompt ideas for the inbox, from a one-shot utility call (`llm::Task::Suggestions`).
 #[tauri::command]
 async fn suggest_prompts(
     state: State<'_, AppState>,
@@ -931,26 +977,30 @@ async fn suggest_prompts(
             o => format!(" These are already offered, so suggest different ones: {}.", o.join("; ")),
         },
     );
-    let schema = r#"{"type":"object","properties":{"suggestions":{"type":"array","items":{"type":"string"},"maxItems":3}},"required":["suggestions"]}"#;
-    let args: Vec<String> = [
-        "-p", "--model", settings.suggestion_model.as_str(), "--output-format", "json", "--no-session-persistence",
-        // No user plugins/hooks and no tools: fast, cheap, side-effect free.
-        "--setting-sources", "local", "--tools", "", "--json-schema", schema, &prompt,
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    let mut cmd = agent::process::command("claude", &args, &state.home).map_err(err)?;
-    cmd.stdin(std::process::Stdio::null());
-    let out = tokio::time::timeout(std::time::Duration::from_secs(45), cmd.output())
-        .await
-        .map_err(|_| "suggestions timed out".to_string())?
-        .map_err(err)?;
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| "suggestions: unreadable response".to_string())?;
-    Ok(v["structured_output"]["suggestions"]
-        .as_array()
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "suggestions": { "type": "array", "items": { "type": "string" }, "maxItems": 3 } },
+        "required": ["suggestions"],
+    });
+    let reply = llm::complete_json(&state, llm::Task::Suggestions, "", &prompt, &schema).await.map_err(err)?;
+    Ok(reply
+        .and_then(|v| v["suggestions"].as_array().cloned())
         .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).take(3).collect())
         .unwrap_or_default())
+}
+
+/// Ollama / OpenAI-compatible server status and installed models, for Settings > Models.
+#[tauri::command]
+async fn local_models_status(state: State<'_, AppState>) -> CmdResult<llm::LocalStatus> {
+    let settings = state.settings();
+    Ok(llm::status(&settings).await)
+}
+
+/// A tiny JSON round-trip against one local model (`backend`: "ollama" | "openaiCompat").
+#[tauri::command]
+async fn test_local_model(state: State<'_, AppState>, backend: String, model: String) -> CmdResult<llm::TestResult> {
+    let settings = state.settings();
+    llm::test_model(&settings, &backend, &model).await.map_err(err)
 }
 
 #[tauri::command]
@@ -1124,6 +1174,8 @@ pub fn run() {
             list_issues,
             issue_url,
             suggest_prompts,
+            local_models_status,
+            test_local_model,
             set_setting,
             run_skill,
             get_pins,
@@ -1167,4 +1219,23 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derived_names_are_recognised() {
+        assert!(is_derived_name("Fix the login bug", "Fix the login bug\nmore detail"));
+        assert!(is_derived_name("Fix the login bu…", "Fix  the login bug and more"));
+        assert!(!is_derived_name("My own name", "Fix the login bug"));
+    }
+
+    #[test]
+    fn model_names_are_cleaned() {
+        assert_eq!(clean_name("\"Fix login redirect loop.\"").as_deref(), Some("Fix login redirect loop"));
+        assert_eq!(clean_name("one two three four five six seven").as_deref(), Some("one two three four five"));
+        assert_eq!(clean_name("  \"\" ").as_deref(), None);
+    }
 }

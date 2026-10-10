@@ -401,6 +401,12 @@ impl Db {
         self.workspace(id)
     }
 
+    /// Display name only; the branch and worktree path never change.
+    pub fn set_name(&self, id: &str, name: &str) -> anyhow::Result<Workspace> {
+        self.conn.execute("UPDATE workspaces SET name = ?2 WHERE id = ?1", params![id, name])?;
+        self.workspace(id)
+    }
+
     pub fn set_profile(&self, id: &str, profile: Option<&str>) -> anyhow::Result<Workspace> {
         self.conn.execute("UPDATE workspaces SET profile = ?2 WHERE id = ?1", params![id, profile])?;
         self.workspace(id)
