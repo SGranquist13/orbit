@@ -5,6 +5,7 @@ import { Inbox } from "./components/Inbox";
 import { Issues, NewTicket } from "./components/Issues";
 import { NewWorkspace } from "./components/NewWorkspace";
 import { Packs } from "./components/Packs";
+import { Routines } from "./components/Routines";
 import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
 import { Settings } from "./components/Settings";
@@ -43,6 +44,10 @@ export default function App() {
         // Not Ctrl+Shift+I: WebView2 reserves it for DevTools in dev builds.
         e.preventDefault();
         s.setView(s.view === "issues" ? "workspace" : "issues");
+      } else if (key === "e" && e.shiftKey) {
+        // Routines. Not Ctrl+Shift+R (reload) or Ctrl+Shift+J (DevTools console) in WebView2.
+        e.preventDefault();
+        s.setView(s.view === "routines" ? "workspace" : "routines");
       } else if (e.key === ",") {
         e.preventDefault();
         if (s.view === "settings") s.closeSettings();
@@ -85,6 +90,8 @@ export default function App() {
         <Inbox />
       ) : view === "issues" ? (
         <Issues />
+      ) : view === "routines" ? (
+        <Routines />
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />

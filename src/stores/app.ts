@@ -11,6 +11,7 @@ import {
   type Profile,
   type Related,
   type Repo,
+  type Routine,
   type Settings,
   type Skill,
   type StoredEvent,
@@ -20,7 +21,7 @@ import {
 } from "../lib/ipc";
 import { applyUsage } from "../lib/usage";
 
-export type View = "workspace" | "inbox" | "issues" | "settings";
+export type View = "workspace" | "inbox" | "issues" | "settings" | "routines";
 
 interface AppState {
   repos: Repo[];
@@ -36,6 +37,13 @@ interface AppState {
   /** Token/cost/context digest per workspace, kept current from `usage` events. */
   usage: Record<string, WorkspaceUsage>;
   view: View;
+  routines: Routine[];
+  /** Bumped whenever routines or their runs change, so open views refetch history. */
+  routinesTick: number;
+  /** Routine open in the editor: its id, "new" for a blank draft, or null. */
+  selectedRoutine: string | null;
+  /** "Schedule message" popover next to the composer. */
+  scheduleOpen: boolean;
   /** The view to return to when settings closes. */
   previousView: View;
   /** Typed app settings; null until loaded (consumers fall back to defaults). */
@@ -69,6 +77,11 @@ interface AppState {
   init: () => Promise<void>;
   select: (id: string | null) => void;
   setView: (view: View) => void;
+  refreshRoutines: () => Promise<void>;
+  setSelectedRoutine: (id: string | null) => void;
+  setScheduleOpen: (open: boolean) => void;
+  /** Opens the Routines view on a blank draft. */
+  newRoutine: () => void;
   openSettings: () => void;
   closeSettings: () => void;
   /** Saves a partial update immediately; resolves false (and sets the error) on failure. */
@@ -136,6 +149,10 @@ export const useApp = create<AppState>((set, get) => ({
   summaries: {},
   usage: {},
   view: "workspace",
+  routines: [],
+  routinesTick: 0,
+  selectedRoutine: null,
+  scheduleOpen: false,
   previousView: "workspace",
   settings: null,
   prs: {},
@@ -167,6 +184,9 @@ export const useApp = create<AppState>((set, get) => ({
       .catch(() => {});
     await events.onWorkspace((ws) => get().upsertWorkspace(ws));
     await events.onAgentEvent(onAgentEvent);
+    await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
+    await events.onRoutinesChanged(() => void get().refreshRoutines());
+    void get().refreshRoutines();
     for (const ws of workspaces) void get().refreshChanges(ws.id);
     void get().loadSkills();
     api.getSettings().then((settings) => set({ settings })).catch(() => {});
@@ -196,6 +216,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setView: (view) => set((s) => ({ view, previousView: view === "settings" ? s.previousView : view })),
+
+  refreshRoutines: async () => {
+    try {
+      const routines = await api.listRoutines();
+      set((s) => ({ routines, routinesTick: s.routinesTick + 1 }));
+    } catch {
+      // Keep the last known list; the next change event refetches.
+    }
+  },
+  setSelectedRoutine: (id) => set({ selectedRoutine: id }),
+  setScheduleOpen: (open) => set({ scheduleOpen: open }),
+  newRoutine: () => set((s) => ({ view: "routines", selectedRoutine: "new", previousView: s.view === "settings" ? s.previousView : "routines" })),
 
   openSettings: () => set((s) => (s.view === "settings" ? s : { view: "settings", previousView: s.view })),
   closeSettings: () => set((s) => (s.view === "settings" ? { view: s.previousView } : s)),
@@ -423,6 +455,7 @@ function foldSummary(prev: Summary | undefined, id: string, seq: number | null, 
         lastTurnInterrupted: false,
         lastAssistantText: null,
         lastUserText: null,
+        routineName: null,
       };
   if (seq !== null) {
     next.lastSeq = Math.max(next.lastSeq, seq);

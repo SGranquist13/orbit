@@ -1,7 +1,7 @@
 import { LoaderCircle, Lock, RefreshCw } from "lucide-react";
 import type { EnvironmentInfo } from "../../lib/ipc";
 import { Button } from "../ui";
-import { Cards, Dot, Row, SubHeading, TagInput, save, useSettings } from "./controls";
+import { Cards, Dot, Row, Select, SubHeading, TagInput, save, useSettings } from "./controls";
 import { useEnvironment } from "./env";
 
 type Tone = "ok" | "warn" | "bad";
@@ -65,6 +65,21 @@ export function Agents() {
       <p className="flex items-center gap-1.5 border-b border-line py-2.5 text-[11.5px] text-mute">
         <Lock className="size-3 shrink-0" /> Read-only profiles (Planner, Reviewer, Ticket writer) are always enforced, whatever is chosen above.
       </p>
+
+      <SubHeading>Routines</SubHeading>
+      <Row
+        field="routineConcurrency"
+        label="Concurrent routine runs"
+        description="Scheduled runs wait their turn when this many are already going. Routines only run while Orbit is open."
+      >
+        <Select
+          label="Concurrent routine runs"
+          className="min-w-[80px]"
+          value={String(s.routineConcurrency)}
+          options={[1, 2, 3, 4, 6, 8].map((n) => ({ value: String(n), label: String(n) }))}
+          onChange={(v) => void save({ routineConcurrency: Number(v) })}
+        />
+      </Row>
 
       <SubHeading>Extra models</SubHeading>
       <Row stacked field="extraModelsClaude" label="Claude model ids" description="Added to the model pickers, for example a dated snapshot. Press Enter to add.">

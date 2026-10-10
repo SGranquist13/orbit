@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { AlarmClock, CircleDot, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, UserRound, Zap } from "lucide-react";
+import { AlarmClock, CalendarClock, CircleDot, Clock, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, UserRound, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
@@ -48,6 +48,12 @@ export function Palette() {
             <Command.Item className={item} onSelect={run(() => useApp.getState().setView("issues"))}>
               <CircleDot className="size-3.5" /> Open issues
             </Command.Item>
+            <Command.Item className={item} value="Routines (scheduled messages)" onSelect={run(() => useApp.getState().setView("routines"))}>
+              <Clock className="size-3.5" /> Routines
+            </Command.Item>
+            <Command.Item className={item} value="New routine (schedule a message)" onSelect={run(() => useApp.getState().newRoutine())}>
+              <Plus className="size-3.5" /> New routine
+            </Command.Item>
             <Command.Item
               className={item}
               onSelect={run(() => {
@@ -65,6 +71,16 @@ export function Palette() {
             </Command.Item>
             {selectedId && (
               <>
+                <Command.Item
+                  className={item}
+                  value="Schedule message… (run the composer text later)"
+                  onSelect={run(() => {
+                    useApp.getState().select(selectedId);
+                    useApp.getState().setScheduleOpen(true);
+                  })}
+                >
+                  <CalendarClock className="size-3.5" /> Schedule message…
+                </Command.Item>
                 <Command.Item
                   className={item}
                   value="Snooze this workspace for 1 hour"

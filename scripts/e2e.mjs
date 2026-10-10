@@ -19,7 +19,7 @@ const scratch = path.resolve(process.argv[2] ?? "e2e-scratch");
 const only = process.argv[3]; // optional: run a single step by name
 const h = createHarness({ scratch, only });
 const ui = uiHelpers(h);
-const { home, launch, quit, cdp, js, waitFor, key, type, shot, invoke, step } = h;
+const { home, launch, quit, cdp, js, waitFor, until, key, type, shot, invoke, step } = h;
 const repo = path.join(scratch, "repo");
 
 const DOM = `
@@ -299,6 +299,37 @@ await step("profiles", async () => {
   await waitFor("builder turn completed", `${turnEnds} > ${before}`, 120_000);
   if (!fs.existsSync(path.join(planWs.path, "PLAN_TEST.md"))) throw new Error("builder did not create PLAN_TEST.md after switching");
   await shot("14-builder");
+});
+
+await step("routines", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const input = {
+    repoId, name: "", schedule: { kind: "daily", time: "03:00" }, action: { kind: "prompt", text: "Reply with exactly one word: ping" },
+    agent: "claude", model: "haiku", mode: "fresh", enabled: true,
+  };
+  // A one-off in the past is refused; a valid routine is stored with a next run and a default name.
+  const past = await invoke("save_routine", { input: { ...input, schedule: { kind: "once", at: "2020-01-01T09:00" } } }).then(() => null, (e) => String(e));
+  if (!past) throw new Error("a past one-off should be rejected");
+  const routine = await invoke("save_routine", { input });
+  if (!routine.nextRunAt || !routine.name.startsWith("Reply with exactly one word")) throw new Error(`bad routine: ${JSON.stringify(routine)}`);
+  const known = new Set((await invoke("list_workspaces")).map((w) => w.id));
+  await invoke("run_routine_now", { id: routine.id });
+  // The run finishes by itself; nothing changed in the worktree, so it is marked quiet and archived.
+  const run = await until("routine run finished", async () => {
+    const [r] = await invoke("routine_runs", { routineId: routine.id, limit: 1 });
+    return r && r.status !== "running" ? r : null;
+  }, 180_000, 2000);
+  if (run.status !== "quiet") throw new Error(`expected a quiet run, got ${run.status}: ${run.summary}`);
+  if (!/ping/i.test(run.summary ?? "")) throw new Error(`summary missing the reply: ${run.summary}`);
+  await until("quiet workspace archived", async () => {
+    const live = await invoke("list_workspaces");
+    return !live.some((w) => !known.has(w.id) && w.routineId === routine.id);
+  }, 30_000, 1000);
+  await key("e", { ctrl: true, shift: true });
+  await waitFor("routines view lists the routine", `return document.body.innerText.includes('Routines') && document.body.innerText.includes('Reply with exactly one word')`, 10_000);
+  await shot("11-routines");
+  await invoke("delete_routine", { id: routine.id });
+  await key("e", { ctrl: true, shift: true });
 });
 
 await step("resume-after-restart", async () => {

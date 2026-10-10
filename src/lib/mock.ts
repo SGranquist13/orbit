@@ -2,7 +2,8 @@
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, Profile, PrStatus, Related, Repo, RemoteDevice, Settings, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import { previewTimes } from "./routines";
+import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, Profile, PrStatus, Related, Repo, RemoteDevice, Routine, RoutineInput, RoutineRun, Settings, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -27,6 +28,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   dismissedSeq: 0,
   profile: null,
   snoozedUntil: 0,
+  routineId: null,
 });
 
 const workspaces: Workspace[] = [
@@ -54,6 +56,7 @@ const sum = (id: string, ageMin: number, p: Partial<Summary>): Summary => ({
   lastTurnInterrupted: false,
   lastAssistantText: null,
   lastUserText: null,
+  routineName: null,
   ...p,
 });
 const summaries: Summary[] = [
@@ -253,6 +256,7 @@ let settings: Settings = {
   remoteEnabled: false,
   remotePort: 47821,
   remotePush: true,
+  routineConcurrency: 2,
 };
 const ENUMS: Record<string, string[]> = {
   claudePermissionMode: ["bypassPermissions", "acceptEdits"],
@@ -279,6 +283,85 @@ const archived: Workspace[] = [
 let cleanup: CleanupCandidate[] = [
   { workspaceId: "w3", name: "Refactor auth flow", branch: "steven/refactor-auth-flow", reason: "PR #801 merged" },
 ];
+
+// ---- routines: a recurring triage, a nightly check that found nothing, a failing weekly one, a finished one-off
+const hr = 3_600_000;
+const day = 24 * hr;
+const atToday = (h: number, m = 0) => {
+  const d = new Date(now);
+  d.setHours(h, m, 0, 0);
+  return d.getTime();
+};
+const nextAt = (r: Routine) => previewTimes(r.schedule, 1)[0] ?? null;
+const rt = (id: string, repoId: string, name: string, schedule: Routine["schedule"], text: string, p: Partial<Routine> = {}): Routine => {
+  const r: Routine = {
+    id, repoId, name, schedule, action: { kind: "prompt", text }, agent: "claude", model: null, profile: null, mode: "fresh",
+    standingWorkspaceId: null, enabled: true, createdAt: now - 20 * day, lastRunAt: null, nextRunAt: null, lastStatus: null, ...p,
+  };
+  r.nextRunAt = r.enabled ? nextAt(r) : null;
+  return r;
+};
+let routines: Routine[] = [
+  rt("rt1", "r1", "Triage new issues", { kind: "weekdays", time: "09:00" }, "Look at the GitHub issues opened since yesterday, label them, and flag duplicates. Don't change code.", {
+    lastRunAt: atToday(9), lastStatus: "done",
+  }),
+  rt("rt2", "r1", "Nightly checks", { kind: "daily", time: "02:00" }, "Run the project's checks and fix anything failing. Open a draft PR if something changed.", {
+    lastRunAt: atToday(2), lastStatus: "quiet",
+  }),
+  rt("rt3", "r2", "Friday dependency check", { kind: "weekly", weekday: 5, time: "16:00" }, "/team:build-fix", {
+    action: { kind: "skill", skillId: "team:build-fix", args: "" }, lastRunAt: now - 3 * day, lastStatus: "error",
+  }),
+  rt("rt4", "r2", "Ship the hero update", { kind: "once", at: new Date(now - day).toISOString().slice(0, 16) }, "Finish the homepage hero and open a draft PR.", {
+    enabled: false, mode: "standing", standingWorkspaceId: "w4", lastRunAt: now - day, lastStatus: "done",
+  }),
+];
+const run = (id: string, routineId: string, ageMin: number, status: RoutineRun["status"], summary: string | null, workspaceId: string | null = null): RoutineRun => ({
+  id, routineId, workspaceId, startedAt: now - ageMin * min, finishedAt: status === "running" ? null : now - ageMin * min + 4 * min, status, summary,
+});
+let routineRuns: RoutineRun[] = [
+  run("ru1", "rt1", 60, "done", "Labelled 4 new issues (2 bug, 1 feature, 1 docs). #412 duplicates #398. Nothing needs a human today.", "w2"),
+  run("ru2", "rt1", 60 + 24 * 60, "quiet", "No new issues since yesterday."),
+  run("ru3", "rt1", 60 + 48 * 60, "done", "Triaged 7 issues; #391 and #377 look like quick wins.", "w3"),
+  run("ru4", "rt2", 9 * 60, "quiet", "All checks pass; nothing to fix."),
+  run("ru5", "rt2", 33 * 60, "skipped", "The previous run was still going"),
+  run("ru6", "rt3", 3 * 24 * 60, "error", "Build failed: cannot resolve ./hero.png", "w4"),
+  run("ru7", "rt4", 24 * 60, "done", "Hero updated; opened draft PR #31.", "w4"),
+];
+
+function saveMockRoutine(input: RoutineInput): Routine {
+  if (input.action.kind === "prompt" && !input.action.text.trim()) throw "write the message to send";
+  const first = input.action.kind === "prompt" ? input.action.text.trim().split("\n")[0] : `/${input.action.skillId}`;
+  const name = input.name.trim() || (first.length > 48 ? `${first.slice(0, 47)}…` : first) || "Routine";
+  const times = previewTimes(input.schedule, 1);
+  if (input.enabled && !times.length) throw input.schedule.kind === "once" ? "that time has already passed" : "this schedule never fires";
+  const existing = routines.find((r) => r.id === input.id);
+  const r: Routine = {
+    id: existing?.id ?? `rt${routines.length + 1}-${Date.now() % 10000}`,
+    repoId: input.repoId, name, schedule: input.schedule, action: input.action, agent: input.agent, model: input.model ?? null,
+    profile: input.profile ?? null, mode: input.mode, standingWorkspaceId: input.standingWorkspaceId ?? existing?.standingWorkspaceId ?? null,
+    enabled: input.enabled, createdAt: existing?.createdAt ?? Date.now(), lastRunAt: existing?.lastRunAt ?? null,
+    nextRunAt: input.enabled ? (times[0] ?? null) : null, lastStatus: existing?.lastStatus ?? null,
+  };
+  routines = existing ? routines.map((x) => (x.id === r.id ? r : x)) : [...routines, r];
+  return r;
+}
+
+/** A manual run: appears as running, then finishes with a summary a couple of seconds later. */
+function mockRunNow(id: string): RoutineRun {
+  const r = routines.find((x) => x.id === id)!;
+  const started: RoutineRun = { id: `ru-${Date.now()}`, routineId: id, workspaceId: null, startedAt: Date.now(), finishedAt: null, status: "running", summary: null };
+  routineRuns.unshift(started);
+  r.lastStatus = "running";
+  r.lastRunAt = started.startedAt;
+  setTimeout(() => {
+    started.status = "done";
+    started.finishedAt = Date.now();
+    started.summary = "Finished. Nothing needed changing.";
+    r.lastStatus = "done";
+    void emit("routines-changed");
+  }, 2000);
+  return { ...started };
+}
 
 export function installMockBackend() {
   mockIPC(
@@ -452,6 +535,31 @@ export function installMockBackend() {
           const list = (relatedDefaults[a.repoId!] ??= []).filter((p) => p !== a.path);
           relatedDefaults[a.repoId!] = a.enabled ? [...list, a.path!] : list;
           return null;
+        }
+        case "list_routines":
+          return routines.map((r) => ({ ...r }));
+        case "save_routine":
+          return saveMockRoutine((args as { input: RoutineInput }).input);
+        case "delete_routine":
+          routines = routines.filter((r) => r.id !== id);
+          routineRuns = routineRuns.filter((r) => r.routineId !== id);
+          return null;
+        case "set_routine_enabled": {
+          const r = routines.find((x) => x.id === id)!;
+          const enabled = !!(args as { enabled: boolean }).enabled;
+          const next = enabled ? previewTimes(r.schedule, 1)[0] : undefined;
+          if (enabled && !next) throw "that time has already passed; edit the routine to pick a new one";
+          r.enabled = enabled;
+          r.nextRunAt = next ?? null;
+          return { ...r };
+        }
+        case "run_routine_now":
+          return mockRunNow(id);
+        case "routine_runs":
+          return routineRuns.filter((r) => r.routineId === (args as { routineId: string }).routineId).slice(0, (args as { limit?: number }).limit ?? 20);
+        case "preview_schedule": {
+          const a2 = args as { schedule: Routine["schedule"]; count?: number };
+          return previewTimes(a2.schedule, a2.count ?? 3);
         }
         case "suggest_prompts":
           await new Promise((r) => setTimeout(r, 1200));

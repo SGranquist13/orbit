@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
+  CalendarClock,
   Check,
   ChevronRight,
   CircleAlert,
@@ -27,10 +28,12 @@ import {
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { activeProfile, api, type Attachment, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
+import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
+import { activeProfile, api, type Attachment, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
+import { SchedulePreview, WhenControl } from "./Routines";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -568,11 +571,87 @@ function ProfileMenu({ ws, running }: { ws: Workspace; running: boolean }) {
   );
 }
 
+/** Clock button + popover: turns the composer text into a routine bound to this workspace. */
+function ScheduleButton({ ws, text, onScheduled }: { ws: Workspace; text: string; onScheduled: (when: string) => void }) {
+  const open = useApp((s) => s.scheduleOpen);
+  const skills = useApp((s) => s.skills);
+  const [schedule, setSchedule] = useState<Schedule>(() => defaultSchedule("once"));
+  const [busy, setBusy] = useState(false);
+  const close = () => useApp.getState().setScheduleOpen(false);
+
+  const confirm = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api.saveRoutine({
+        repoId: ws.repoId,
+        name: "",
+        schedule,
+        action: textToAction(text, skills),
+        agent: ws.agent,
+        model: ws.model,
+        profile: ws.profile,
+        mode: "standing",
+        standingWorkspaceId: ws.id,
+        enabled: true,
+      });
+      void useApp.getState().refreshRoutines();
+      close();
+      onScheduled(describeShort(schedule));
+    } catch (e) {
+      useApp.getState().setError(String(e).replace(/^Error:\s*/, ""));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => useApp.getState().setScheduleOpen(!open)}
+        title="Schedule this message"
+        aria-label="Schedule this message"
+        aria-expanded={open}
+        className={cn(
+          "grid size-8 place-items-center rounded-[4px] border-[1.5px] text-dim transition-colors hover:bg-hover hover:text-fg",
+          open ? "border-fg text-fg" : "border-line-strong",
+        )}
+      >
+        <CalendarClock className="size-4" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onMouseDown={close} />
+          <div
+            className="absolute bottom-full right-0 z-20 mb-2 w-[420px] space-y-3 rounded-[6px] border-[1.5px] border-line-strong bg-raised p-3.5 shadow-hard"
+            onKeyDown={(e) => e.key === "Escape" && close()}
+          >
+            <div className="text-[12.5px] font-medium">Send this message later</div>
+            <WhenControl schedule={schedule} onChange={setSchedule} />
+            <SchedulePreview schedule={schedule} />
+            <p className="text-[11.5px] leading-relaxed text-mute">
+              {text.trim() ? "It will run in this workspace." : "Write the message in the box first."}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="primary" disabled={!text.trim() || busy} onClick={() => void confirm()}>
+                {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : <CalendarClock className="size-3.5" />} Schedule
+              </Button>
+              <Button variant="ghost" onClick={close}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   const [text, setText] = useState("");
   const [highlight, setHighlight] = useState(0);
   const skills = useApp((s) => s.skills);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Autocomplete only while typing the first token of a slash command.
   const slashQuery = /^\/(\S*)$/.exec(text)?.[1];
@@ -641,6 +720,11 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   return (
     <div className="shrink-0 px-6 pb-6">
       <SkillChips ws={ws} text={text} onRun={() => setText("")} />
+      {notice && (
+        <p role="status" className="mx-auto mb-2 flex max-w-[880px] items-center gap-1.5 text-[12px] font-medium text-mute">
+          <Check className="size-3" strokeWidth={3} /> {notice}
+        </p>
+      )}
       <div className="relative mx-auto max-w-[880px] rounded-[6px] border-[1.5px] border-line-strong bg-raised transition-shadow focus-within:shadow-hard">
         {running && (
           <span className="absolute inset-x-0 -top-[1.5px] h-[3px] overflow-hidden">
@@ -694,6 +778,15 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
               <Kbd>Esc</Kbd> to interrupt
             </span>
           )}
+          <ScheduleButton
+            ws={ws}
+            text={text}
+            onScheduled={(when) => {
+              setText("");
+              setNotice(`Scheduled: ${when}`);
+              window.setTimeout(() => setNotice(null), 6000);
+            }}
+          />
           {running && !text.trim() ? (
             <button
               onClick={() => void api.interrupt(ws.id)}

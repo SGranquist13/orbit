@@ -31,6 +31,8 @@ export interface Workspace {
   profile: string | null;
   /** Hidden from the inbox until this time (ms epoch); 0 = not snoozed. */
   snoozedUntil: number;
+  /** The routine that started this workspace, if any. */
+  routineId: string | null;
 }
 
 export type AgentEvent =
@@ -182,6 +184,8 @@ export interface Summary {
   lastTurnInterrupted: boolean;
   lastAssistantText: string | null;
   lastUserText: string | null;
+  /** Name of the routine that started this workspace, if any. */
+  routineName: string | null;
 }
 
 export interface UsageTotals {
@@ -246,6 +250,8 @@ export interface Settings {
   remoteEnabled: boolean;
   remotePort: number;
   remotePush: boolean;
+  /** Max routine runs going at once (1-8). */
+  routineConcurrency: number;
 }
 
 /** Mobile bridge (src-tauri/src/remote/). */
@@ -290,7 +296,73 @@ export interface CleanupCandidate {
   reason: string;
 }
 
+/** Local wall-clock times. `weekday` 0-6 with 0 = Sunday; `at` is "YYYY-MM-DDTHH:MM" for `once`. */
+export interface Schedule {
+  kind: "once" | "hourly" | "daily" | "weekdays" | "weekly" | "cron";
+  time?: string | null;
+  weekday?: number | null;
+  cron?: string | null;
+  at?: string | null;
+}
+
+export type RoutineAction = { kind: "prompt"; text: string } | { kind: "skill"; skillId: string; args: string };
+export type RoutineMode = "fresh" | "standing";
+export type RunStatus = "running" | "done" | "error" | "quiet" | "skipped";
+
+/** A message that runs on a schedule (src-tauri/src/routines.rs). */
+export interface Routine {
+  id: string;
+  repoId: string;
+  name: string;
+  schedule: Schedule;
+  action: RoutineAction;
+  agent: AgentKind;
+  model: string | null;
+  profile: string | null;
+  mode: RoutineMode;
+  standingWorkspaceId: string | null;
+  enabled: boolean;
+  createdAt: number;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  lastStatus: RunStatus | null;
+}
+
+export interface RoutineRun {
+  id: string;
+  routineId: string;
+  workspaceId: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  status: RunStatus;
+  summary: string | null;
+}
+
+export interface RoutineInput {
+  id?: string | null;
+  repoId: string;
+  /** Blank = the first line of the prompt. */
+  name: string;
+  schedule: Schedule;
+  action: RoutineAction;
+  agent: AgentKind;
+  model?: string | null;
+  profile?: string | null;
+  mode: RoutineMode;
+  /** Bind a standing routine to an existing workspace (scheduling from the chat). */
+  standingWorkspaceId?: string | null;
+  enabled: boolean;
+}
+
 export const api = {
+  listRoutines: () => invoke<Routine[]>("list_routines"),
+  saveRoutine: (input: RoutineInput) => invoke<Routine>("save_routine", { input }),
+  deleteRoutine: (id: string) => invoke<void>("delete_routine", { id }),
+  setRoutineEnabled: (id: string, enabled: boolean) => invoke<Routine>("set_routine_enabled", { id, enabled }),
+  runRoutineNow: (id: string) => invoke<RoutineRun>("run_routine_now", { id }),
+  routineRuns: (routineId: string, limit = 12) => invoke<RoutineRun[]>("routine_runs", { routineId, limit }),
+  /** Next fire times (ms epoch) for the editor preview; rejects on an invalid schedule. */
+  previewSchedule: (schedule: Schedule, count = 3) => invoke<number[]>("preview_schedule", { schedule, count }),
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
   remoteStatus: () => invoke<RemoteStatus>("remote_status"),
@@ -364,4 +436,9 @@ export const events = {
     listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),
   onWorkspace: (cb: (w: Workspace) => void): Promise<UnlistenFn> =>
     listen<Workspace>("workspace", (e) => cb(e.payload)),
+  /** The backend archived a workspace itself (a quiet routine run). */
+  onWorkspaceArchived: (cb: (id: string) => void): Promise<UnlistenFn> =>
+    listen<string>("workspace-archived", (e) => cb(e.payload)),
+  /** Routines or their runs changed (a run started or finished, a one-off switched itself off). */
+  onRoutinesChanged: (cb: () => void): Promise<UnlistenFn> => listen("routines-changed", () => cb()),
 };

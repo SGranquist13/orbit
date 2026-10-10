@@ -253,6 +253,7 @@ function InboxRow({
   onSnooze: (until: number) => void;
 }) {
   const { ws, summary, reason } = row;
+  const routineName = useApp((s) => s.routines.find((r) => r.id === ws.routineId)?.name) ?? summary?.routineName;
   const snoozed = isSnoozed(ws);
   const running = ws.status === "running";
   const snippet = reason === "error" ? (summary?.lastTurnError ?? summary?.lastAssistantText) : summary?.lastAssistantText;
@@ -269,6 +270,11 @@ function InboxRow({
         <StatusDot status={ws.status} />
         <span className="truncate text-[13px] font-medium">{ws.name}</span>
         {repo && <span className="truncate text-[12px] text-mute">{repo}</span>}
+        {(ws.routineId || summary?.routineName) && (
+          <span className="flex shrink-0 items-center gap-1 text-[11.5px] text-mute">
+            <Clock className="size-3" /> {routineName ?? "Routine"}
+          </span>
+        )}
         <span className="ml-auto flex shrink-0 items-center gap-3">
           {reason ? (
             <span className={cn("text-[11.5px] font-medium", reasonMeta(reason).tone)}>{reasonMeta(reason).label}</span>
