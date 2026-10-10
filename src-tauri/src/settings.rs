@@ -16,6 +16,7 @@ pub const SUGGESTION_MODELS: &[&str] = &["haiku", "sonnet"];
 pub const AGENTS: &[&str] = &["claude", "codex"];
 pub const CHECKS_MODES: &[&str] = &["off", "warn", "block"];
 pub const SYNC_MODES: &[&str] = &["off", "suggest", "auto"];
+pub const SIMPLIFY_MODELS: &[&str] = &["haiku", "sonnet", "opus"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -57,6 +58,12 @@ pub struct Settings {
     pub stale_behind: u32,
     pub archive_on_merge: bool,
     pub delete_local_branch: bool,
+    // simplify (simplify.rs)
+    /// Model for the read-only find pass (always run through Claude): haiku | sonnet | opus.
+    pub simplify_model: String,
+    pub simplify_max_candidates: u32,
+    /// Show "Apply all low-risk" in the Simplify panel.
+    pub simplify_low_risk_button: bool,
     // mobile bridge
     pub remote_enabled: bool,
     pub remote_port: u16,
@@ -91,6 +98,9 @@ impl Default for Settings {
             stale_behind: 20,
             archive_on_merge: true,
             delete_local_branch: true,
+            simplify_model: "sonnet".into(),
+            simplify_max_candidates: 12,
+            simplify_low_risk_button: true,
             remote_enabled: false,
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
@@ -148,6 +158,10 @@ impl Settings {
         check("syncMode", &self.sync_mode, SYNC_MODES)?;
         if !(1..=1440).contains(&self.sync_interval_minutes) {
             return Err(format!("invalid syncIntervalMinutes {} (expected 1-1440)", self.sync_interval_minutes));
+        }
+        check("simplifyModel", &self.simplify_model, SIMPLIFY_MODELS)?;
+        if !(1..=30).contains(&self.simplify_max_candidates) {
+            return Err(format!("invalid simplifyMaxCandidates {} (expected 1-30)", self.simplify_max_candidates));
         }
         if !(1..=240).contains(&self.check_timeout_minutes) {
             return Err(format!("invalid checkTimeoutMinutes {} (expected 1-240)", self.check_timeout_minutes));
@@ -252,6 +266,17 @@ mod tests {
         assert!(d.patched(&json!({ "checkTimeoutMinutes": 0 })).is_err());
         assert_eq!(d.patched(&json!({ "checkTimeoutMinutes": 30, "installBeforeChecks": false })).unwrap().check_timeout_minutes, 30);
         assert!(d.patched(&json!({ "staleBehind": -1 })).is_err());
+    }
+
+    #[test]
+    fn simplify_settings_defaults_and_validation() {
+        let d = Settings::default();
+        assert_eq!((d.simplify_model.as_str(), d.simplify_max_candidates, d.simplify_low_risk_button), ("sonnet", 12, true));
+        let s = d.patched(&json!({ "simplifyModel": "opus", "simplifyMaxCandidates": 5, "simplifyLowRiskButton": false })).unwrap();
+        assert_eq!((s.simplify_model.as_str(), s.simplify_max_candidates, s.simplify_low_risk_button), ("opus", 5, false));
+        assert!(d.patched(&json!({ "simplifyModel": "gpt" })).is_err());
+        assert!(d.patched(&json!({ "simplifyMaxCandidates": 0 })).is_err());
+        assert!(d.patched(&json!({ "simplifyMaxCandidates": 31 })).is_err());
     }
 
     #[test]

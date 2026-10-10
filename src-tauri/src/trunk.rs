@@ -18,7 +18,7 @@ use tauri::{AppHandle, State};
 /// each other's `index.lock`.
 static GIT_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
     GIT_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
@@ -191,7 +191,8 @@ pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
         Ok(w) => w,
         Err(_) => return,
     };
-    if settings.save_commits {
+    // A Simplify step commits (or reverts) its own result; a save point would swallow it as `wip:`.
+    if settings.save_commits && !crate::simplify::active(ws_id) {
         let text = state.db().last_user_text(ws_id).unwrap_or_default();
         let msg = wip_message(&text);
         let _g = lock();
@@ -381,7 +382,7 @@ pub fn set_check_command(state: State<AppState>, repo_id: String, cmd: Option<St
 }
 
 /// The command for a workspace's repo, resolved against its worktree.
-fn resolve_command(state: &AppState, ws: &Workspace) -> Option<String> {
+pub fn resolve_command(state: &AppState, ws: &Workspace) -> Option<String> {
     let override_cmd = state.db().check_command(&ws.repo_id).ok().flatten();
     checks::effective(Path::new(&ws.path), override_cmd.as_deref())
 }
