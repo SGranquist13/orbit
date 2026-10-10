@@ -361,7 +361,7 @@ async fn create_workspace(
         dismissed_seq: 0,
         profile: profile.filter(|p| !p.is_empty()),
         snoozed_until: 0,
-            ..Default::default()
+        ..Default::default()
     };
     state.db().insert_workspace(&ws).map_err(err)?;
     // The repo's "always attach" folders (read-only); skip ones that have since disappeared.
