@@ -14,9 +14,9 @@ type TaskField = "modelSuggestions" | "modelWorkspaceName" | "modelCommitMessage
 const TASKS: { field: TaskField; label: string; description: string; optional: boolean }[] = [
   { field: "modelSuggestions", label: "Inbox suggestions", description: "Next-prompt ideas on each inbox item.", optional: true },
   { field: "modelWorkspaceName", label: "Workspace names", description: "A short name from your first prompt. Off keeps the first line of the prompt.", optional: true },
-  { field: "modelCommitMessage", label: "Commit messages", description: "Save-point and squash commit messages.", optional: false },
-  { field: "modelRoutineSummary", label: "Routine summaries", description: "What a routine run did, and whether there was nothing to do.", optional: false },
-  { field: "modelPrDescription", label: "PR description drafts", description: "Title and body for a new pull request.", optional: false },
+  { field: "modelCommitMessage", label: "Commit messages", description: "Save-point messages, when Settings > Git > Save-point messages is Written by a model.", optional: false },
+  { field: "modelRoutineSummary", label: "Routine summaries", description: "The one-line summary of each routine run, and whether it had nothing to do.", optional: false },
+  { field: "modelPrDescription", label: "PR description drafts", description: "Only used with a local model: on Ship, Orbit drafts the PR title and body from the diff and hands it to the agent as a starting point. At Default the agent writes the PR itself.", optional: false },
 ];
 
 export function formatBytes(n: number): string {

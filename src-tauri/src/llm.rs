@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The last three are called by the git-flow and Routines features, which land separately.
+/// `CommitMessage` is called by `trunk::save_point` (Settings > Git > Save-point messages), `RoutineSummary`
+/// by `routines::finish_run_with`, `PrDescription` by `trunk::prepare_ship`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Task {
     Suggestions,
     WorkspaceName,
@@ -109,7 +109,8 @@ pub fn last_errors() -> HashMap<String, String> {
 /// - `WorkspaceName`: `{"name": string}` (<= 5 words); optional, off by default.
 /// - `CommitMessage`: `{"subject": string, "body": string}`; required, so `Ok(Some(_))` always (or `Err`).
 /// - `RoutineSummary`: `{"summary": string, "nothingToDo": boolean}`; required.
-/// - `PrDescription`: `{"title": string, "body": string}`; required.
+/// - `PrDescription`: `{"title": string, "body": string}`; required. Only called when this task is
+///   set to a local model (see `trunk::pr_draft_enabled`).
 pub async fn complete_json(state: &Inner, task: Task, system: &str, prompt: &str, schema: &Value) -> anyhow::Result<Option<Value>> {
     let settings = state.settings();
     let Some(plan) = plan(&settings, task) else { return Ok(None) };

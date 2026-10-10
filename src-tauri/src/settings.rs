@@ -16,6 +16,7 @@ pub const SUGGESTION_MODELS: &[&str] = &["haiku", "sonnet"];
 pub const AGENTS: &[&str] = &["claude", "codex"];
 pub const CHECKS_MODES: &[&str] = &["off", "warn", "block"];
 pub const SYNC_MODES: &[&str] = &["off", "suggest", "auto"];
+pub const COMMIT_MESSAGES: &[&str] = &["prompt", "model"];
 pub const LOCAL_PROVIDERS: &[&str] = &["ollama", "openai"];
 pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 pub const DEFAULT_OPENAI_URL: &str = "http://localhost:1234";
@@ -48,6 +49,8 @@ pub struct Settings {
     pub save_commits: bool,
     /// Squash Orbit's unpushed `wip:` commits before Ship.
     pub squash_wip: bool,
+    /// How a save point is worded: prompt (from the user's message) | model (written from the diff by `Task::CommitMessage`).
+    pub commit_messages: String,
     /// off | warn (inbox only, Ship proceeds) | block (Ship refused, "Ship anyway" in the inbox).
     pub checks_mode: String,
     /// Per-run limit for a check (and for the dependency install before it); the process tree is killed after.
@@ -110,6 +113,7 @@ impl Default for Settings {
             suggestion_model: "haiku".into(),
             save_commits: true,
             squash_wip: true,
+            commit_messages: "prompt".into(),
             checks_mode: "block".into(),
             check_timeout_minutes: 10,
             install_before_checks: true,
@@ -229,6 +233,7 @@ impl Settings {
         check("defaultAgent", &self.default_agent, AGENTS)?;
         check("checksMode", &self.checks_mode, CHECKS_MODES)?;
         check("syncMode", &self.sync_mode, SYNC_MODES)?;
+        check("commitMessages", &self.commit_messages, COMMIT_MESSAGES)?;
         if !(1..=1440).contains(&self.sync_interval_minutes) {
             return Err(format!("invalid syncIntervalMinutes {} (expected 1-1440)", self.sync_interval_minutes));
         }
@@ -350,6 +355,9 @@ mod tests {
         assert_eq!((s.checks_mode.as_str(), s.sync_mode.as_str(), s.stale_days), ("warn", "suggest", 0));
         assert!(d.patched(&json!({ "checksMode": "maybe" })).is_err());
         assert!(d.patched(&json!({ "syncMode": "always" })).is_err());
+        assert_eq!(d.commit_messages, "prompt");
+        assert_eq!(d.patched(&json!({ "commitMessages": "model" })).unwrap().commit_messages, "model");
+        assert!(d.patched(&json!({ "commitMessages": "ai" })).is_err());
         assert!(d.patched(&json!({ "syncIntervalMinutes": 0 })).is_err());
         assert_eq!((d.check_timeout_minutes, d.install_before_checks), (10, true));
         assert!(d.patched(&json!({ "checkTimeoutMinutes": 0 })).is_err());

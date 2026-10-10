@@ -117,6 +117,8 @@ export interface PrepareShip {
   ok: boolean;
   checks: CheckResult | null;
   squashed: number;
+  /** A PR title and body Orbit drafted with a local model; pass it to `shipkit:ship` as its notes. */
+  notes: string | null;
 }
 
 export interface Overlap {
@@ -340,6 +342,7 @@ export interface Settings {
   // git handling
   saveCommits: boolean;
   squashWip: boolean;
+  commitMessages: "prompt" | "model";
   checksMode: "off" | "warn" | "block";
   checkTimeoutMinutes: number;
   installBeforeChecks: boolean;
@@ -446,7 +449,7 @@ export interface Schedule {
   at?: string | null;
 }
 
-export type RoutineAction = { kind: "prompt"; text: string } | { kind: "skill"; skillId: string; args: string };
+export type RoutineAction = { kind: "prompt"; text: string } | { kind: "skill"; skillId: string; args: string } | { kind: "simplify" };
 export type RoutineMode = "fresh" | "standing";
 export type RunStatus = "running" | "done" | "error" | "quiet" | "skipped";
 
