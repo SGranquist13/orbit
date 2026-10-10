@@ -14,6 +14,9 @@ pub const SANDBOXES: &[&str] = &["danger-full-access", "workspace-write"];
 pub const MERGE_METHODS: &[&str] = &["squash", "merge", "rebase"];
 pub const SUGGESTION_MODELS: &[&str] = &["haiku", "sonnet"];
 pub const AGENTS: &[&str] = &["claude", "codex"];
+pub const LOCAL_PROVIDERS: &[&str] = &["ollama", "openai"];
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
+pub const DEFAULT_OPENAI_URL: &str = "http://localhost:1234";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -35,7 +38,23 @@ pub struct Settings {
     pub delete_branch_on_merge: bool,
     // inbox
     pub ai_suggestions: bool,
+    /// Claude model behind every task set to "default" (kept under its old key for the stored blob).
     pub suggestion_model: String,
+    // local models (llm.rs). Task values: "default" | "off" | "local:<model>".
+    pub local_provider: String,
+    /// Empty = the provider's default URL.
+    pub local_url: String,
+    pub local_api_key: String,
+    pub local_timeout_secs: u64,
+    /// The model "Use local for all utility tasks" assigns.
+    pub local_default_model: String,
+    pub model_suggestions: String,
+    pub model_workspace_name: String,
+    pub model_commit_message: String,
+    pub model_routine_summary: String,
+    pub model_pr_description: String,
+    /// Experimental: offer "Local: <model>" in the New Workspace model picker.
+    pub local_agents: bool,
     // mobile bridge
     pub remote_enabled: bool,
     pub remote_port: u16,
@@ -59,6 +78,18 @@ impl Default for Settings {
             delete_branch_on_merge: false,
             ai_suggestions: true,
             suggestion_model: "haiku".into(),
+            local_provider: "ollama".into(),
+            local_url: String::new(),
+            local_api_key: String::new(),
+            local_timeout_secs: 30,
+            local_default_model: String::new(),
+            model_suggestions: "default".into(),
+            // Names were never model-generated before, so this stays off until the user opts in.
+            model_workspace_name: "off".into(),
+            model_commit_message: "default".into(),
+            model_routine_summary: "default".into(),
+            model_pr_description: "default".into(),
+            local_agents: false,
             remote_enabled: false,
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
@@ -85,6 +116,22 @@ pub fn normalize_prefix(raw: &str) -> String {
     if cleaned.is_empty() { String::new() } else { format!("{cleaned}/") }
 }
 
+/// Trims whitespace and trailing slashes, drops a trailing `/v1` (callers add their own path),
+/// and uses `default` when nothing is left.
+pub fn normalize_url(raw: &str, default: &str) -> String {
+    let mut u = raw.trim().trim_end_matches('/').to_string();
+    if let Some(stripped) = u.strip_suffix("/v1") {
+        u = stripped.trim_end_matches('/').to_string();
+    }
+    if u.is_empty() {
+        default.to_string()
+    } else if !u.contains("://") {
+        format!("http://{u}")
+    } else {
+        u
+    }
+}
+
 fn normalize_models(list: &[String]) -> Vec<String> {
     let mut out: Vec<String> = vec![];
     for m in list {
@@ -104,7 +151,30 @@ fn check(field: &str, value: &str, allowed: &[&str]) -> Result<(), String> {
     }
 }
 
+/// A per-task model value: "default", "off" or "local:<model>".
+fn check_task_model(field: &str, value: &str, allow_off: bool) -> Result<(), String> {
+    let ok = value == "default"
+        || (allow_off && value == "off")
+        || value.strip_prefix("local:").is_some_and(|m| !m.trim().is_empty() && m.trim() == m);
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("invalid {field} \"{value}\" (expected default{}, or local:<model>)", if allow_off { ", off" } else { "" }))
+    }
+}
+
 impl Settings {
+    /// The provider's URL without a trailing slash (or `/v1`), falling back to its default.
+    pub fn local_base_url(&self) -> String {
+        let default = if self.local_provider == "openai" { DEFAULT_OPENAI_URL } else { DEFAULT_OLLAMA_URL };
+        normalize_url(&self.local_url, default)
+    }
+
+    /// The Ollama server's URL: the configured one when Ollama is the selected provider, else the default.
+    pub fn ollama_url(&self) -> String {
+        if self.local_provider == "ollama" { self.local_base_url() } else { DEFAULT_OLLAMA_URL.to_string() }
+    }
+
     /// Rejects unknown enum values and tidies free-form fields.
     pub fn validated(mut self) -> Result<Self, String> {
         check("claudePermissionMode", &self.claude_permission_mode, PERMISSION_MODES)?;
@@ -112,6 +182,16 @@ impl Settings {
         check("mergeMethod", &self.merge_method, MERGE_METHODS)?;
         check("suggestionModel", &self.suggestion_model, SUGGESTION_MODELS)?;
         check("defaultAgent", &self.default_agent, AGENTS)?;
+        check("localProvider", &self.local_provider, LOCAL_PROVIDERS)?;
+        // Suggestions and workspace names are optional; the rest fall back to Claude, so "off" is invalid.
+        check_task_model("modelSuggestions", &self.model_suggestions, true)?;
+        check_task_model("modelWorkspaceName", &self.model_workspace_name, true)?;
+        check_task_model("modelCommitMessage", &self.model_commit_message, false)?;
+        check_task_model("modelRoutineSummary", &self.model_routine_summary, false)?;
+        check_task_model("modelPrDescription", &self.model_pr_description, false)?;
+        if !(1..=600).contains(&self.local_timeout_secs) {
+            return Err(format!("invalid localTimeoutSecs {} (expected 1-600)", self.local_timeout_secs));
+        }
         if self.remote_port < 1024 {
             return Err(format!("invalid remotePort {} (expected 1024-65535)", self.remote_port));
         }
@@ -120,6 +200,9 @@ impl Settings {
         self.extra_models_codex = normalize_models(&self.extra_models_codex);
         self.default_model_claude = self.default_model_claude.trim().to_string();
         self.default_model_codex = self.default_model_codex.trim().to_string();
+        self.local_url = self.local_url.trim().to_string();
+        self.local_api_key = self.local_api_key.trim().to_string();
+        self.local_default_model = self.local_default_model.trim().to_string();
         Ok(self)
     }
 
@@ -195,6 +278,29 @@ mod tests {
         assert!(!d.remote_enabled && d.remote_push && d.remote_port == 47821);
         // Unknown keys are ignored rather than stored.
         assert!(d.patched(&json!({ "bogus": 1 })).is_ok());
+    }
+
+    #[test]
+    fn local_model_settings_validate() {
+        let d = Settings::default();
+        assert_eq!((d.model_workspace_name.as_str(), d.model_suggestions.as_str()), ("off", "default"));
+        let s = d.patched(&json!({ "modelCommitMessage": "local:llama3.2:3b", "modelSuggestions": "off" })).unwrap();
+        assert_eq!(s.model_commit_message, "local:llama3.2:3b");
+        // Required tasks can't be switched off; garbage and empty model names are rejected.
+        assert!(d.patched(&json!({ "modelCommitMessage": "off" })).is_err());
+        assert!(d.patched(&json!({ "modelRoutineSummary": "local:" })).is_err());
+        assert!(d.patched(&json!({ "modelPrDescription": "haiku" })).is_err());
+        assert!(d.patched(&json!({ "localProvider": "vllm" })).is_err());
+        assert!(d.patched(&json!({ "localTimeoutSecs": 0 })).is_err());
+    }
+
+    #[test]
+    fn local_url_is_normalized() {
+        assert_eq!(normalize_url("", DEFAULT_OLLAMA_URL), "http://localhost:11434");
+        assert_eq!(normalize_url(" http://box:1234/v1/ ", DEFAULT_OPENAI_URL), "http://box:1234");
+        assert_eq!(normalize_url("box:8080", DEFAULT_OPENAI_URL), "http://box:8080");
+        let s = Settings { local_provider: "openai".into(), ..Default::default() };
+        assert_eq!(s.local_base_url(), "http://localhost:1234");
     }
 
     #[test]

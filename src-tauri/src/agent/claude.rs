@@ -35,7 +35,7 @@ pub fn args(cfg: &SessionConfig) -> Vec<String> {
     .map(|s| s.to_string())
     .collect();
     if let Some(model) = &cfg.model {
-        a.extend(["--model".into(), model.clone()]);
+        a.extend(["--model".into(), super::local_model(model).unwrap_or(model).to_string()]);
     }
     if let Some(id) = &cfg.resume {
         a.extend(["--resume".into(), id.clone()]);
@@ -54,6 +54,21 @@ pub fn args(cfg: &SessionConfig) -> Vec<String> {
         a.extend(["--append-system-prompt".into(), text.clone()]);
     }
     a
+}
+
+/// Env that points Claude Code at Ollama's Anthropic-compatible `/v1/messages` endpoint for a
+/// `local:<name>` model. Empty for normal sessions. Set on this spawn only (after the host scrub).
+pub fn local_env(cfg: &SessionConfig) -> Vec<(&'static str, String)> {
+    let local = cfg.model.as_deref().and_then(super::local_model).is_some();
+    match (&cfg.local_url, local) {
+        (Some(url), true) => vec![
+            ("ANTHROPIC_BASE_URL", url.clone()),
+            ("ANTHROPIC_AUTH_TOKEN", "ollama".into()),
+            // An empty key stops a real one from taking precedence over the token.
+            ("ANTHROPIC_API_KEY", String::new()),
+        ],
+        _ => vec![],
+    }
 }
 
 pub fn user_line(text: &str) -> String {
@@ -228,7 +243,11 @@ fn tool_result_text(c: &Value) -> String {
 }
 
 pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceiver<Command>) -> anyhow::Result<()> {
-    let mut child = process::command("claude", &args(&cfg), &cfg.cwd)?.spawn()?;
+    let mut cmd = process::command("claude", &args(&cfg), &cfg.cwd)?;
+    for (k, v) in local_env(&cfg) {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn()?;
     let mut stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
@@ -359,6 +378,7 @@ mod tests {
             readonly: false,
             permission_mode: "bypassPermissions".into(),
             sandbox: "danger-full-access".into(),
+            local_url: None,
         };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| {
             let _ = tx.send(ev);
@@ -483,6 +503,7 @@ mod tests {
             readonly: false,
             permission_mode: "bypassPermissions".into(),
             sandbox: "danger-full-access".into(),
+            local_url: None,
         };
         let rw = args(&cfg).join(" ");
         assert!(!rw.contains("--disallowedTools") && rw.contains("--permission-mode bypassPermissions"));
@@ -499,5 +520,12 @@ mod tests {
         assert!(a.contains("--plugin-dir /packs/ecc"));
         assert!(a.contains("--add-dir /code/shared-ui --add-dir /code/api"));
         assert!(a.ends_with("--append-system-prompt ctx"));
+        assert!(local_env(&cfg).is_empty());
+        // A local model drops the prefix from --model and points Claude at Ollama.
+        let cfg = SessionConfig { model: Some("local:qwen3:8b".into()), local_url: Some("http://localhost:11434".into()), ..cfg };
+        assert!(args(&cfg).join(" ").contains("--model qwen3:8b"));
+        let env = local_env(&cfg);
+        assert!(env.contains(&("ANTHROPIC_BASE_URL", "http://localhost:11434".to_string())));
+        assert!(env.contains(&("ANTHROPIC_AUTH_TOKEN", "ollama".to_string())));
     }
 }

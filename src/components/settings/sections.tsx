@@ -62,17 +62,7 @@ export function InboxSettings() {
       <Row label="AI suggestions" field="aiSuggestions" description="Ask a small model for next-prompt ideas on each inbox item. Costs a fraction of a cent per item.">
         <Toggle label="AI suggestions" checked={s.aiSuggestions} onChange={(v) => void save({ aiSuggestions: v })} />
       </Row>
-      <Row label="Suggestion model" field="suggestionModel" description="Haiku is fastest and cheapest; Sonnet writes better follow-ups.">
-        <Segmented<"haiku" | "sonnet">
-          label="Suggestion model"
-          value={s.suggestionModel}
-          options={[
-            { value: "haiku", label: "Haiku" },
-            { value: "sonnet", label: "Sonnet" },
-          ]}
-          onChange={(v) => void save({ suggestionModel: v })}
-        />
-      </Row>
+      <Row label="Suggestion model" description="Which model writes them (Claude, or a local one) is set in Settings > Models." />
     </>
   );
 }

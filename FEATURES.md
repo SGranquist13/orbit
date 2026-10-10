@@ -180,6 +180,17 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | After merge: auto archive + remove worktree + delete branch; long-lived/far-behind branches surface in the inbox | P2 | ⬜ | |
 | Simplify button: read-only find pass → candidate list → apply one at a time, Orbit checks + commits `refactor:` or reverts | P2 | ⬜ | |
 
+## Local models (PLANNING #9, built 2026-10-10)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| `llm.rs`: every utility model call through `llm::complete_json` (Claude CLI one-shot, Ollama `/api/chat`, OpenAI-compatible `/v1/chat/completions`), per-task fallback, last error per backend | P2 | 🟢 | Unit-tested (request building, reply parsing, planning, fallback rules). Live: `live_ollama_round_trip` passed against Ollama 0.16.1 + `llama3.2:3b` (valid JSON in ~2 s warm, ~33 s cold load). OpenAI-compatible path only unit-tested (no LM Studio here) |
+| Inbox suggestions through `llm` (Claude default, local optional) | P2 | 🟢 | Claude path is the old `suggest_prompts` code moved; opt-in e2e step `local-model-suggestions` (skipped without Ollama) not run yet |
+| Workspace names from the first prompt (local or Claude; off by default; only replaces the auto-derived name, never the branch/path) | P3 | 🟢 | Name cleaning + derived-name check unit-tested; not run live |
+| CommitMessage / RoutineSummary / PrDescription tasks (setting + `Task` variant; callers land with git-flow and Routines) | P2 | 🟢 | No caller on this branch yet |
+| Settings > Models: provider, URL, key, timeout, live status, installed models + Test, per-task model, "Use local for all", Default Claude model | P2 | 🟢 | Mock-verified; `local_models_status` / `test_local_model` commands tested only via the live test and mock |
+| Experimental: run agents on local models (`local:<model>` in the New Workspace picker; Claude Code via `ANTHROPIC_BASE_URL`, Codex via `model_provider="ollama"`) | P3 | 🟡 | Live-checked: both CLIs connect and finish a turn against Ollama. Small models (3B, 7B coder) could not complete a tool call under Claude Code. Cost/context meter are wrong for local models. Spawn args/env unit-tested; not run through Orbit itself |
+
 ## Mock vs real
 
 The mock (`bun run dev` in a browser) renders the **same components** as the real app, so styling matches exactly. The differences are all in the data:

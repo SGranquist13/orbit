@@ -97,6 +97,16 @@ pub struct SessionConfig {
     pub permission_mode: String,
     /// Codex sandbox for non-readonly sessions (`danger-full-access` | `workspace-write`).
     pub sandbox: String,
+    /// Ollama base URL, used only when `model` is a `local:<name>` model (experimental local agents).
+    pub local_url: Option<String>,
+}
+
+/// Workspace models of the form `local:<name>` run the agent against a local Ollama server.
+pub const LOCAL_MODEL_PREFIX: &str = "local:";
+
+/// The Ollama model name if `model` selects a local model.
+pub fn local_model(model: &str) -> Option<&str> {
+    model.strip_prefix(LOCAL_MODEL_PREFIX).filter(|m| !m.is_empty())
 }
 
 pub enum Command {

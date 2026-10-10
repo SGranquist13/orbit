@@ -208,8 +208,24 @@ struct State {
     parser: CodexParser,
 }
 
+/// `codex app-server`, plus the built-in Ollama provider for a `local:<name>` model.
+pub fn app_server_args(cfg: &SessionConfig) -> Vec<String> {
+    let mut a = vec!["app-server".to_string()];
+    if cfg.model.as_deref().and_then(super::local_model).is_some() {
+        a.extend(["-c".into(), "model_provider=\"ollama\"".into()]);
+    }
+    a
+}
+
 pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceiver<Command>) -> anyhow::Result<()> {
-    let mut child = process::command("codex", &["app-server".to_string()], &cfg.cwd)?.spawn()?;
+    let mut cmd = process::command("codex", &app_server_args(&cfg), &cfg.cwd)?;
+    if let (Some(url), true) = (&cfg.local_url, cfg.model.as_deref().and_then(super::local_model).is_some()) {
+        // Codex's built-in `ollama` provider defaults to localhost:11434; a custom URL goes via its env override.
+        if url.trim_end_matches('/') != "http://localhost:11434" {
+            cmd.env("CODEX_OSS_BASE_URL", format!("{}/v1", url.trim_end_matches('/')));
+        }
+    }
+    let mut child = cmd.spawn()?;
     let stdin = child.stdin.take().expect("piped stdin");
     let mut stdout: Lines<BufReader<ChildStdout>> = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
     let stderr = child.stderr.take().expect("piped stderr");
@@ -319,7 +335,7 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                         "persistExtendedHistory": false,
                     });
                     if let Some(model) = &st.cfg.model {
-                        params["model"] = json!(model);
+                        params["model"] = json!(super::local_model(model).unwrap_or(model));
                     }
                     if let Some(text) = &st.cfg.instructions {
                         params["developerInstructions"] = json!(text);
@@ -449,7 +465,7 @@ mod tests {
         let dir = std::env::temp_dir().join("orbit_codex_live");
         std::fs::create_dir_all(&dir).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into() };
+        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
         handle.send(Command::User("Reply with the single word: pong".into()));
         let mut seen = Vec::new();

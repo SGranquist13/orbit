@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { AlarmClock, CircleDot, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, UserRound, Zap } from "lucide-react";
+import { AlarmClock, CircleDot, Cpu, Focus, FolderPlus, FolderSymlink, Inbox, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Smartphone, Sparkles, UserRound, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
@@ -107,6 +107,16 @@ export function Palette() {
               })}
             >
               <Smartphone className="size-3.5" /> Pair a phone
+            </Command.Item>
+            <Command.Item
+              className={item}
+              value="Local models (Ollama, Models settings)"
+              onSelect={run(() => {
+                useApp.getState().openSettings();
+                window.setTimeout(() => document.getElementById("settings-models")?.scrollIntoView({ block: "start" }), 120);
+              })}
+            >
+              <Cpu className="size-3.5" /> Local models
             </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
               <Package className="size-3.5" /> Manage skill packs

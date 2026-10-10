@@ -157,6 +157,7 @@ export function TextInput({
   placeholder,
   label,
   className,
+  type,
 }: {
   value: string;
   onCommit: (v: string) => void;
@@ -164,6 +165,7 @@ export function TextInput({
   placeholder?: string;
   label: string;
   className?: string;
+  type?: "text" | "password";
 }) {
   const [draft, setDraft] = useState(value);
   const focused = useRef(false);
@@ -176,6 +178,7 @@ export function TextInput({
   return (
     <input
       aria-label={label}
+      type={type}
       value={draft}
       placeholder={placeholder}
       spellCheck={false}

@@ -243,9 +243,45 @@ export interface Settings {
   deleteBranchOnMerge: boolean;
   aiSuggestions: boolean;
   suggestionModel: "haiku" | "sonnet";
+  localProvider: "ollama" | "openai";
+  /** Empty = the provider's default URL. */
+  localUrl: string;
+  localApiKey: string;
+  localTimeoutSecs: number;
+  localDefaultModel: string;
+  /** Per-task model: "default" | "off" | "local:<model>". */
+  modelSuggestions: string;
+  modelWorkspaceName: string;
+  modelCommitMessage: string;
+  modelRoutineSummary: string;
+  modelPrDescription: string;
+  localAgents: boolean;
   remoteEnabled: boolean;
   remotePort: number;
   remotePush: boolean;
+}
+
+/** `llm.rs`: local model servers for utility tasks. */
+export interface LocalModel {
+  name: string;
+  sizeBytes: number;
+  family: string;
+  parameterSize: string;
+  quantization: string;
+}
+
+export interface LocalStatus {
+  ollama: { running: boolean; version: string | null; url: string; models: LocalModel[] };
+  openaiCompat: { reachable: boolean; url: string; models: string[] };
+  /** Last failure per backend (`claude`, `ollama`, `openaiCompat`), cleared on its next success. */
+  lastErrors: Record<string, string>;
+}
+
+export interface LocalTestResult {
+  ok: boolean;
+  latencyMs: number;
+  output: string | null;
+  error: string | null;
 }
 
 /** Mobile bridge (src-tauri/src/remote/). */
@@ -293,6 +329,8 @@ export interface CleanupCandidate {
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
+  localModelsStatus: () => invoke<LocalStatus>("local_models_status"),
+  testLocalModel: (backend: "ollama" | "openaiCompat", model: string) => invoke<LocalTestResult>("test_local_model", { backend, model }),
   remoteStatus: () => invoke<RemoteStatus>("remote_status"),
   remotePairing: () => invoke<RemotePairing>("remote_pairing"),
   remoteDevices: () => invoke<RemoteDevice[]>("remote_devices"),
