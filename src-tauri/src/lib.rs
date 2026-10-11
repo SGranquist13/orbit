@@ -1,3 +1,7 @@
+// Deadlock guard: `match state.db()...`/`if let ... = x.lock()...` keep the MutexGuard alive through the body.
+// Enforced by `bun run check:guards` (clippy); bind the value first.
+#![deny(clippy::significant_drop_in_scrutinee)]
+
 mod agent;
 mod checks;
 mod db;
@@ -86,7 +90,8 @@ impl Inner {
         if running {
             return;
         }
-        if let Some(h) = self.sessions.lock().unwrap().remove(workspace_id) {
+        let taken = self.sessions.lock().unwrap().remove(workspace_id);
+        if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
     }
@@ -650,7 +655,8 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
     let ws = state.db().workspace(id)?;
     on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill });
     // Pending role hand-over note from a profile switch goes to the agent, not the transcript.
-    let payload = match state.role_notices.lock().unwrap().remove(id) {
+    let note = state.role_notices.lock().unwrap().remove(id);
+    let payload = match note {
         Some(note) => format!("{note}{payload}"),
         None => payload,
     };
@@ -835,7 +841,8 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
 /// Drops the agent session so the next message starts from a clean context in the same worktree.
 #[tauri::command]
 fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let ws = {
@@ -887,7 +894,8 @@ fn usage_report(state: State<AppState>, since_ms: Option<i64>) -> CmdResult<usag
 
 #[tauri::command]
 fn stop_session(state: State<AppState>, id: String) {
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
 }
@@ -914,7 +922,8 @@ async fn archive_workspace(state: State<'_, AppState>, id: String, remove_worktr
 
 pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: bool) -> CmdResult<()> {
     let id = id.to_string();
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let ws = state.db().workspace(&id).map_err(err)?;
@@ -1089,7 +1098,8 @@ async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> 
     for c in candidates {
         let Some(ws) = workspaces.iter().find(|w| w.id == c.workspace_id) else { continue };
         let Some(repo) = repos.iter().find(|r| r.id == ws.repo_id) else { continue };
-        if let Some(h) = state.sessions.lock().unwrap().remove(&ws.id) {
+        let taken = state.sessions.lock().unwrap().remove(&ws.id);
+        if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
         let (repo_path, wt) = (PathBuf::from(&repo.path), PathBuf::from(&ws.path));

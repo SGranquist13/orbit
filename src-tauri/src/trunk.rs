@@ -290,7 +290,8 @@ pub fn try_rebase(worktree: &Path, base: &str) -> RebaseOutcome {
 /// Runs on a blocking thread; never holds the db lock across git calls.
 pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
     let settings = state.settings();
-    let ws = match state.db().workspace(ws_id) {
+    let found = state.db().workspace(ws_id);
+    let ws = match found {
         Ok(w) => w,
         Err(_) => return,
     };
@@ -374,7 +375,8 @@ pub async fn sync_repo(app: &AppHandle, state: &AppState, repo_id: &str, priorit
     if mode == "off" {
         return;
     }
-    let repo = match state.db().repo(repo_id) {
+    let found = state.db().repo(repo_id);
+    let repo = match found {
         Ok(r) => r,
         Err(_) => return,
     };
@@ -471,7 +473,8 @@ async fn archive_merged(state: &AppState, ws: &Workspace, repo: &crate::db::Repo
     if !safe {
         return false;
     }
-    if let Some(h) = state.sessions.lock().unwrap().remove(&ws.id) {
+    let taken = state.sessions.lock().unwrap().remove(&ws.id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let removed = tauri::async_runtime::spawn_blocking(move || {
