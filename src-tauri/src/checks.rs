@@ -89,10 +89,36 @@ pub struct RunOptions {
     pub install: bool,
 }
 
-/// The install command a fresh worktree needs before a JS check can run: `package.json` exists
-/// but `node_modules` doesn't. Matches the lockfile the way `detect` does.
-pub fn install_command(repo: &Path) -> Option<String> {
+/// True when the check command goes through a JS package runner (so it needs `node_modules`).
+fn uses_js_runner(cmd: &str) -> bool {
+    cmd.split(|c: char| c.is_whitespace() || matches!(c, '&' | '|' | ';' | '(' | ')'))
+        .filter(|t| !t.is_empty())
+        .any(|t| {
+            let t = t.trim_matches(|c| c == '"' || c == '\'');
+            let base = t.rsplit(['/', '\\']).next().unwrap_or(t).to_lowercase();
+            let base = base.trim_end_matches(".cmd").trim_end_matches(".exe");
+            matches!(base, "npm" | "npx" | "bun" | "bunx" | "pnpm" | "pnpx" | "yarn")
+        })
+}
+
+/// True when package.json declares at least one dependency or devDependency.
+fn declares_dependencies(repo: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(repo.join("package.json")) else { return false };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
+    ["dependencies", "devDependencies"]
+        .iter()
+        .any(|k| v.get(*k).and_then(|d| d.as_object()).is_some_and(|d| !d.is_empty()))
+}
+
+/// The install command a fresh worktree needs before the JS check `check_cmd` can run: only when
+/// that command runs through a package runner, `package.json` declares dependencies, and
+/// `node_modules` is missing. Matches the lockfile the way `detect` does; without any lockfile
+/// `npm ci` would refuse to run, so it falls back to `npm install`.
+pub fn install_command(repo: &Path, check_cmd: &str) -> Option<String> {
     if !repo.join("package.json").exists() || repo.join("node_modules").exists() {
+        return None;
+    }
+    if !uses_js_runner(check_cmd) || !declares_dependencies(repo) {
         return None;
     }
     let cmd = if repo.join("bun.lock").exists() || repo.join("bun.lockb").exists() {
@@ -101,8 +127,10 @@ pub fn install_command(repo: &Path) -> Option<String> {
         "pnpm install --frozen-lockfile"
     } else if repo.join("yarn.lock").exists() {
         "yarn install --frozen-lockfile"
-    } else {
+    } else if repo.join("package-lock.json").exists() || repo.join("npm-shrinkwrap.json").exists() {
         "npm ci"
+    } else {
+        "npm install --no-audit --no-fund"
     };
     Some(cmd.into())
 }
@@ -222,7 +250,7 @@ pub fn run(worktree: &Path, cmd: &str, opts: RunOptions) -> CheckResult {
         duration_ms: started.elapsed().as_millis() as u64,
     };
     if opts.install {
-        if let Some(install) = install_command(worktree) {
+        if let Some(install) = install_command(worktree, cmd) {
             let r = run_shell(worktree, &install, opts.timeout);
             if !r.ok {
                 let note = if r.timed_out {
@@ -319,17 +347,40 @@ mod tests {
     #[test]
     fn install_is_needed_only_without_node_modules() {
         let d = tmp("install");
-        assert_eq!(install_command(&d), None, "no package.json");
-        std::fs::write(d.join("package.json"), "{}").unwrap();
-        assert_eq!(install_command(&d).as_deref(), Some("npm ci"));
+        let check = "npm run check";
+        assert_eq!(install_command(&d, check), None, "no package.json");
+        std::fs::write(d.join("package.json"), r#"{"devDependencies":{"typescript":"^5"}}"#).unwrap();
+        assert_eq!(install_command(&d, check).as_deref(), Some("npm install --no-audit --no-fund"), "no lockfile");
+        std::fs::write(d.join("package-lock.json"), "{}").unwrap();
+        assert_eq!(install_command(&d, check).as_deref(), Some("npm ci"));
         std::fs::write(d.join("yarn.lock"), "").unwrap();
-        assert_eq!(install_command(&d).as_deref(), Some("yarn install --frozen-lockfile"));
+        assert_eq!(install_command(&d, check).as_deref(), Some("yarn install --frozen-lockfile"));
         std::fs::write(d.join("pnpm-lock.yaml"), "").unwrap();
-        assert_eq!(install_command(&d).as_deref(), Some("pnpm install --frozen-lockfile"));
+        assert_eq!(install_command(&d, check).as_deref(), Some("pnpm install --frozen-lockfile"));
         std::fs::write(d.join("bun.lockb"), "").unwrap();
-        assert_eq!(install_command(&d).as_deref(), Some("bun install"));
+        assert_eq!(install_command(&d, check).as_deref(), Some("bun install"));
         std::fs::create_dir(d.join("node_modules")).unwrap();
-        assert_eq!(install_command(&d), None, "already installed");
+        assert_eq!(install_command(&d, check), None, "already installed");
+    }
+
+    #[test]
+    fn install_skipped_unless_the_check_needs_node_modules() {
+        let d = tmp("install-skip");
+        // No dependencies declared: nothing to install, whatever the check is.
+        std::fs::write(d.join("package.json"), r#"{"name":"x"}"#).unwrap();
+        assert_eq!(install_command(&d, "npm test"), None);
+        std::fs::write(d.join("package.json"), r#"{"name":"x","dependencies":{}}"#).unwrap();
+        assert_eq!(install_command(&d, "npm test"), None, "empty dependencies");
+        // Dependencies declared, but the check doesn't run through a JS runner.
+        std::fs::write(d.join("package.json"), r#"{"dependencies":{"left-pad":"1"}}"#).unwrap();
+        assert_eq!(install_command(&d, "exit 0"), None);
+        assert_eq!(install_command(&d, "cargo check"), None);
+        assert_eq!(install_command(&d, "node check.js"), None);
+        // JS runners, including inside a compound command and with a path or .cmd suffix.
+        for c in ["npm test", "npx tsc", "bun run check", "bunx vitest", "pnpm lint", "yarn test", "cargo fmt && npm test", "C:\\x\\npm.cmd run lint"] {
+            assert!(install_command(&d, c).is_some(), "{c}");
+        }
+        assert!(!uses_js_runner("echo npmx && make"));
     }
 
     #[test]

@@ -8,10 +8,10 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TURN_ENDS, createHarness, sleep, uiHelpers } from "./e2e-harness.mjs";
+import { TURN_ENDS, createHarness, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
 const SANDBOX = process.env.ORBIT_GH_SANDBOX ?? "SGranquist13/orbit-e2e-sandbox";
-const scratch = path.resolve(process.argv[2] ?? ".e2e-github");
+const scratch = resolveScratch(process.argv[2], "orbit-e2e-github"); // must be outside any git repo
 const only = process.argv[3];
 const repo = path.join(scratch, "repo");
 const consumer = path.join(scratch, "consumer");

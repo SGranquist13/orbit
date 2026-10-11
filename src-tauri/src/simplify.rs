@@ -638,6 +638,7 @@ async fn apply_loop(app: AppHandle, state: AppState, ws_id: String, ids: Vec<Str
             }
         };
         set_row(&app, &ws_id, &id, |r| r.status = "editing".into());
+        eprintln!("simplify {ws_id}: editing `{}` ({})", c.title, c.id);
 
         // Register for the turn's end before sending, so a fast turn cannot slip past.
         let (tx, mut rx) = oneshot::channel();
@@ -667,6 +668,7 @@ async fn apply_loop(app: AppHandle, state: AppState, ws_id: String, ids: Vec<Str
             let _ = tokio::time::timeout(Duration::from_secs(20), &mut rx).await;
         }
         WAITERS.lock().unwrap_or_else(|p| p.into_inner()).remove(&ws_id);
+        eprintln!("simplify {ws_id}: turn for {id} ended (cancelled: {cancelled_now}, timed out: {timed_out}, got event: {})", end.is_some());
 
         let stop_reason = if cancelled_now || cancel.load(Ordering::SeqCst) {
             Some("cancelled".to_string())
@@ -1097,6 +1099,45 @@ mod tests {
         };
         let a = apply_prompt(&c);
         assert!(a.contains("Simplify: Flatten parse()") && a.contains("src/a.ts, lines 3-9") && a.contains("guard clauses") && a.contains("Do not commit"));
+    }
+
+    // ---- turn waiting ----
+
+    fn completed(is_error: bool, interrupted: bool) -> AgentEvent {
+        AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error, error: is_error.then(|| "boom".to_string()), interrupted }
+    }
+
+    fn register(ws: &str) -> oneshot::Receiver<TurnEnd> {
+        let (tx, rx) = oneshot::channel();
+        WAITERS.lock().unwrap().insert(ws.to_string(), tx);
+        rx
+    }
+
+    #[test]
+    fn a_waiting_apply_step_is_woken_by_its_workspace_turn_end_only() {
+        let (ws, other) = ("ws-wait-a", "ws-wait-b");
+        let mut rx = register(ws);
+        // Other workspaces' turns and non-terminal events leave the waiter alone.
+        on_event(other, &completed(false, false));
+        on_event(ws, &AgentEvent::UserMessage { text: "x".into(), skill: None });
+        assert!(rx.try_recv().is_err());
+        on_event(ws, &completed(false, false));
+        let end = rx.try_recv().expect("TurnCompleted wakes the step");
+        assert!(end.error.is_none() && !end.interrupted);
+        assert!(WAITERS.lock().unwrap().get(ws).is_none(), "the waiter is consumed");
+    }
+
+    #[test]
+    fn turn_failures_and_exits_reach_the_waiting_step() {
+        let mut rx = register("ws-wait-c");
+        on_event("ws-wait-c", &completed(true, false));
+        assert_eq!(rx.try_recv().unwrap().error.as_deref(), Some("boom"));
+        let mut rx = register("ws-wait-d");
+        on_event("ws-wait-d", &completed(false, true));
+        assert!(rx.try_recv().unwrap().interrupted);
+        let mut rx = register("ws-wait-e");
+        on_event("ws-wait-e", &AgentEvent::Exited { code: Some(1), stderr: String::new() });
+        assert_eq!(rx.try_recv().unwrap().error.as_deref(), Some("the agent exited"));
     }
 
     // ---- git behaviour on a real repo ----
