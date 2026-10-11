@@ -44,6 +44,20 @@ async function composerSend(text) {
 
 const turnEnds = TURN_ENDS;
 
+// Inbox helpers. Ctrl+I toggles, and a failed earlier step can leave the view open, so open it idempotently.
+const INBOX_JS = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
+    const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
+const ensureInbox = async () => {
+  if (!(await js(`${INBOX_JS} return !!inbox`))) await key("i", { ctrl: true });
+  await waitFor("inbox view", `${INBOX_JS} return !!inbox`, 5000);
+};
+// Focus follows the mouse (and moves to a neighbour after a send), so key shortcuts must name their row:
+// another workspace (e.g. the errored Codex one) can hold focus.
+const focusInboxRow = async (name) => {
+  await js(`${INBOX_JS} rows().find((li) => li.innerText.includes(${name}))?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
+  await waitFor("row focused", `${INBOX_JS} return rows().find((li) => li.innerText.includes(${name}))?.querySelectorAll('button').length >= 3`, 5000);
+};
+
 // ── Scenario ──────────────────────────────────────────────────
 fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(home, { recursive: true });
@@ -202,8 +216,7 @@ await step("inbox", async () => {
   const name = JSON.stringify(claudeWs.name.slice(0, 20));
   const row = (cond) => `${INBOX} return rows().some((li) => li.innerText.includes(${name}) && ${cond})`;
 
-  await key("i", { ctrl: true });
-  await waitFor("inbox view", `${INBOX} return !!inbox`, 5000);
+  await ensureInbox();
   // Work finishes in the background while the user is in the inbox.
   await invoke("send_message", { id: claudeWs.id, text: "Reply with exactly one word: ready" });
   await waitFor("finished row appears", row(`/Finished/.test(li.innerText)`), 120_000);
@@ -216,12 +229,14 @@ await step("inbox", async () => {
   await shot("11-inbox");
   // Rule chip 3 is "Summarize what changed" (the worktree has NOTES.md, so chip 1 is "Ship it").
   await js(`document.activeElement?.blur()`);
+  await focusInboxRow(name);
   await key("3");
   await waitFor("row leaves while the agent works", `${INBOX} return !rows().some((li) => li.innerText.includes(${name}) && /Finished/.test(li.innerText))`, 15_000);
   await waitFor("row comes back finished", row(`/Finished/.test(li.innerText)`), 120_000);
   const msg = await invoke("workspace_summary", { id: claudeWs.id });
   if (!/NOTES\.md/i.test(msg.lastAssistantText ?? "")) throw new Error(`summary turn answered: ${(msg.lastAssistantText ?? "").slice(0, 120)}`);
   await js(`document.activeElement?.blur()`);
+  await focusInboxRow(name);
   await key("e");
   await waitFor("dismissed", `${INBOX} return !rows().some((li) => li.innerText.includes(${name}) && /Finished/.test(li.innerText))`, 10_000);
   await key("i", { ctrl: true });
@@ -234,8 +249,7 @@ await step("inbox-snooze", async () => {
   const name = JSON.stringify(claudeWs.name.slice(0, 20));
   const inNeeds = `${INBOX} return rows().some((li) => li.innerText.includes(${name}))`;
 
-  await key("i", { ctrl: true });
-  await waitFor("inbox view", `${INBOX} return !!inbox`, 5000);
+  await ensureInbox();
   // The previous step dismissed it; new activity puts it back in "Needs you".
   await invoke("send_message", { id: claudeWs.id, text: "Reply with exactly one word: again" });
   await waitFor("row is in Needs you", `${inNeeds} && /Finished/.test(rows().find((li) => li.innerText.includes(${name})).innerText)`, 120_000);
@@ -245,6 +259,7 @@ await step("inbox-snooze", async () => {
   await invoke("snooze_workspace", { id: claudeWs.id, until: 0 });
   await waitFor("unsnoozed row is back", `${INBOX} return rows().some((li) => li.innerText.includes(${name}) && /Finished/.test(li.innerText))`, 10_000);
   await js(`document.activeElement?.blur()`);
+  await focusInboxRow(name);
   await key("e");
   await key("i", { ctrl: true });
 });

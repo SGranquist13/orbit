@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "app": "scripts/tauri.cmd dev",
     "app:build": "scripts/tauri.cmd build",
+    "check:guards": "scripts/cargo.cmd clippy",
     "e2e": "node scripts/e2e.mjs",
     "e2e:github": "node scripts/e2e-github.mjs"
   },

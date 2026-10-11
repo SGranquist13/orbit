@@ -1,3 +1,7 @@
+// Deadlock guard: `match state.db()...`/`if let ... = x.lock()...` keep the MutexGuard alive through the body.
+// Enforced by `bun run check:guards` (clippy); bind the value first.
+#![deny(clippy::significant_drop_in_scrutinee)]
+
 mod agent;
 mod checks;
 mod db;
@@ -86,7 +90,8 @@ impl Inner {
         if running {
             return;
         }
-        if let Some(h) = self.sessions.lock().unwrap().remove(workspace_id) {
+        let taken = self.sessions.lock().unwrap().remove(workspace_id);
+        if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
     }
@@ -127,6 +132,17 @@ fn emit_workspace(app: &AppHandle, ws: &Workspace) {
 
 /// Handles one normalized event: persist, update workspace status, notify, forward to UI.
 fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent) {
+    // The process died on its own (not our Shutdown, which has no exit code) while a turn was in flight:
+    // end that turn as an error first, so the UI, routines and Simplify never wait on a TurnCompleted
+    // that will not come.
+    if let AgentEvent::Exited { code: Some(code), stderr } = &ev {
+        let running = state.db().workspace(ws_id).map(|w| w.status == "running").unwrap_or(false);
+        if running {
+            let tail: String = stderr.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+            let error = format!("The agent exited (code {code}) before finishing the turn.{}", if tail.is_empty() { String::new() } else { format!("\n{tail}") });
+            on_agent_event(app, state, ws_id, AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: true, error: Some(error), interrupted: false });
+        }
+    }
     simplify::on_event(ws_id, &ev);
     let mut seq = None;
     let mut ts = db::now();
@@ -650,7 +666,8 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
     let ws = state.db().workspace(id)?;
     on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill });
     // Pending role hand-over note from a profile switch goes to the agent, not the transcript.
-    let payload = match state.role_notices.lock().unwrap().remove(id) {
+    let note = state.role_notices.lock().unwrap().remove(id);
+    let payload = match note {
         Some(note) => format!("{note}{payload}"),
         None => payload,
     };
@@ -835,7 +852,8 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
 /// Drops the agent session so the next message starts from a clean context in the same worktree.
 #[tauri::command]
 fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let ws = {
@@ -887,7 +905,8 @@ fn usage_report(state: State<AppState>, since_ms: Option<i64>) -> CmdResult<usag
 
 #[tauri::command]
 fn stop_session(state: State<AppState>, id: String) {
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
 }
@@ -914,7 +933,8 @@ async fn archive_workspace(state: State<'_, AppState>, id: String, remove_worktr
 
 pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: bool) -> CmdResult<()> {
     let id = id.to_string();
-    if let Some(h) = state.sessions.lock().unwrap().remove(&id) {
+    let taken = state.sessions.lock().unwrap().remove(&id);
+    if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let ws = state.db().workspace(&id).map_err(err)?;
@@ -1089,7 +1109,8 @@ async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> 
     for c in candidates {
         let Some(ws) = workspaces.iter().find(|w| w.id == c.workspace_id) else { continue };
         let Some(repo) = repos.iter().find(|r| r.id == ws.repo_id) else { continue };
-        if let Some(h) = state.sessions.lock().unwrap().remove(&ws.id) {
+        let taken = state.sessions.lock().unwrap().remove(&ws.id);
+        if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
         let (repo_path, wt) = (PathBuf::from(&repo.path), PathBuf::from(&ws.path));

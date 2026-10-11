@@ -169,7 +169,8 @@ pub fn on_event(ws_id: &str, ev: &AgentEvent) {
         AgentEvent::Exited { .. } => TurnEnd { error: Some("the agent exited".into()), interrupted: false },
         _ => return,
     };
-    if let Some(tx) = WAITERS.lock().unwrap_or_else(|p| p.into_inner()).remove(ws_id) {
+    let waiter = WAITERS.lock().unwrap_or_else(|p| p.into_inner()).remove(ws_id);
+    if let Some(tx) = waiter {
         let _ = tx.send(end);
     }
 }
@@ -753,7 +754,8 @@ async fn apply_loop(app: AppHandle, state: AppState, ws_id: String, ids: Vec<Str
         r.state.cancelled = r.cancel.load(Ordering::SeqCst);
     });
     // The branch moved (or was restored): refresh the row the UI shows.
-    if let Ok(w) = state.db().workspace(&ws_id) {
+    let row = state.db().workspace(&ws_id);
+    if let Ok(w) = row {
         emit_workspace(&app, &w);
     }
 }
@@ -932,7 +934,8 @@ pub fn run_summary(scope_files: usize, candidates: &[Candidate], rows: &[Row], d
 /// next (ship if anything was applied). Medium and high-risk candidates are never applied unattended.
 pub async fn run_unattended(app: &AppHandle, state: &AppState, ws_id: &str, days: u32) -> Outcome {
     let fail = |e: String| Outcome { applied: 0, summary: format!("Simplify failed: {e}"), error: Some(e) };
-    let ws = match state.db().workspace(ws_id) {
+    let found = state.db().workspace(ws_id);
+    let ws = match found {
         Ok(ws) => ws,
         Err(e) => return fail(err(e)),
     };
