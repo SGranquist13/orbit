@@ -738,6 +738,13 @@ fn finish_run_with(app: &AppHandle, state: &AppState, run: RoutineRun, ws_id: &s
         let fresh = routine.as_ref().is_some_and(|r| r.mode == Mode::Fresh);
         let probe = if fresh && f.status == "done" { probe_workspace(&state, &ws_id).await } else { None };
         let quiet = probe.as_ref().is_some_and(|p| is_quiet(Mode::Fresh, "done", p.files.len(), p.own_commits && !f.ignore_reflog));
+        match &probe {
+            Some(p) if !quiet && fresh && f.status == "done" => {
+                eprintln!("routine run {} not quiet: {} changed file(s), own commits: {}", run.id, p.files.len(), p.own_commits && !f.ignore_reflog)
+            }
+            None if fresh && f.status == "done" => eprintln!("routine run {} not quiet: git could not be probed", run.id),
+            _ => {}
+        }
         if quiet {
             if state.db().set_run_status_if(&run.id, "done", "quiet").unwrap_or(false) {
                 archive_quiet(&app, &state, &ws_id).await;
@@ -792,15 +799,35 @@ struct Probe {
     own_commits: bool,
 }
 
+/// Untracked housekeeping a coding agent leaves in a worktree (`.claude/settings.local.json`, ...) is not
+/// the run's work; everything tracked, and every other untracked file, is. (Git-ignored paths never
+/// show up in `git::changes` in the first place.)
+fn is_agent_housekeeping(c: &git::FileChange) -> bool {
+    c.untracked && [".claude/", ".codex/"].iter().any(|d| c.path.starts_with(d))
+}
+
+/// Paths a run changed, minus agent housekeeping.
+fn significant_files(changes: Vec<git::FileChange>) -> Vec<String> {
+    changes.into_iter().filter(|c| !is_agent_housekeeping(c)).map(|c| c.path).collect()
+}
+
 /// None when git can't tell us: better a visible run than a lost one.
 async fn probe_workspace(state: &AppState, ws_id: &str) -> Option<Probe> {
     let ws = state.db().workspace(ws_id).ok();
     let repo = ws.as_ref().and_then(|w| state.db().repo(&w.repo_id).ok());
     let (ws, repo) = (ws?, repo?);
-    let (path, base, repo_path, branch) = (PathBuf::from(&ws.path), repo.base_branch.clone(), PathBuf::from(&repo.path), ws.branch.clone());
+    let (path, base, branch) = (PathBuf::from(&ws.path), repo.base_branch.clone(), ws.branch.clone());
     tauri::async_runtime::spawn_blocking(move || {
-        let files = git::changes(&path, &base).ok()?.into_iter().map(|c| c.path).collect();
-        Some(Probe { files, own_commits: git::branch_has_own_commits(&repo_path, &branch) })
+        let files = significant_files(git::changes(&path, &base).ok()?);
+        // Commits on the branch that base lacks. The branch reflog is not a reliable signal: background
+        // sync rebases, resets and Simplify steps all write reflog entries without adding any work.
+        let ahead = crate::git::commits_ahead(&path, &crate::trunk::base_ref(&path, &base))?;
+        eprintln!(
+            "routine probe for {branch}: {} changed file(s) {:?}, {ahead} commit(s) ahead of {base}",
+            files.len(),
+            files.iter().take(5).collect::<Vec<_>>()
+        );
+        Some(Probe { files, own_commits: ahead > 0 })
     })
     .await
     .ok()
@@ -1100,6 +1127,19 @@ mod tests {
         // Busy routines are skipped without using a slot.
         let busy = |r: &Routine| r.id == "older";
         assert_eq!(plan_tick(&list, 1_000, 1, 2, &busy), vec![("older".into(), Due::Skip), ("late".into(), Due::Start)]);
+    }
+
+    #[test]
+    fn agent_housekeeping_does_not_count_as_changes() {
+        let fc = |path: &str, untracked: bool| git::FileChange { path: path.into(), additions: 1, deletions: 0, untracked };
+        let files = significant_files(vec![
+            fc(".claude/settings.local.json", true),
+            fc(".codex/state", true),
+            fc("src/a.rs", false),
+            fc("notes.md", true),
+            fc(".claude/commands/x.md", false), // tracked: a real edit
+        ]);
+        assert_eq!(files, ["src/a.rs", "notes.md", ".claude/commands/x.md"]);
     }
 
     #[test]

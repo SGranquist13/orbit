@@ -31,6 +31,45 @@ pub fn toplevel(path: &Path) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(run(path, &["rev-parse", "--show-toplevel"])?))
 }
 
+/// Where an attached folder sits in its repository, for making it editable: `(repo toplevel, path of
+/// the folder relative to it)` (empty for the root). A folder merely *inside* some parent repo is
+/// only accepted when that repo actually tracks it (it has tracked files and is not git-ignored):
+/// otherwise a worktree of the parent would contain none of it (e.g. a scratch dir under a repo's
+/// ignored `.e2e/`). A tracked subfolder (monorepo package) is fine; its worktree is the whole repo.
+pub fn editable_location(folder: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let top = toplevel(folder).map_err(|_| "Only git repositories can be made editable".to_string())?;
+    let (cf, ct) = (crate::related::canonical(folder), crate::related::canonical(&top));
+    let rel = match cf.strip_prefix(&ct) {
+        Ok(r) => r.to_path_buf(),
+        Err(_) => {
+            // Windows drive-letter case or 8.3 differences: compare case-insensitively as strings.
+            let (a, b) = (cf.to_string_lossy().to_lowercase(), ct.to_string_lossy().to_lowercase());
+            match a.strip_prefix(&b) {
+                Some(r) => PathBuf::from(r.trim_start_matches(['/', '\\'])),
+                None => return Err("Only git repositories can be made editable".into()),
+            }
+        }
+    };
+    if rel.as_os_str().is_empty() {
+        return Ok((top, rel));
+    }
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    let not_repo = || {
+        format!(
+            "Only git repositories can be made editable: this folder is inside {} but is not tracked by it (ignored or untracked); attach the repository itself",
+            top.display()
+        )
+    };
+    // `check-ignore -q` exits 0 when ignored, 1 when not; any other failure leaves us to ls-files.
+    if run(&top, &["check-ignore", "-q", "--", &rel_str]).is_ok() {
+        return Err(not_repo());
+    }
+    match run(&top, &["ls-files", "--", &rel_str]) {
+        Ok(s) if !s.is_empty() => Ok((top, rel)),
+        _ => Err(not_repo()),
+    }
+}
+
 /// `origin/HEAD` if known, else `main`/`master` if present, else the current branch.
 pub fn default_branch(repo: &Path) -> String {
     if let Ok(r) = run(repo, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
@@ -106,6 +145,11 @@ pub fn merged_branches(repo: &Path, base: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Commits reachable from HEAD but not from `base_ref`: the work this branch added. None when git can't say.
+pub fn commits_ahead(worktree: &Path, base_ref: &str) -> Option<u32> {
+    run(worktree, &["rev-list", "--count", &format!("{base_ref}..HEAD")]).ok()?.trim().parse().ok()
+}
+
 /// True if the branch ever moved past its creation (a fresh branch is trivially "merged" into its base).
 pub fn branch_has_own_commits(repo: &Path, branch: &str) -> bool {
     run(repo, &["reflog", "show", "--format=%gs", &format!("refs/heads/{branch}")])
@@ -176,6 +220,74 @@ mod tests {
         assert_eq!(slugify("Fix Onboarding Crash!"), "fix-onboarding-crash");
         assert_eq!(slugify("  --  "), "task");
         assert_eq!(slugify("a/b_c"), "a-b-c");
+    }
+
+    fn tmp_repo(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("orbit-git-{name}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        run(&d, &["init", "-q", "-b", "main"]).unwrap();
+        d
+    }
+
+    fn commit_all(d: &Path) {
+        run(d, &["add", "-A"]).unwrap();
+        run(d, &["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-qm", "init"]).unwrap();
+    }
+
+    #[test]
+    fn editable_location_root_tracked_subfolder_and_ignored_subfolder() {
+        let d = tmp_repo("editable");
+        std::fs::create_dir_all(d.join("packages/app")).unwrap();
+        std::fs::write(d.join("packages/app/index.js"), "x").unwrap();
+        std::fs::write(d.join(".gitignore"), ".scratch/\n").unwrap();
+        std::fs::create_dir_all(d.join(".scratch/consumer")).unwrap();
+        std::fs::write(d.join(".scratch/consumer/a.txt"), "x").unwrap();
+        std::fs::create_dir_all(d.join("newdir")).unwrap();
+        std::fs::write(d.join("newdir/b.txt"), "x").unwrap();
+        commit_all(&d);
+        std::fs::create_dir_all(d.join("untracked")).unwrap();
+        std::fs::write(d.join("untracked/c.txt"), "x").unwrap();
+
+        // The repository root.
+        let (top, rel) = editable_location(&d).unwrap();
+        assert!(rel.as_os_str().is_empty());
+        assert_eq!(crate::related::canonical(&top), crate::related::canonical(&d));
+        // A tracked monorepo package: allowed, with its relative path.
+        let (_, rel) = editable_location(&d.join("packages").join("app")).unwrap();
+        assert_eq!(rel.to_string_lossy().replace('\\', "/"), "packages/app");
+        // Git-ignored and untracked folders inside the repo are not git repositories of their own.
+        for bad in [".scratch/consumer", "untracked"] {
+            let e = editable_location(&d.join(bad)).unwrap_err();
+            assert!(e.contains("Only git repositories"), "{bad}: {e}");
+        }
+        // A folder outside any repo.
+        let plain = std::env::temp_dir().join(format!("orbit-git-plain-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&plain).unwrap();
+        assert!(editable_location(&plain).unwrap_err().contains("Only git repositories"));
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&plain);
+    }
+
+    #[test]
+    fn commits_ahead_ignores_reflog_noise() {
+        let d = tmp_repo("ahead");
+        std::fs::write(d.join("a.txt"), "1").unwrap();
+        commit_all(&d);
+        run(&d, &["checkout", "-q", "-b", "work"]).unwrap();
+        assert_eq!(commits_ahead(&d, "main"), Some(0));
+        // A commit that is then thrown away leaves reflog entries but no work.
+        std::fs::write(d.join("b.txt"), "2").unwrap();
+        run(&d, &["add", "-A"]).unwrap();
+        run(&d, &["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-qm", "tmp"]).unwrap();
+        run(&d, &["reset", "-q", "--hard", "HEAD~1"]).unwrap();
+        assert!(branch_has_own_commits(&d, "work"), "the reflog does see the noise");
+        assert_eq!(commits_ahead(&d, "main"), Some(0), "but the branch added nothing");
+        std::fs::write(d.join("c.txt"), "3").unwrap();
+        run(&d, &["add", "-A"]).unwrap();
+        run(&d, &["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-qm", "real"]).unwrap();
+        assert_eq!(commits_ahead(&d, "main"), Some(1));
+        assert_eq!(commits_ahead(&d, "no-such-ref"), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

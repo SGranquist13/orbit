@@ -562,8 +562,10 @@ async fn detach_folder(state: State<'_, AppState>, id: String) -> CmdResult<()> 
             if !git::is_clean(&wt) {
                 return Err(format!("{name} has uncommitted changes in its worktree; commit or discard them first"));
             }
+            // `wt` may be a subfolder of the worktree; remove the whole worktree it belongs to.
             let top = git::toplevel(&origin).map_err(err)?;
-            git::remove_worktree(&top, &wt).map_err(err)
+            let wt_root = git::toplevel(&wt).map_err(err)?;
+            git::remove_worktree(&top, &wt_root).map_err(err)
         })
         .await
         .map_err(err)??;
@@ -580,7 +582,8 @@ async fn set_attachment_editable(state: State<'_, AppState>, id: String, editabl
     if editable && a.worktree_path.is_none() {
         let ws = state.db().workspace(&a.workspace_id).map_err(err)?;
         let origin = PathBuf::from(&a.path);
-        let top = git::toplevel(&origin).map_err(|_| "Only git repositories can be made editable".to_string())?;
+        // The folder must be a repo root, or a subfolder the repo tracks (monorepo package).
+        let (top, rel) = git::editable_location(&origin)?;
         let repo_name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| a.name.clone());
         // Same naming as `create_workspace`: unique suffix, worktree under ~/.orbit/worktrees/<repo>.
         let suffix = &uuid::Uuid::new_v4().simple().to_string()[..4];
@@ -595,7 +598,8 @@ async fn set_attachment_editable(state: State<'_, AppState>, id: String, editabl
         .await
         .map_err(err)?
         .map_err(err)?;
-        created = Some((path.to_string_lossy().to_string(), branch));
+        // For a subfolder the attachment points at the same subfolder inside the new worktree.
+        created = Some((path.join(&rel).to_string_lossy().to_string(), branch));
     }
     // Disabling keeps the worktree so no work is lost.
     let updated = state
@@ -650,11 +654,17 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
         Some(note) => format!("{note}{payload}"),
         None => payload,
     };
-    let handle = ensure_session(app, state, &ws)?;
+    // A session that cannot start (binary missing, bad cwd) must end the turn visibly: the message is
+    // already in the transcript, and callers waiting for TurnCompleted (Simplify, routines) would hang.
+    let fail = |e: anyhow::Error| {
+        on_agent_event(app, state, id, AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: true, error: Some(e.to_string()), interrupted: false });
+        e
+    };
+    let handle = ensure_session(app, state, &ws).map_err(fail)?;
     if !handle.send(Command::User(payload.clone())) {
         // Session died between lookup and send: drop it and retry once with a fresh process.
         state.sessions.lock().unwrap().remove(id);
-        ensure_session(app, state, &ws)?.send(Command::User(payload));
+        ensure_session(app, state, &ws).map_err(fail)?.send(Command::User(payload));
     }
     let ws = state.db().set_status(id, "running")?;
     emit_workspace(app, &ws);
