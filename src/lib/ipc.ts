@@ -424,8 +424,8 @@ export interface RemoteDevice {
 
 /** Output of `environment_info`: each tool is probed independently, so any may be missing. */
 export interface EnvironmentInfo {
-  claude: { path: string | null; version: string | null; ok: boolean };
-  codex: { path: string | null; version: string | null; loggedIn: boolean };
+  claude: { path: string | null; version: string | null; ok: boolean; error?: string | null };
+  codex: { path: string | null; version: string | null; loggedIn: boolean; error?: string | null };
   gh: { path: string | null; version: string | null; user: string | null; scopes: string[] };
   git: { path: string | null; version: string | null };
   orbitHome: string;

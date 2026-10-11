@@ -13,6 +13,8 @@ pub struct ClaudeInfo {
     pub path: Option<String>,
     pub version: Option<String>,
     pub ok: bool,
+    /// Why no verified binary was found (e.g. the first `claude` on PATH is not Claude Code).
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -21,6 +23,7 @@ pub struct CodexInfo {
     pub path: Option<String>,
     pub version: Option<String>,
     pub logged_in: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -63,8 +66,12 @@ async fn probe(bin: &str, args: &[&str], cwd: &Path) -> Option<(bool, String)> {
     Some((out.status.success(), text))
 }
 
-fn path_of(bin: &str) -> Option<String> {
-    process::resolve(bin).ok().map(|p| p.display().to_string())
+/// The verified path (agent CLIs are checked by `--version`, see `process::resolve`) or why there is none.
+fn path_of(bin: &str) -> (Option<String>, Option<String>) {
+    match process::resolve(bin) {
+        Ok(p) => (Some(p.display().to_string()), None),
+        Err(e) => (None, Some(e.to_string())),
+    }
 }
 
 /// First `x.y.z` looking token in the text.
@@ -99,15 +106,18 @@ pub async fn environment_info(home: &Path) -> EnvironmentInfo {
         probe("git", &["--version"], home),
     );
     let ver = |p: &Option<(bool, String)>| p.as_ref().filter(|(ok, _)| *ok).and_then(|(_, t)| parse_version(t));
+    let (claude_path, claude_error) = path_of("claude");
+    let (codex_path, codex_error) = path_of("codex");
     EnvironmentInfo {
-        claude: ClaudeInfo { path: path_of("claude"), version: ver(&claude_v), ok: claude_v.as_ref().is_some_and(|(ok, _)| *ok) },
+        claude: ClaudeInfo { path: claude_path, version: ver(&claude_v), ok: claude_v.as_ref().is_some_and(|(ok, _)| *ok), error: claude_error },
         codex: CodexInfo {
-            path: path_of("codex"),
+            path: codex_path,
+            error: codex_error,
             version: ver(&codex_v),
             logged_in: codex_login.as_ref().is_some_and(|(ok, t)| *ok && t.to_lowercase().contains("logged in")),
         },
         gh: GhInfo {
-            path: path_of("gh"),
+            path: path_of("gh").0,
             version: ver(&gh_v),
             user: gh_user
                 .filter(|(ok, _)| *ok)
@@ -115,7 +125,7 @@ pub async fn environment_info(home: &Path) -> EnvironmentInfo {
                 .filter(|u| !u.is_empty()),
             scopes: gh_status.map(|(_, t)| parse_scopes(&t)).unwrap_or_default(),
         },
-        git: GitInfo { path: path_of("git"), version: ver(&git_v) },
+        git: GitInfo { path: path_of("git").0, version: ver(&git_v) },
         orbit_home: home.display().to_string(),
         db_size_bytes: std::fs::metadata(home.join("state.db")).map(|m| m.len()).unwrap_or(0),
         worktree_count: count_worktrees(&home.join("worktrees")),
