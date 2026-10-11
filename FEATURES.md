@@ -63,7 +63,7 @@ _Last verified: 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) an
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Claude Code via stream-json (streaming, tool calls) | P1 | ✅ | |
-| Codex via app-server | P1 | ✅ | |
+| Codex via app-server | P1 | ✅ | Binary lookup prefers a native codex.exe (PATH, or the one behind an npm shim, then the Codex app build, then ~/.codex/.sandbox-bin, then the VS Code extension); a process that exits mid-turn ends the turn as an error |
 | Streaming text with caret, "Thinking" indicator | P1 | ✅ | |
 | Tool calls folded into "N tool calls" groups, expandable with output | P1 | ✅ | |
 | Follow-up messages in the same session | P1 | ✅ | |
