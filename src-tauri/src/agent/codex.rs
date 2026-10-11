@@ -242,6 +242,10 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
         let mut rpc = Rpc { stdin, next_id: 0, pending: HashMap::new() };
         let mut st = State { cfg, thread_id: None, turn_id: None, turn_starting: false, queued: vec![], parser: CodexParser::default() };
         let mut tail = Vec::new();
+        // So an early exit says which binary it was (shows in the error turn and the transcript).
+        if let Ok(p) = process::resolve("codex") {
+            tail.push(format!("[orbit] codex binary: {}", p.display()));
+        }
 
         rpc.request(
             "initialize",
