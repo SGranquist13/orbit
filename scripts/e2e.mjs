@@ -5,18 +5,24 @@
 //
 //   1. `bun run dev` (Vite on :1420; the debug build loads the UI from it)
 //   2. build once: cmd //c "scripts\\cargo.cmd build"
-//   3. node scripts/e2e.mjs <scratch-dir> [step]
+//   3. node scripts/e2e.mjs [scratch-dir] [step]
 //
-// <scratch-dir> gets a fresh `home/` (ORBIT_HOME) and `repo/` (a local git repo, no remote),
+// Single step: `node scripts/e2e.mjs trunk-save-points`. <scratch-dir> defaults to <os tmpdir>/orbit-e2e and must be OUTSIDE any git repo (checked: git would
+// resolve plain folders in it to the enclosing repo). A single step runs after the cheap prerequisites
+// (boots-real-backend, add-repo); steps needing workspaces from earlier steps fail fast with
+// "needs the full suite". It gets a fresh `home/` (ORBIT_HOME) and `repo/` (a local git repo, no remote),
 // so the user's real ~/.orbit state is never touched. Screenshots land in <scratch-dir>/shots.
 
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TURN_ENDS, createHarness, sleep, uiHelpers } from "./e2e-harness.mjs";
+import { TURN_ENDS, createHarness, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
-const scratch = path.resolve(process.argv[2] ?? "e2e-scratch");
-const only = process.argv[3]; // optional: run a single step by name
+// `node scripts/e2e.mjs [scratch-dir] [step]`; a lone argument without path characters is a step name.
+const args = process.argv.slice(2);
+const stepOnly = args.length === 1 && !/[\\/:.]/.test(args[0]);
+const scratch = resolveScratch(stepOnly ? undefined : args[0], "orbit-e2e");
+const only = stepOnly ? args[0] : args[1]; // optional: run a single step by name
 const h = createHarness({ scratch, only });
 const ui = uiHelpers(h);
 const { home, launch, quit, cdp, js, waitFor, until, key, type, shot, invoke, step } = h;
@@ -59,6 +65,13 @@ console.log(`Real-app e2e — scratch: ${scratch}`);
 await launch();
 await cdp("Runtime.enable");
 
+/** The first Claude workspace, made by claude-workspace-turn; single-step runs don't have one. */
+const needClaudeWs = async (stepName, pred = (w) => w.agent === "claude") => {
+  const ws = (await invoke("list_workspaces")).find(pred);
+  if (!ws) throw new Error(`step "${stepName}" needs the full suite (run without a step argument): no workspace from an earlier step`);
+  return ws;
+};
+
 await step("boots-real-backend", async () => {
   const info = await js(`return { tauri: 'isTauri' in window, theme: document.documentElement.dataset.theme, title: document.title }`);
   if (!info.tauri) throw new Error("not running inside Tauri (mock?)");
@@ -66,14 +79,14 @@ await step("boots-real-backend", async () => {
   if (!packs.some((p) => p.name === "shipkit" && p.builtin)) throw new Error("shipkit not installed into ORBIT_HOME");
   if (packs.length !== 1) throw new Error(`expected only shipkit, got ${packs.map((p) => p.name)}`);
   await shot("01-empty");
-});
+}, { always: true });
 
 await step("add-repo", async () => {
   await invoke("add_repo", { path: repo }); // the UI path uses a native folder picker
   await js(`location.reload()`);
   await sleep(1500);
   await waitFor("repo in sidebar", `return document.body.innerText.toUpperCase().includes('REPO')`, 10_000);
-});
+}, { always: true });
 
 await step("claude-workspace-turn", async () => {
   await newWorkspace({
@@ -94,17 +107,19 @@ await step("claude-workspace-turn", async () => {
 });
 
 await step("worktree-on-disk", async () => {
-  const ws = (await invoke("list_workspaces"))[0];
+  const ws = await needClaudeWs("worktree-on-disk");
   if (!fs.existsSync(path.join(ws.path, "NOTES.md"))) throw new Error(`NOTES.md missing in worktree ${ws.path}`);
   if (fs.existsSync(path.join(repo, "NOTES.md"))) throw new Error("agent wrote to the main checkout, not the worktree");
 });
 
 await step("pr-panel-without-remote", async () => {
+  await needClaudeWs("pr-panel-without-remote");
   await ui.openShip();
   await waitFor("no-PR state", `return document.body.innerText.includes('No pull request for this branch yet')`, 20_000);
 });
 
 await step("follow-up-message", async () => {
+  await needClaudeWs("follow-up-message");
   const before = await js(turnEnds);
   await composerSend("What is the exact content of NOTES.md? Answer with just the content.");
   await waitFor("second turn", `${turnEnds} > ${before}`, 120_000);
@@ -113,6 +128,7 @@ await step("follow-up-message", async () => {
 });
 
 await step("slash-autocomplete-and-skill", async () => {
+  await needClaudeWs("slash-autocomplete-and-skill");
   await js(`document.querySelector('textarea[placeholder*="Claude"]').focus()`);
   await type("/rebase");
   await waitFor("autocomplete popup", `return [...document.querySelectorAll('ul li button')].some(b => b.innerText.includes('/shipkit:rebase'))`, 5000);
@@ -133,6 +149,7 @@ await step("slash-autocomplete-and-skill", async () => {
 });
 
 await step("interrupt", async () => {
+  await needClaudeWs("interrupt");
   const before = await js(turnEnds);
   await composerSend("Count slowly from 1 to 400, one number per line, no tools.");
   await waitFor("streaming started", `return !!document.querySelector('.streaming-caret') || !!document.querySelector('.dither-march')`, 60_000);
@@ -181,7 +198,7 @@ await step("packs-dialog", async () => {
 await step("inbox", async () => {
   const INBOX = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
     const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
-  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  const claudeWs = await needClaudeWs("inbox");
   const name = JSON.stringify(claudeWs.name.slice(0, 20));
   const row = (cond) => `${INBOX} return rows().some((li) => li.innerText.includes(${name}) && ${cond})`;
 
@@ -213,7 +230,7 @@ await step("inbox", async () => {
 await step("inbox-snooze", async () => {
   const INBOX = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
     const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
-  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  const claudeWs = await needClaudeWs("inbox-snooze");
   const name = JSON.stringify(claudeWs.name.slice(0, 20));
   const inNeeds = `${INBOX} return rows().some((li) => li.innerText.includes(${name}))`;
 
@@ -233,7 +250,7 @@ await step("inbox-snooze", async () => {
 });
 
 await step("attached-folders", async () => {
-  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  const claudeWs = await needClaudeWs("attached-folders");
   const norm = (p) => p.split("\\").join("/").toLowerCase();
   const found = await invoke("discover_related", { workspaceId: claudeWs.id });
   if (!found.some((r) => norm(r.path) === norm(consumer) && r.relation === "dependent")) {
@@ -378,7 +395,7 @@ await step("local-model-suggestions", async () => {
   const model = models.find((m) => m.name === "llama3.2:3b") ?? models[0];
   const status = await invoke("local_models_status");
   if (!status.ollama.running || !status.ollama.models.some((m) => m.name === model.name)) throw new Error("status does not list the Ollama model");
-  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude");
+  const claudeWs = await needClaudeWs("local-model-suggestions");
   await invoke("update_settings", { patch: { modelSuggestions: `local:${model.name}`, localTimeoutSecs: 120 } });
   try {
     const out = await invoke("suggest_prompts", { id: claudeWs.id, reason: "Finished", offered: [] });
@@ -443,7 +460,7 @@ await step("simplify", async () => {
 
   const repoRow = (await invoke("list_repos"))[0];
   await invoke("set_check_command", { repoId: repoRow.id, cmd: "node shipping.test.js" });
-  await invoke("update_settings", { patch: { simplifyModel: "haiku" } });
+  await invoke("update_settings", { patch: { simplifyModel: "haiku", simplifyMaxCandidates: 3 } });
 
   await invoke("simplify_find", { workspaceId: ws.id });
   let st;
@@ -459,8 +476,19 @@ await step("simplify", async () => {
   await waitFor("candidates listed in the panel", `return document.body.innerText.includes(${JSON.stringify(st.candidates[0].title.slice(0, 20))})`, 10_000);
   await shot("15-simplify-ready");
 
-  await invoke("simplify_apply", { workspaceId: ws.id, candidateIds: st.candidates.map((c) => c.id) });
-  await h.until("apply finished", async () => (await invoke("simplify_state", { workspaceId: ws.id })).phase === "done", 600_000, 3000);
+  // Two candidates are enough to prove the loop (each is a real haiku turn plus a check run).
+  await invoke("simplify_apply", { workspaceId: ws.id, candidateIds: st.candidates.slice(0, 2).map((c) => c.id) });
+  await h.until(
+    "apply finished",
+    async () => {
+      const s = await invoke("simplify_state", { workspaceId: ws.id });
+      if (s.phase === "done") return true;
+      process.stdout.write(`      apply: ${s.rows.map((r) => r.status).join(", ")}\r`);
+      return false;
+    },
+    480_000,
+    3000,
+  );
   st = await invoke("simplify_state", { workspaceId: ws.id });
   await shot("16-simplify-done");
 
@@ -475,7 +503,7 @@ await step("simplify", async () => {
   execFileSync("node", ["shipping.test.js"], { cwd: ws.path }); // behaviour preserved
   if (wipHead === g("rev-parse", "HEAD")) throw new Error("HEAD did not move");
   await invoke("set_check_command", { repoId: repoRow.id, cmd: null });
-  await invoke("update_settings", { patch: { simplifyModel: "sonnet" } });
+  await invoke("update_settings", { patch: { simplifyModel: "sonnet", simplifyMaxCandidates: 12 } });
 });
 
 await step("resume-after-restart", async () => {
@@ -483,7 +511,7 @@ await step("resume-after-restart", async () => {
   await launch();
   await cdp("Runtime.enable");
   // Not the profiles step's workspace, which is also Claude and now the most recently updated.
-  const claudeWs = (await invoke("list_workspaces")).find((w) => w.agent === "claude" && w.name.includes("NOTES.md"));
+  const claudeWs = await needClaudeWs("resume-after-restart", (w) => w.agent === "claude" && w.name.includes("NOTES.md"));
   await waitFor("sidebar loaded", `return !!document.querySelector('aside li button')`, 15_000);
   await js(`[...document.querySelectorAll('aside li button')].find(b => b.innerText.includes(${JSON.stringify(claudeWs.name.slice(0, 20))})).click()`);
   await waitFor("history restored", `return document.querySelectorAll('.prose-chat').length >= 2`, 15_000);

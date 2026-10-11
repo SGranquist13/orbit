@@ -1,12 +1,36 @@
 // Shared driver for Orbit's real-app e2e scripts: launches the debug build with WebView2 remote
 // debugging, talks CDP, and records step results. Each scenario script creates one harness.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Resolves the scratch dir. Default: <tmpdir>/<name> (outside any git repo); an explicit CLI arg
+ * overrides. Aborts when the dir is inside a git work tree: git would resolve "plain" folders in
+ * it to the enclosing repo (e.g. Orbit's own), and Orbit would create real worktrees of that repo.
+ */
+export function resolveScratch(arg, name) {
+  const scratch = path.resolve(arg ?? path.join(os.tmpdir(), name));
+  assertOutsideGit(scratch);
+  return scratch;
+}
+
+export function assertOutsideGit(dir) {
+  let probe = dir;
+  while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  let top = "";
+  try {
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: probe, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return; // not a work tree (or git missing): fine
+  }
+  if (top) throw new Error(`e2e scratch dir ${dir} is inside the git work tree ${top}; pass a scratch path outside any repo (default: the OS temp dir)`);
+}
 
 export function createHarness({ scratch, port = 9333, only }) {
   const exe = path.join(root, "src-tauri", "target", "debug", "orbit.exe");
@@ -139,8 +163,9 @@ export function createHarness({ scratch, port = 9333, only }) {
     await js(`window.__ORBIT_AUTOCONFIRM__ = ${answer}; return true;`);
   }
 
-  async function step(name, fn) {
-    if (only && only !== name) return;
+  /** opts.always: runs even when a single step is selected (cheap prerequisites). */
+  async function step(name, fn, opts = {}) {
+    if (only && only !== name && !opts.always) return;
     const t0 = Date.now();
     try {
       await fn();
@@ -176,8 +201,17 @@ export function uiHelpers(h) {
    */
   async function newWorkspace({ prompt, agent = "claude", model, profile }) {
     const known = new Set((await h.invoke("list_workspaces")).map((w) => w.id));
+    const dialog = `return !!document.querySelector('textarea[placeholder^="Describe the task"]')`;
+    // A CDP key event can be lost right after a reload or a focus change; retry once through the same
+    // window handler (App.tsx) with the page's focus cleared, and say what was on screen if it still fails.
     await h.key("n", { ctrl: true });
-    await h.waitFor("new workspace dialog", `return !!document.querySelector('textarea[placeholder^="Describe the task"]')`, 5000);
+    if (!(await h.until("new workspace dialog (key)", async () => h.js(dialog), 3000, 250).catch(() => false))) {
+      await h.js(`document.activeElement?.blur(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true })); return true`);
+    }
+    await h.waitFor("new workspace dialog", dialog, 5000).catch(async (e) => {
+      const seen = await h.js(`return { active: document.activeElement?.tagName, overlays: [...document.querySelectorAll('.fixed.inset-0')].map((e) => e.innerText.slice(0, 40)), h1: document.querySelector('h1')?.innerText }`);
+      throw new Error(`${e.message} (page: ${JSON.stringify(seen)})`);
+    });
     await h.js(`document.querySelector('textarea[placeholder^="Describe the task"]').focus()`);
     await h.type(prompt);
     await h.js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === ${JSON.stringify(agent === "codex" ? "Codex" : "Claude")})?.click()`);
