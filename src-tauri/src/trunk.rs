@@ -568,10 +568,11 @@ pub(crate) async fn prepare_ship_inner(app: &AppHandle, state: &AppState, worksp
     let mut result = None;
     if skip_checks {
         if ws.checks_failed {
-            if let Ok(true) = state.db().clear_checks_failed(&ws.id) {
-                if let Ok(w) = state.db().workspace(&ws.id) {
-                    emit_workspace(app, &w);
-                }
+            // Bind first: an `if let` keeps the db guard alive through its body (edition 2021).
+            let cleared = state.db().clear_checks_failed(&ws.id).unwrap_or(false);
+            let updated = if cleared { state.db().workspace(&ws.id).ok() } else { None };
+            if let Some(w) = updated {
+                emit_workspace(app, &w);
             }
         }
     } else if settings.checks_mode != "off" {

@@ -607,13 +607,10 @@ fn finish_step(wt: &Path, pre: &str, title: &str, check: impl FnOnce() -> (Check
 }
 
 async fn apply_loop(app: AppHandle, state: AppState, ws_id: String, ids: Vec<String>, cancel: Arc<AtomicBool>, wake: Arc<Notify>) {
-    let (ws, cmd) = match state.db().workspace(&ws_id) {
-        Ok(ws) => {
-            let cmd = trunk::resolve_command(&state, &ws);
-            (ws, cmd)
-        }
-        Err(_) => return,
-    };
+    // Bind first: a `match state.db()…` keeps the db guard alive through its arms, and
+    // `resolve_command` locks db again (the non-reentrant mutex would deadlock the app).
+    let Ok(ws) = state.db().workspace(&ws_id) else { return };
+    let cmd = trunk::resolve_command(&state, &ws);
     let wt = PathBuf::from(&ws.path);
     let candidates: Vec<Candidate> = runs().get(&ws_id).map(|r| r.state.candidates.clone()).unwrap_or_default();
 
