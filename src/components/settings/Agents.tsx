@@ -104,14 +104,14 @@ export function Agents() {
             <ToolRow
               name="Claude Code"
               tone={claudeTone(info.claude)}
-              status={info.claude.ok ? `v${info.claude.version ?? "?"}` : info.claude.path ? "Found, but did not run" : "Not found on PATH"}
-              detail={info.claude.path}
+              status={info.claude.ok ? `v${info.claude.version ?? "?"}` : info.claude.path ? "Found, but did not run" : info.claude.error ? "Not verified" : "Not found on PATH"}
+              detail={info.claude.path ?? info.claude.error}
             />
             <ToolRow
               name="Codex"
               tone={codexTone(info.codex)}
-              status={!info.codex.path ? "Not found on PATH" : `${info.codex.version ? `v${info.codex.version}` : "Installed"}, ${info.codex.loggedIn ? "signed in" : "not signed in"}`}
-              detail={info.codex.path}
+              status={!info.codex.path ? (info.codex.error ? "Not verified" : "Not found on PATH") : `${info.codex.version ? `v${info.codex.version}` : "Installed"}, ${info.codex.loggedIn ? "signed in" : "not signed in"}`}
+              detail={info.codex.path ?? info.codex.error}
             />
             <ToolRow name="git" tone={info.git.version ? "ok" : "bad"} status={info.git.version ? `v${info.git.version}` : "Not found on PATH"} detail={info.git.path} />
           </>
