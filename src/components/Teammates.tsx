@@ -7,7 +7,7 @@ import { api, type AgentKind, type PlanView, type Teammate, type TeammateMessage
 import { defaultModelFor, modelsFor } from "../lib/settings";
 import { rememberedTeammate } from "../lib/lastTeammate";
 import { useApp } from "../stores/app";
-import { AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
+import { AVATAR_ACCESSORIES, AVATAR_BADGES, AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
 import { TeammateAvatar } from "./TeammateAvatar";
 import { BriefBlock, HandoffChips, HandoffLine, OriginLabel, PlanCard, RoutinesLine, ScheduleButton } from "./TeammateExtras";
 import { AgentIcon, Button, Kbd, TeammateDot, agentLabel, cn } from "./ui";
@@ -700,7 +700,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
   );
 }
 
-/** Shape, colour and expression rows with a live preview and a Shuffle button. */
+/** Shape, colour, expression, badge and accessory rows with a live preview and a Shuffle button. */
 function AvatarPicker({ value, onChange }: { value: AvatarSpec; onChange: (a: AvatarSpec) => void }) {
   const chip = (on: boolean) => cn("grid place-items-center rounded-[5px] border-[1.5px] transition-colors", on ? "border-fg bg-raised" : "border-transparent hover:bg-hover");
   return (
@@ -738,7 +738,27 @@ function AvatarPicker({ value, onChange }: { value: AvatarSpec; onChange: (a: Av
           <div className="flex flex-wrap gap-1">
             {AVATAR_EXPRESSIONS.map((expression) => (
               <button key={expression} title={expression} aria-label={expression} aria-pressed={value.expression === expression} onClick={() => onChange({ ...value, expression })} className={cn(chip(value.expression === expression), "size-8")}>
-                <TeammateAvatar spec={{ ...value, expression }} size={22} />
+                <TeammateAvatar spec={{ ...value, expression, badge: null, accessory: null }} size={22} />
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button title="No badge" aria-label="No badge" aria-pressed={value.badge === null} onClick={() => onChange({ ...value, badge: null })} className={cn(chip(value.badge === null), "h-8 px-2 text-[11px] text-mute")}>
+              No badge
+            </button>
+            {AVATAR_BADGES.map((badge) => (
+              <button key={badge} title={badge} aria-label={badge} aria-pressed={value.badge === badge} onClick={() => onChange({ ...value, badge })} className={cn(chip(value.badge === badge), "size-8")}>
+                <TeammateAvatar spec={{ ...value, badge, accessory: null }} size={26} />
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <button title="No accessory" aria-label="No accessory" aria-pressed={value.accessory === null} onClick={() => onChange({ ...value, accessory: null })} className={cn(chip(value.accessory === null), "h-8 px-2 text-[11px] text-mute")}>
+              No accessory
+            </button>
+            {AVATAR_ACCESSORIES.map((accessory) => (
+              <button key={accessory} title={accessory} aria-label={accessory} aria-pressed={value.accessory === accessory} onClick={() => onChange({ ...value, accessory })} className={cn(chip(value.accessory === accessory), "size-8")}>
+                <TeammateAvatar spec={{ ...value, accessory, badge: null }} size={26} />
               </button>
             ))}
           </div>

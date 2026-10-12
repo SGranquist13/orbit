@@ -74,15 +74,21 @@
   --overlay: rgb(0 0 0 / 0.7);
 
   /* Teammate avatars: the one colourful exception (CLAUDE.md). Status never uses these. */
-  --avatar-1: #f08a7e;
-  --avatar-2: #f2b866;
-  --avatar-3: #e4d26c;
-  --avatar-4: #7fd1a4;
-  --avatar-5: #6cc4c8;
-  --avatar-6: #7fb1f0;
-  --avatar-7: #a99bf0;
-  --avatar-8: #ee9ac6;
+  --avatar-1: #4fc9b0;
+  --avatar-2: #8a63f2;
+  --avatar-3: #fb9a35;
+  --avatar-4: #3d8ef5;
+  --avatar-5: #f5698a;
+  --avatar-6: #5fcf5f;
+  --avatar-7: #fbbf2c;
+  --avatar-8: #9a6bf0;
   --avatar-ink: #1d1b26;
+  --avatar-badge: #1c1d25;
+  --avatar-badge-ink: #e6e8f2;
+  --avatar-ring: #5a7df0;
+  --avatar-lens: #3d8ef5;
+  --avatar-alert: #ff5c6c;
+  --avatar-spark: #ffc83a;
   --hard-shadow: 4px 4px 0 0 #000, 4px 4px 0 1px var(--line-strong);
   --hard-shadow-sm: 2px 2px 0 0 #000, 2px 2px 0 1px var(--line-strong);
   --pop-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.85), 0 0 0 1px var(--line-strong);
@@ -115,15 +121,21 @@
   --overlay: rgb(243 243 241 / 0.75);
 
   /* Teammate avatars: the one colourful exception (CLAUDE.md). Status never uses these. */
-  --avatar-1: #ea7461;
-  --avatar-2: #eba043;
-  --avatar-3: #d6bb3e;
-  --avatar-4: #5cbf8a;
-  --avatar-5: #4fb3b8;
-  --avatar-6: #6198e8;
-  --avatar-7: #8e7be6;
-  --avatar-8: #e67db1;
+  --avatar-1: #35b79d;
+  --avatar-2: #7448e6;
+  --avatar-3: #f0861c;
+  --avatar-4: #2b78e4;
+  --avatar-5: #ec527a;
+  --avatar-6: #47bb48;
+  --avatar-7: #f0ac12;
+  --avatar-8: #8450e4;
   --avatar-ink: #1d1b26;
+  --avatar-badge: #23242d;
+  --avatar-badge-ink: #eef0f8;
+  --avatar-ring: #4a68e0;
+  --avatar-lens: #2b78e4;
+  --avatar-alert: #f0455a;
+  --avatar-spark: #f0ac12;
   --hard-shadow: 4px 4px 0 0 var(--ink);
   --hard-shadow-sm: 2px 2px 0 0 var(--ink);
   --pop-shadow: 6px 6px 0 0 var(--ink), 0 0 0 1.5px var(--ink);

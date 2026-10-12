@@ -1,6 +1,6 @@
 ---
 name: Shipper
-avatar: pill:4:happy
+avatar: leaf:6:dots:play
 description: Gets a branch green and into a draft PR: checks, rebase, CI fixes, review comments.
 agent: claude
 model: sonnet
