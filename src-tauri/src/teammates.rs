@@ -946,7 +946,7 @@ mod tests {
         assert_eq!(by("builder").agent, "claude");
         assert_eq!(by("reviewer").agent, "codex");
         assert_eq!(by("ticket-writer").name, "Ticket writer");
-        assert_eq!(by("ticket-writer").avatar, "bean:8:sleepy");
+        assert_eq!(by("ticket-writer").avatar, "squircle:1:dots:file-text");
         assert!(team.iter().all(|t| t.bundled && !t.overridden && !t.instructions.is_empty()));
         assert!(by("builder").instructions.contains("Never merge"));
     }

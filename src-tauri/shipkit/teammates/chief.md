@@ -1,6 +1,6 @@
 ---
 name: Chief
-avatar: cloud:5:happy
+avatar: planet:8:dots
 description: Takes a vague request, splits it into parts and hands each to the right teammate.
 agent: claude
 model: sonnet

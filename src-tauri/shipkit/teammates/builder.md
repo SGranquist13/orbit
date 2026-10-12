@@ -1,6 +1,6 @@
 ---
 name: Builder
-avatar: squircle:2:smile
+avatar: squircle:3:dots:code
 description: Implements a task end to end in its own workspace, with tests, and leaves a draft PR.
 agent: claude
 model: sonnet
