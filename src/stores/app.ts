@@ -17,13 +17,14 @@ import {
   type SimplifyState,
   type Skill,
   type StoredEvent,
+  type TeammateView,
   type Summary,
   type Workspace,
   type WorkspaceUsage,
 } from "../lib/ipc";
 import { applyUsage } from "../lib/usage";
 
-export type View = "workspace" | "inbox" | "issues" | "settings" | "routines";
+export type View = "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate";
 
 interface AppState {
   repos: Repo[];
@@ -44,6 +45,17 @@ interface AppState {
   routinesTick: number;
   /** Routine open in the editor: its id, "new" for a blank draft, or null. */
   selectedRoutine: string | null;
+  teammates: TeammateView[];
+  /** Thread open in the Teammate view. */
+  selectedTeammate: string | null;
+  /** Bumped on every teammate change, so an open thread refetches. */
+  teammatesTick: number;
+  /** Bumped to focus the open thread's composer ("Ask a teammate"). */
+  teammateFocus: number;
+  /** Teammate in the editor dialog: its slug, "new" for a blank one, or null. */
+  teammateEditor: string | null;
+  /** Palette restricted to teammates ("Ask a teammate…"). */
+  paletteScope: "teammates" | null;
   /** "Schedule message" popover next to the composer. */
   scheduleOpen: boolean;
   /** The view to return to when settings closes. */
@@ -83,6 +95,11 @@ interface AppState {
   init: () => Promise<void>;
   select: (id: string | null) => void;
   setView: (view: View) => void;
+  refreshTeammates: () => Promise<void>;
+  /** Opens a teammate's thread and focuses its composer. */
+  openTeammate: (slug: string) => void;
+  setTeammateEditor: (slug: string | null) => void;
+  openPalette: (scope?: "teammates") => void;
   refreshRoutines: () => Promise<void>;
   setSelectedRoutine: (id: string | null) => void;
   setScheduleOpen: (open: boolean) => void;
@@ -169,6 +186,12 @@ export const useApp = create<AppState>((set, get) => ({
   view: "workspace",
   routines: [],
   routinesTick: 0,
+  teammates: [],
+  selectedTeammate: null,
+  teammatesTick: 0,
+  teammateFocus: 0,
+  teammateEditor: null,
+  paletteScope: null,
   selectedRoutine: null,
   scheduleOpen: false,
   previousView: "workspace",
@@ -207,6 +230,8 @@ export const useApp = create<AppState>((set, get) => ({
     await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
     await events.onRoutinesChanged(() => void get().refreshRoutines());
     void get().refreshRoutines();
+    await events.onTeammateChanged(() => void get().refreshTeammates());
+    void get().refreshTeammates();
     await events.onSimplify(onSimplify);
     for (const ws of workspaces) void get().refreshChanges(ws.id);
     void get().loadSkills();
@@ -238,6 +263,17 @@ export const useApp = create<AppState>((set, get) => ({
 
   setView: (view) => set((s) => ({ view, previousView: view === "settings" ? s.previousView : view })),
 
+  refreshTeammates: async () => {
+    try {
+      const teammates = await api.listTeammates();
+      set((s) => ({ teammates, teammatesTick: s.teammatesTick + 1 }));
+    } catch {
+      // Keep the last known list; the next change event refetches.
+    }
+  },
+  openTeammate: (slug) => set((s) => ({ selectedTeammate: slug, view: "teammate", previousView: "teammate", paletteOpen: false, teammateFocus: s.teammateFocus + 1 })),
+  setTeammateEditor: (slug) => set({ teammateEditor: slug }),
+  openPalette: (scope) => set({ paletteOpen: true, paletteScope: scope ?? null }),
   refreshRoutines: async () => {
     try {
       const routines = await api.listRoutines();
@@ -465,7 +501,7 @@ export const useApp = create<AppState>((set, get) => ({
       get().setError(String(e));
     }
   },
-  setPaletteOpen: (open) => set({ paletteOpen: open }),
+  setPaletteOpen: (open) => set(open ? { paletteOpen: true } : { paletteOpen: false, paletteScope: null }),
   setShipOpen: (open) => {
     writeFlag("shipOpen", open);
     set(open ? { shipOpen: true, simplifyOpen: false } : { shipOpen: false });

@@ -3,7 +3,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
-import type { AgentEvent, Attachment, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -35,6 +35,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   behind: 0,
   ahead: 0,
   routineId: null,
+  teammate: null,
 });
 
 const workspaces: Workspace[] = [
@@ -298,6 +299,7 @@ let settings: Settings = {
   modelCommitMessage: "default",
   modelRoutineSummary: "default",
   modelPrDescription: "default",
+  modelTeammateReport: "default",
   localAgents: false,
   remoteEnabled: false,
   remotePort: 47821,
@@ -425,6 +427,178 @@ function mockRunNow(id: string): RoutineRun {
   return { ...started };
 }
 
+// ---- Teammates (mirrors src-tauri/src/teammates.rs: definitions, threads, tasks, delegation) ----
+
+const tm = (slug: string, name: string, avatar: string, description: string, agent: "claude" | "codex", model: string | null, profile: string | null, instructions: string): Teammate => ({
+  slug, name, avatar, description, agent, model, profile, repos: [], readonly: null, instructions, bundled: true, overridden: false,
+});
+const STARTERS: Teammate[] = [
+  tm("builder", "Builder", "hammer", "Implements a task end to end in its own workspace, with tests, and leaves a draft PR.", "claude", "sonnet", "shipkit:builder",
+    "You implement what you are handed: read the code, make a focused change that matches the project's conventions, add or adjust tests, and run the checks.\nStop at a draft pull request. Never merge. If the request is ambiguous in a way that changes the design, ask one short question first."),
+  tm("debugger", "Debugger", "bug", "Reproduces a bug, finds the root cause, and fixes it with a regression test.", "claude", "sonnet", "shipkit:debugger",
+    "You fix reported problems at the root. Reproduce first, explain the cause with evidence, then make the smallest correct fix with a regression test.\nStop at a draft pull request. Never merge."),
+  tm("planner", "Planner", "map", "Explores the code and writes an implementation plan. Changes nothing.", "claude", "opus", "shipkit:planner",
+    "You explore and plan; you never change anything. Answer with a plan someone else can build from."),
+  tm("reviewer", "Reviewer", "scan-search", "Read-only review of a branch or PR by a second model, findings ranked by severity.", "codex", null, "shipkit:reviewer",
+    "You review changes adversarially and read-only. Rank findings by severity and point at the exact files and lines."),
+  tm("shipper", "Shipper", "rocket", "Gets a branch green and into a draft PR: checks, rebase, CI fixes, review comments.", "claude", "sonnet", "shipkit:shipper",
+    "You get a branch shippable with as little new code as possible. Stop at a draft pull request. Never merge."),
+  tm("ticket-writer", "Ticket writer", "ticket", "Turns rough notes into well-formed GitHub issues after checking the code. Read-only.", "claude", "sonnet", "shipkit:ticket-writer",
+    "You turn rough notes, bug reports and ideas into well-formed GitHub issues. Never edit code."),
+];
+let customTeammates: Teammate[] = [
+  { ...tm("docs-helper", "Docs helper", "D", "Keeps the README and guides in step with the code.", "claude", "haiku", "shipkit:builder", "Update docs to match what the code now does. Keep edits small and link the code you checked."), bundled: false, repos: ["marketing-site"] },
+];
+const STARTER_DEFAULTS = STARTERS.map((s) => ({ ...s }));
+const overridden = new Set<string>();
+let tmThreads: Record<string, TeammateMessage[]> = {};
+let tmTasks: TeammateTask[] = [];
+const tmSeen: Record<string, number> = {};
+const tmMemory: Record<string, string> = {
+  builder: "# Memory\n- Prefers small PRs, one concern each.\n- Run `bun run typecheck` before opening a PR.\n- Auth code lives in src/auth; the legacy cookie path must keep working.\n",
+};
+
+let tmId = 0;
+const tmMsg = (slug: string, ageMin: number, p: Partial<TeammateMessage> & Pick<TeammateMessage, "role" | "kind" | "text">): TeammateMessage => ({
+  id: `tm${++tmId}`, slug, ts: now - ageMin * min, workspaceId: null, status: null, files: null, ...p,
+});
+const tmTask = (slug: string, workspaceId: string, status: TeammateTask["status"], ageMin: number, summary: string | null = null): TeammateTask => ({
+  id: `tk${++tmId}`, slug, workspaceId, repoId: "r1", status, createdAt: now - ageMin * min, finishedAt: status === "done" || status === "error" ? now - (ageMin - 5) * min : null, summary,
+});
+
+function seedTeammates() {
+  // Builder: finished one task yesterday, is working on w1 now.
+  tmThreads.builder = [
+    tmMsg("builder", 1500, { role: "user", kind: "message", text: "Make the Stripe webhook handler idempotent", workspaceId: "w2" }),
+    tmMsg("builder", 1499, { role: "teammate", kind: "task_started", text: "Billing webhooks", workspaceId: "w2", status: "running" }),
+    tmMsg("builder", 1470, { role: "teammate", kind: "task_report", text: "Webhook retries now back off exponentially and the handler is idempotent. Draft PR #412 is open with tests for duplicate delivery.", workspaceId: "w2", status: "done", files: 6 }),
+    tmMsg("builder", 12, { role: "user", kind: "message", text: "The onboarding flow crashes when the org name is empty. Find the cause and fix it, with a test.", workspaceId: "w1" }),
+    tmMsg("builder", 12, { role: "teammate", kind: "task_started", text: "Fix onboarding crash", workspaceId: "w1", status: "running" }),
+  ];
+  tmTasks.push(tmTask("builder", "w2", "done", 1500, "Idempotent webhook handler; draft PR #412."), tmTask("builder", "w1", "running", 12));
+  workspaces[0].teammate = "builder";
+  workspaces[1].teammate = "builder";
+  // Debugger: asked a question and waits.
+  tmThreads.debugger = [
+    tmMsg("debugger", 190, { role: "user", kind: "message", text: "Refresh the homepage hero crashes the build", workspaceId: "w4" }),
+    tmMsg("debugger", 190, { role: "teammate", kind: "task_started", text: "Refresh homepage hero", workspaceId: "w4", status: "running" }),
+    tmMsg("debugger", 180, { role: "teammate", kind: "task_report", text: "The build fails because hero.png is imported but was never committed.\n\nShould I regenerate it from the Figma export, or drop the image and use the gradient?", workspaceId: "w4", status: "waiting", files: 1 }),
+  ];
+  tmTasks.push(tmTask("debugger", "w4", "waiting", 190, "hero.png is missing."));
+  workspaces[3].teammate = "debugger";
+  // Reviewer: finished, report unseen.
+  tmThreads.reviewer = [
+    tmMsg("reviewer", 40, { role: "user", kind: "message", text: "Review the refactor/auth-flow branch", workspaceId: "w3" }),
+    tmMsg("reviewer", 40, { role: "teammate", kind: "task_started", text: "Review the refactor/auth-flow branch", workspaceId: "w3", status: "running" }),
+    tmMsg("reviewer", 31, { role: "teammate", kind: "task_report", text: "Two findings. High: refreshSession can double-submit when the token expires mid-request (src/auth/session.ts:61). Low: the new cookie helper has no test for the legacy path.", workspaceId: "w3", status: "done", files: 0 }),
+  ];
+  tmTasks.push(tmTask("reviewer", "w3", "done", 40, "Two findings."));
+  workspaces[2].teammate = "reviewer";
+  tmSeen.builder = now;
+  tmSeen.debugger = now - 300 * min;
+  tmSeen.reviewer = now - 60 * min;
+  // Planner and the rest start with empty threads.
+  tmThreads.planner = [
+    tmMsg("planner", 3000, { role: "user", kind: "message", text: "Plan the invoice table migration" }),
+    tmMsg("planner", 2990, { role: "system", kind: "error", text: "No repository is added yet, so there was nothing to plan against." }),
+  ];
+  tmSeen.planner = now;
+}
+
+function tmDefs(): Teammate[] {
+  return [...STARTERS, ...customTeammates];
+}
+
+function tmView(t: Teammate): TeammateView {
+  const thread = tmThreads[t.slug] ?? [];
+  const tasks = tmTasks.filter((k) => k.slug === t.slug);
+  const open = tasks.filter((k) => k.status === "running" || k.status === "waiting");
+  const lastReport = Math.max(0, ...thread.filter((m) => m.kind === "task_report" || m.kind === "error").map((m) => m.ts));
+  const unseen = lastReport > (tmSeen[t.slug] ?? 0);
+  const status: TeammateView["status"] = open.some((k) => k.status === "running") ? "working" : open.length || unseen ? "needsYou" : "idle";
+  return { ...t, overridden: overridden.has(t.slug), status, lastMessage: thread[thread.length - 1] ?? null, openTasks: open.length, unseen };
+}
+
+function tmPost(slug: string, m: Omit<TeammateMessage, "id" | "slug" | "ts" | "workspaceId" | "status" | "files"> & Partial<TeammateMessage>) {
+  (tmThreads[slug] ??= []).push({ id: `tm${++tmId}`, slug, ts: Date.now(), workspaceId: null, status: null, files: null, ...m });
+}
+
+/** Mock of the report model: finishes the turn a couple of seconds later; a message ending in "?" is answered with a question. */
+function tmFinishLater(task: TeammateTask, text: string) {
+  setTimeout(() => {
+    const w = workspaces.find((x) => x.id === task.workspaceId);
+    const asks = /\bwhich\b|\bor\b.*\?$/i.test(text) && text.trim().endsWith("?");
+    task.status = asks ? "waiting" : "done";
+    task.finishedAt = asks ? null : Date.now();
+    if (w) { w.status = "done"; void emit("workspace", { ...w }); }
+    tmPost(task.slug, {
+      role: "teammate", kind: "task_report", workspaceId: task.workspaceId, status: task.status, files: 3,
+      text: asks ? "I found two ways to do this and they differ in what they break.\n\nWhich one do you want?" : "Done. The change is on its own branch with tests, and a draft PR is open for you to look at.",
+    });
+    void emit("teammate-changed", task.slug);
+  }, 2200);
+}
+
+function tmSend(a: { slug: string; text: string; repoId: string | null; newTask: boolean | null }) {
+  const t = tmDefs().find((x) => x.slug === a.slug);
+  if (!t) throw `No teammate \`${a.slug}\``;
+  const text = a.text.trim();
+  if (!text) throw "Write a message first";
+  const open = tmTasks.find((k) => k.slug === a.slug && (k.status === "running" || k.status === "waiting") && workspaces.some((w) => w.id === k.workspaceId));
+  if (open && a.newTask !== true) {
+    tmPost(a.slug, { role: "user", kind: "message", text, workspaceId: open.workspaceId });
+    open.status = "running";
+    const w = workspaces.find((x) => x.id === open.workspaceId)!;
+    w.status = "running";
+    void emit("workspace", { ...w });
+    tmFinishLater(open, text);
+    void emit("teammate-changed", a.slug);
+    return { workspaceId: open.workspaceId, newTask: false };
+  }
+  const pool = repos.filter((r) => !t.repos.length || t.repos.some((x) => x === r.id || x.toLowerCase() === r.name.toLowerCase()));
+  const repo = a.repoId ? pool.find((r) => r.id === a.repoId) : pool.length === 1 ? pool[0] : undefined;
+  if (!repo) throw pool.length ? "Pick a repository for this task" : "None of this teammate's repositories are added to Orbit";
+  const name = text.split("\n")[0].slice(0, 60);
+  const w = ws(`w${workspaces.length + 1}`, repo.id, name, t.agent, "running");
+  w.teammate = t.slug;
+  w.profile = t.profile;
+  workspaces.unshift(w);
+  void emit("workspace", { ...w });
+  const task = tmTask(a.slug, w.id, "running", 0);
+  task.repoId = repo.id;
+  tmTasks.push(task);
+  tmPost(a.slug, { role: "user", kind: "message", text, workspaceId: w.id });
+  tmPost(a.slug, { role: "teammate", kind: "task_started", text: name, workspaceId: w.id, status: "running" });
+  tmFinishLater(task, text);
+  void emit("teammate-changed", a.slug);
+  return { workspaceId: w.id, newTask: true };
+}
+
+function tmSave(input: TeammateInput): TeammateView {
+  if (!input.name.trim()) throw "A teammate needs a name";
+  let slug = input.slug ?? "";
+  if (!slug) {
+    const base = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "task";
+    slug = base;
+    for (let n = 2; tmDefs().some((x) => x.slug === slug); n++) slug = `${base}-${n}`;
+  }
+  const bundled = STARTERS.some((s) => s.slug === slug);
+  const t: Teammate = {
+    slug, name: input.name.trim(), avatar: input.avatar.trim() || input.name.trim()[0].toUpperCase(), description: input.description.trim(), agent: input.agent,
+    model: input.model || null, profile: input.profile || null, repos: input.repos, readonly: input.readonly ?? null, instructions: input.instructions.trim(), bundled, overridden: bundled,
+  };
+  if (bundled) {
+    STARTERS[STARTERS.findIndex((s) => s.slug === slug)] = t;
+    overridden.add(slug);
+  } else {
+    customTeammates = customTeammates.some((x) => x.slug === slug) ? customTeammates.map((x) => (x.slug === slug ? t : x)) : [...customTeammates, t];
+  }
+  void emit("teammate-changed", slug);
+  return tmView(t);
+}
+
+seedTeammates();
+
 // ---- Simplify (mirrors src-tauri/src/simplify.rs closely enough to show the whole flow) ----
 
 const simplifyStates: Record<string, SimplifyState> = {};
@@ -524,7 +698,7 @@ function mockSimplifyApply(workspaceId: string, ids: string[]): SimplifyState {
 export function installMockBackend() {
   mockIPC(
     async (cmd, args) => {
-      const a = (args ?? {}) as { id?: string; workspaceId?: string; repoId?: string; path?: string; editable?: boolean; enabled?: boolean };
+      const a = (args ?? {}) as { id?: string; slug?: string; workspaceId?: string; repoId?: string; path?: string; editable?: boolean; enabled?: boolean };
       const id = a.id ?? "";
       switch (cmd) {
         case "list_repos":
@@ -539,6 +713,41 @@ export function installMockBackend() {
           return packs;
         case "list_skills":
           return skills;
+        case "list_teammates":
+          return tmDefs().map(tmView);
+        case "get_teammate":
+          return tmView(tmDefs().find((x) => x.slug === a.slug)!);
+        case "save_teammate":
+          return tmSave((args as { input: TeammateInput }).input);
+        case "delete_teammate": {
+          const slug = a.slug!;
+          const si = STARTERS.findIndex((s) => s.slug === slug);
+          if (si >= 0) {
+            if (!overridden.delete(slug)) throw "This starter teammate is already at its default";
+            STARTERS[si] = { ...STARTER_DEFAULTS[si] };
+          } else {
+            customTeammates = customTeammates.filter((x) => x.slug !== slug);
+            delete tmThreads[slug];
+            tmTasks = tmTasks.filter((k) => k.slug !== slug);
+          }
+          void emit("teammate-changed", slug);
+          return null;
+        }
+        case "teammate_thread":
+          return (tmThreads[a.slug!] ?? []).slice(-((args as { limit?: number }).limit ?? 200));
+        case "teammate_tasks":
+          return tmTasks.filter((k) => k.slug === a.slug).reverse();
+        case "teammate_send":
+          return tmSend(args as { slug: string; text: string; repoId: string | null; newTask: boolean | null });
+        case "teammate_mark_seen":
+          tmSeen[a.slug!] = Date.now();
+          void emit("teammate-changed", a.slug!);
+          return null;
+        case "teammate_memory":
+          return tmMemory[a.slug!] ?? "";
+        case "set_teammate_memory":
+          tmMemory[a.slug!] = (args as { text: string }).text;
+          return null;
         case "list_profiles":
           return profiles;
         case "set_workspace_profile": {

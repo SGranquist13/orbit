@@ -2,9 +2,9 @@ import { Clock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeProfile } from "../lib/ipc";
 import { attentionReason, formatSnooze, isSnoozed, reasonMeta, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
-import { api, type Summary, type Workspace } from "../lib/ipc";
+import { api, type Summary, type TeammateView, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
-import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
+import { AgentIcon, Avatar, Button, Kbd, StatusDot, TeammateDot, agentLabel, cn } from "./ui";
 
 type Tab = "needs" | "all";
 interface Row {
@@ -33,6 +33,7 @@ export function Inbox() {
     () => (settings ? { days: settings.staleDays, behind: settings.staleBehind } : undefined),
     [settings?.staleDays, settings?.staleBehind], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const teammates = useApp((s) => s.teammates);
   const [tab, setTab] = useState<Tab>("needs");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [, bump] = useState(0);
@@ -63,6 +64,12 @@ export function Inbox() {
   );
   const needs = useMemo(() => all.filter((r) => r.reason), [all]);
   const rows = tab === "needs" ? needs : all;
+  // Teammate threads that need you (or all of them, on the All tab), newest activity first.
+  const needsTeammates = useMemo(() => teammates.filter((t) => t.status === "needsYou"), [teammates]);
+  const teammateRows = useMemo(
+    () => [...(tab === "needs" ? needsTeammates : teammates)].sort((a, b) => (b.lastMessage?.ts ?? 0) - (a.lastMessage?.ts ?? 0)),
+    [tab, needsTeammates, teammates],
+  );
   // When the focused row leaves the list (dismissed, snoozed, sent), focus the row that now sits
   // at the same index (the next one, or the previous if it was last) instead of jumping to the top.
   const lastIndex = useRef(0);
@@ -150,7 +157,7 @@ export function Inbox() {
         <div className="flex items-center gap-1">
           <TabButton active={tab === "needs"} onClick={() => setTab("needs")}>
             Needs you
-            <span className="tabular-nums text-mute">{needs.length}</span>
+            <span className="tabular-nums text-mute">{needs.length + needsTeammates.length}</span>
           </TabButton>
           <TabButton active={tab === "all"} onClick={() => setTab("all")}>
             All
@@ -160,7 +167,7 @@ export function Inbox() {
       <div className="dither-rule bg-line-strong" />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {rows.length === 0 ? (
+        {rows.length === 0 && teammateRows.length === 0 ? (
           <div className="grid h-full place-items-center">
             <div className="text-center">
               <p className="label text-mute">Nothing needs you</p>
@@ -168,6 +175,15 @@ export function Inbox() {
             </div>
           </div>
         ) : (
+          <>
+          {teammateRows.length > 0 && (
+            <ul className="mx-auto max-w-[880px] space-y-1 px-6 pt-4" data-inbox-teammates>
+              {teammateRows.map((t) => (
+                <TeammateInboxRow key={t.slug} t={t} />
+              ))}
+            </ul>
+          )}
+          {rows.length > 0 && (
           <ul className="mx-auto max-w-[880px] space-y-1 px-6 py-4">
             {rows.map((r) => (
               <InboxRow
@@ -183,9 +199,39 @@ export function Inbox() {
               />
             ))}
           </ul>
+          )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+/** A teammate that reported back or is waiting on you; opens its thread. */
+function TeammateInboxRow({ t }: { t: TeammateView }) {
+  const needs = t.status === "needsYou";
+  const snippet = t.lastMessage?.text.replace(/\s+/g, " ").trim();
+  return (
+    <li>
+      <button
+        onClick={() => useApp.getState().openTeammate(t.slug)}
+        className="block w-full rounded-[5px] border-[1.5px] border-transparent px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-panel"
+      >
+        <div className="flex items-center gap-2.5">
+          <Avatar avatar={t.avatar} name={t.name} size={18} />
+          <span className="truncate text-[13px] font-medium">{t.name}</span>
+          <span className="truncate text-[12px] text-mute">Teammate</span>
+          <span className="ml-auto flex shrink-0 items-center gap-3">
+            <span className={cn("flex items-center gap-1.5 text-[11.5px] font-medium", needs ? reasonMeta("teammate").tone : t.status === "working" ? "text-run" : "text-mute")}>
+              <TeammateDot status={t.status} failed={t.lastMessage?.kind === "error"} />
+              {needs ? (t.unseen ? "Reported back" : "Waiting on you") : t.status === "working" ? "Working…" : "Idle"}
+            </span>
+            {t.lastMessage && <span className="text-[11.5px] tabular-nums text-mute">{timeAgo(t.lastMessage.ts)}</span>}
+          </span>
+        </div>
+        {snippet && <p className="mt-1 truncate pl-[28px] text-[12.5px] text-dim">{snippet}</p>}
+      </button>
+    </li>
   );
 }
 

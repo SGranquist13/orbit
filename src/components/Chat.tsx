@@ -35,6 +35,7 @@ import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
 import { SchedulePreview, WhenControl } from "./Routines";
+import { TeammateLabel } from "./Teammates";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -53,6 +54,7 @@ export function Chat({ ws }: { ws: Workspace }) {
           <GitBranch className="size-3" strokeWidth={2.5} />
           {ws.branch}
         </span>
+        {ws.teammate && <TeammateLabel slug={ws.teammate} className="rounded-[3px] border border-line px-1.5 py-px" />}
         {ws.issueNumber != null && (
           <button
             onClick={() =>

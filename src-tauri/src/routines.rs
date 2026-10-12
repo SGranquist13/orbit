@@ -565,6 +565,7 @@ async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<
                     profile: routine.profile.clone(),
                     routine_id: Some(routine.id.clone()),
                     branch_prefix: (routine.action == Action::Simplify).then(|| SIMPLIFY_PREFIX.to_string()),
+                    teammate: None,
                 },
             )
             .await?;
@@ -807,7 +808,7 @@ fn is_agent_housekeeping(c: &git::FileChange) -> bool {
 }
 
 /// Paths a run changed, minus agent housekeeping.
-fn significant_files(changes: Vec<git::FileChange>) -> Vec<String> {
+pub(crate) fn significant_files(changes: Vec<git::FileChange>) -> Vec<String> {
     changes.into_iter().filter(|c| !is_agent_housekeeping(c)).map(|c| c.path).collect()
 }
 

@@ -42,6 +42,8 @@ export interface Workspace {
   ahead: number;
   /** The routine that started this workspace, if any. */
   routineId: string | null;
+  /** Slug of the teammate that created this workspace, if any. */
+  teammate: string | null;
 }
 
 /** Result of a check run (src-tauri/src/checks.rs). */
@@ -367,6 +369,7 @@ export interface Settings {
   modelCommitMessage: string;
   modelRoutineSummary: string;
   modelPrDescription: string;
+  modelTeammateReport: string;
   localAgents: boolean;
   remoteEnabled: boolean;
   remotePort: number;
@@ -498,7 +501,92 @@ export interface RoutineInput {
   enabled: boolean;
 }
 
+/** A named coworker you hand tasks to (src-tauri/src/teammates.rs). */
+export interface Teammate {
+  slug: string;
+  name: string;
+  /** One glyph/letter, or the name of a known icon (see `Avatar`). */
+  avatar: string;
+  description: string;
+  agent: AgentKind;
+  model: string | null;
+  /** Profile id for the workspaces it creates. */
+  profile: string | null;
+  /** Repo ids or names it may work in; empty = any. */
+  repos: string[];
+  /** null = follow the profile. */
+  readonly: boolean | null;
+  instructions: string;
+  /** Has a starter definition shipped with Orbit. */
+  bundled: boolean;
+  /** A custom file replaces the starter definition. */
+  overridden: boolean;
+}
+
+export type TeammateStatus = "working" | "needsYou" | "idle";
+export type TeammateTaskStatus = "running" | "done" | "error" | "waiting";
+
+export interface TeammateMessage {
+  id: string;
+  slug: string;
+  ts: number;
+  role: "user" | "teammate" | "system";
+  text: string;
+  workspaceId: string | null;
+  kind: "message" | "task_started" | "task_report" | "error";
+  /** Task status when a started/report card was posted. */
+  status: TeammateTaskStatus | null;
+  /** Files changed in the task workspace when a report was posted. */
+  files: number | null;
+}
+
+export interface TeammateTask {
+  id: string;
+  slug: string;
+  workspaceId: string;
+  repoId: string;
+  status: TeammateTaskStatus;
+  createdAt: number;
+  finishedAt: number | null;
+  summary: string | null;
+}
+
+/** A teammate plus what the sidebar needs: status, last message, unseen report. */
+export interface TeammateView extends Teammate {
+  status: TeammateStatus;
+  lastMessage: TeammateMessage | null;
+  openTasks: number;
+  unseen: boolean;
+}
+
+export interface TeammateInput {
+  /** Set when editing; absent for a new teammate. */
+  slug?: string | null;
+  name: string;
+  avatar: string;
+  description: string;
+  agent: AgentKind;
+  model?: string | null;
+  profile?: string | null;
+  repos: string[];
+  readonly?: boolean | null;
+  instructions: string;
+}
+
 export const api = {
+  listTeammates: () => invoke<TeammateView[]>("list_teammates"),
+  getTeammate: (slug: string) => invoke<TeammateView>("get_teammate", { slug }),
+  saveTeammate: (input: TeammateInput) => invoke<TeammateView>("save_teammate", { input }),
+  /** Deletes a custom teammate, or resets an overridden starter one to its default. */
+  deleteTeammate: (slug: string) => invoke<void>("delete_teammate", { slug }),
+  teammateThread: (slug: string, limit = 200) => invoke<TeammateMessage[]>("teammate_thread", { slug, limit }),
+  teammateTasks: (slug: string) => invoke<TeammateTask[]>("teammate_tasks", { slug }),
+  /** `newTask`: true forces a new task; omitted continues the open one if there is one. Rejects "Pick a repository…" when it can't choose. */
+  teammateSend: (slug: string, text: string, repoId?: string | null, newTask?: boolean | null) =>
+    invoke<{ workspaceId: string; newTask: boolean }>("teammate_send", { slug, text, repoId: repoId ?? null, newTask: newTask ?? null }),
+  teammateMarkSeen: (slug: string) => invoke<void>("teammate_mark_seen", { slug }),
+  teammateMemory: (slug: string) => invoke<string>("teammate_memory", { slug }),
+  setTeammateMemory: (slug: string, text: string) => invoke<void>("set_teammate_memory", { slug, text }),
   listRoutines: () => invoke<Routine[]>("list_routines"),
   saveRoutine: (input: RoutineInput) => invoke<Routine>("save_routine", { input }),
   deleteRoutine: (id: string) => invoke<void>("delete_routine", { id }),
@@ -602,6 +690,8 @@ export const events = {
     listen<string>("workspace-archived", (e) => cb(e.payload)),
   /** Routines or their runs changed (a run started or finished, a one-off switched itself off). */
   onRoutinesChanged: (cb: () => void): Promise<UnlistenFn> => listen("routines-changed", () => cb()),
+  /** A teammate's definition, thread or tasks changed. */
+  onTeammateChanged: (cb: (slug: string) => void): Promise<UnlistenFn> => listen<string>("teammate-changed", (e) => cb(e.payload)),
   onSimplify: (cb: (s: SimplifyState) => void): Promise<UnlistenFn> =>
     listen<SimplifyState>("simplify", (e) => cb(e.payload)),
 };

@@ -1,5 +1,6 @@
 use crate::agent::AgentEvent;
 use crate::routines::{Mode, Routine, RoutineRun};
+use crate::teammates::{TeammateMessage, TeammateTask};
 use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
@@ -53,6 +54,8 @@ pub struct Workspace {
     pub ahead: i64,
     /// The routine that started this workspace, if any.
     pub routine_id: Option<String>,
+    /// Slug of the teammate that created this workspace, if any.
+    pub teammate: Option<String>,
 }
 
 /// What the inbox needs to know about a workspace's recent activity.
@@ -165,6 +168,29 @@ CREATE TABLE IF NOT EXISTS routine_runs (
   summary TEXT
 );
 CREATE INDEX IF NOT EXISTS routine_runs_routine ON routine_runs(routine_id, started_at);
+CREATE TABLE IF NOT EXISTS teammate_messages (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  ts INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  workspace_id TEXT,
+  kind TEXT NOT NULL,
+  status TEXT,
+  files INTEGER
+);
+CREATE INDEX IF NOT EXISTS teammate_messages_slug ON teammate_messages(slug, ts);
+CREATE TABLE IF NOT EXISTS teammate_tasks (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  repo_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  summary TEXT
+);
+CREATE INDEX IF NOT EXISTS teammate_tasks_slug ON teammate_tasks(slug, created_at);
 CREATE TABLE IF NOT EXISTS repo_related (
   repo_id TEXT NOT NULL REFERENCES repos(id),
   path TEXT NOT NULL,
@@ -204,6 +230,34 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         behind: r.get("behind")?,
         ahead: r.get("ahead")?,
         routine_id: r.get("routine_id")?,
+        teammate: r.get("teammate")?,
+    })
+}
+
+fn teammate_message_from_row(r: &Row) -> rusqlite::Result<TeammateMessage> {
+    Ok(TeammateMessage {
+        id: r.get(0)?,
+        slug: r.get(1)?,
+        ts: r.get(2)?,
+        role: r.get(3)?,
+        text: r.get(4)?,
+        workspace_id: r.get(5)?,
+        kind: r.get(6)?,
+        status: r.get(7)?,
+        files: r.get(8)?,
+    })
+}
+
+fn teammate_task_from_row(r: &Row) -> rusqlite::Result<TeammateTask> {
+    Ok(TeammateTask {
+        id: r.get(0)?,
+        slug: r.get(1)?,
+        workspace_id: r.get(2)?,
+        repo_id: r.get(3)?,
+        status: r.get(4)?,
+        created_at: r.get(5)?,
+        finished_at: r.get(6)?,
+        summary: r.get(7)?,
     })
 }
 
@@ -282,6 +336,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("behind", "ALTER TABLE workspaces ADD COLUMN behind INTEGER NOT NULL DEFAULT 0"),
         ("ahead", "ALTER TABLE workspaces ADD COLUMN ahead INTEGER NOT NULL DEFAULT 0"),
         ("routine_id", "ALTER TABLE workspaces ADD COLUMN routine_id TEXT"),
+        ("teammate", "ALTER TABLE workspaces ADD COLUMN teammate TEXT"),
     ] {
         if !cols.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
@@ -305,6 +360,8 @@ impl Db {
         migrate(&conn)?;
         // Agents can't survive an app restart; anything mid-run is now idle.
         conn.execute("UPDATE workspaces SET status = 'idle' WHERE status = 'running'", [])?;
+        // Same for teammate tasks: the workspace can be resumed, so the task waits for the next message.
+        conn.execute("UPDATE teammate_tasks SET status = 'waiting' WHERE status = 'running'", [])?;
         Ok(Self { conn })
     }
 
@@ -355,11 +412,11 @@ impl Db {
 
     pub fn insert_workspace(&self, ws: &Workspace) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 ws.id, ws.repo_id, ws.name, ws.branch, ws.path, ws.agent, ws.model, ws.status,
-                ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id
+                ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id, ws.teammate
             ],
         )?;
         Ok(())
@@ -643,6 +700,105 @@ impl Db {
             self.conn
                 .execute("DELETE FROM repo_related WHERE repo_id = ?1 AND path = ?2", params![repo_id, path])?;
         }
+        Ok(())
+    }
+
+    // ---- teammates
+    pub fn insert_teammate_message(&self, m: &TeammateMessage) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO teammate_messages (id, slug, ts, role, text, workspace_id, kind, status, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![m.id, m.slug, m.ts, m.role, m.text, m.workspace_id, m.kind, m.status, m.files],
+        )?;
+        Ok(())
+    }
+
+    /// The last `limit` messages of a thread, oldest first.
+    pub fn teammate_thread(&self, slug: &str, limit: u32) -> anyhow::Result<Vec<TeammateMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, slug, ts, role, text, workspace_id, kind, status, files FROM teammate_messages
+             WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![slug, limit], teammate_message_from_row)?;
+        let mut out: Vec<TeammateMessage> = rows.collect::<Result<_, _>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
+    pub fn last_teammate_message(&self, slug: &str) -> anyhow::Result<Option<TeammateMessage>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, slug, ts, role, text, workspace_id, kind, status, files FROM teammate_messages
+                 WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT 1",
+                [slug],
+                teammate_message_from_row,
+            )
+            .optional()?)
+    }
+
+    /// When the teammate last reported back (a finished task, a question, or an error).
+    pub fn last_teammate_report_ts(&self, slug: &str) -> anyhow::Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT MAX(ts) FROM teammate_messages WHERE slug = ?1 AND kind IN ('task_report', 'error')",
+            [slug],
+            |r| r.get(0),
+        )?)
+    }
+
+    pub fn insert_teammate_task(&self, t: &TeammateTask) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO teammate_tasks (id, slug, workspace_id, repo_id, status, created_at, finished_at, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![t.id, t.slug, t.workspace_id, t.repo_id, t.status, t.created_at, t.finished_at, t.summary],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_teammate_task(&self, id: &str, status: &str, summary: Option<&str>, finished_at: Option<i64>) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE teammate_tasks SET status = ?2, summary = COALESCE(?3, summary), finished_at = ?4 WHERE id = ?1",
+            params![id, status, summary, finished_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn teammate_tasks(&self, slug: &str) -> anyhow::Result<Vec<TeammateTask>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
+             WHERE slug = ?1 ORDER BY created_at DESC, rowid DESC",
+        )?;
+        let rows = stmt.query_map([slug], teammate_task_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The teammate's newest task that is still running or waiting for the user.
+    pub fn open_teammate_task(&self, slug: &str) -> anyhow::Result<Option<TeammateTask>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
+                 WHERE slug = ?1 AND status IN ('running', 'waiting') ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                [slug],
+                teammate_task_from_row,
+            )
+            .optional()?)
+    }
+
+    /// The task that owns a workspace (a workspace is created for exactly one task).
+    pub fn teammate_task_for_workspace(&self, workspace_id: &str) -> anyhow::Result<Option<TeammateTask>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
+                 WHERE workspace_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                [workspace_id],
+                teammate_task_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn delete_teammate_data(&self, slug: &str) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM teammate_messages WHERE slug = ?1", [slug])?;
+        self.conn.execute("DELETE FROM teammate_tasks WHERE slug = ?1", [slug])?;
         Ok(())
     }
 

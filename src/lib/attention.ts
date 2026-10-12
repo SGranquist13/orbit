@@ -1,7 +1,7 @@
 // Pure rules for the attention inbox: which workspaces need the user, and why.
 import type { PrStatus, Summary, Workspace } from "./ipc";
 
-export type Reason = "error" | "question" | "checksFailed" | "needsSync" | "checks" | "changes" | "done" | "stale";
+export type Reason = "error" | "question" | "checksFailed" | "needsSync" | "checks" | "changes" | "done" | "stale" | "teammate";
 
 export type Suggestion =
   | { label: string; kind: "skill"; skillId: string }
@@ -102,6 +102,8 @@ const meta: Record<Reason, { label: string; tone: string }> = {
   changes: { label: "Changes requested", tone: "text-warn" },
   done: { label: "Finished", tone: "text-ok" },
   stale: { label: "Stale branch", tone: "text-warn" },
+  // Teammate threads that need you; they are not workspaces, so `attentionReason` never returns this.
+  teammate: { label: "Teammate", tone: "text-warn" },
 };
 
 /** The prompt behind "Fix checks": the command and the tail of its output. */
@@ -153,6 +155,8 @@ export function ruleSuggestions(
       ];
     case "stale":
       return [{ label: "Sync now", kind: "sync" }, text("Keep going")];
+    case "teammate":
+      return [];
     case "error":
       return [text("Try that again"), text("Explain what went wrong and propose a fix")];
     case "question":

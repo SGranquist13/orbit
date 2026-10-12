@@ -15,6 +15,7 @@ mod routines;
 mod settings;
 mod simplify;
 mod skills;
+mod teammates;
 mod trunk;
 mod usage;
 
@@ -177,7 +178,11 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
             _ => {}
         }
     }
+    if let AgentEvent::UserMessage { text, .. } = &ev {
+        teammates::on_user_message(app, state, ws_id, text);
+    }
     if let AgentEvent::TurnCompleted { is_error, error, interrupted, .. } = &ev {
+        teammates::finish_turn(app, state, ws_id, *is_error, error.as_deref(), *interrupted);
         // A routine run defers its notification until it knows whether the run was worth reporting.
         let routine = routines::finish_turn(app, state, ws_id, updated.as_ref(), *is_error, error.as_deref(), *interrupted);
         // The user stopped it themselves, so no notification for interruptions.
@@ -213,7 +218,7 @@ pub(crate) fn notify_turn_done(app: &AppHandle, settings: &settings::Settings, w
 }
 
 /// Appended to every agent's system prompt so shipping skills know the branch, base, and issue.
-fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], profile: Option<&skills::Profile>) -> String {
+fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], profile: Option<&skills::Profile>, teammate: Option<&str>, readonly: bool) -> String {
     let mut s = format!(
         "You are running inside an Orbit workspace named \"{}\".\n\
          - Repository: {}. Your working directory is a dedicated git worktree for this task; work only there.\n\
@@ -239,9 +244,12 @@ fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], pr
     }
     if let Some(p) = profile {
         s.push_str(&format!("\n## Your role: {}\n{}\n", p.name, p.instructions));
-        if p.readonly {
-            s.push_str("You are in a read-only role: do not create, edit, or delete files, and do not commit or push.\n");
-        }
+    }
+    if readonly {
+        s.push_str("You are in a read-only role: do not create, edit, or delete files, and do not commit or push.\n");
+    }
+    if let Some(t) = teammate {
+        s.push_str(t);
     }
     s
 }
@@ -277,6 +285,17 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         AgentKind::Codex => vec![],
     };
     let profile = resolve_profile(state, ws);
+    // A teammate's workspace also carries who it is, its memory, and (for Claude) access to its notes folder.
+    let teammate = ws.teammate.as_deref().and_then(|slug| teammates::get(&state.home, slug));
+    let readonly = match &teammate {
+        Some(t) => teammates::effective_readonly(t.readonly, profile.as_ref().is_some_and(|p| p.readonly)),
+        None => profile.as_ref().is_some_and(|p| p.readonly),
+    };
+    let teammate_context = teammate.as_ref().map(|t| teammates::context_section(&state.home, t));
+    let mut add_dirs = add_dirs;
+    if teammate.is_some() && kind == AgentKind::Claude {
+        add_dirs.push(teammates::dir(&state.home));
+    }
     let settings = state.settings();
     let settings_local_ollama_url = settings.ollama_url();
     let cfg = SessionConfig {
@@ -286,8 +305,8 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         resume: ws.agent_session_id.clone(),
         plugin_dirs,
         add_dirs,
-        instructions: Some(workspace_context(ws, &repo, &attachments, profile.as_ref())),
-        readonly: profile.as_ref().is_some_and(|p| p.readonly),
+        instructions: Some(workspace_context(ws, &repo, &attachments, profile.as_ref(), teammate_context.as_deref(), readonly)),
+        readonly,
         permission_mode: settings.claude_permission_mode,
         sandbox: settings.codex_sandbox,
         local_url: Some(settings_local_ollama_url),
@@ -353,11 +372,13 @@ pub(crate) struct NewWorkspaceArgs {
     pub routine_id: Option<String>,
     /// Replaces the Settings branch prefix for this workspace (Simplify routines use `refactor/`).
     pub branch_prefix: Option<String>,
+    /// Set when a teammate creates the workspace for a task.
+    pub teammate: Option<String>,
 }
 
 /// Worktree + branch + DB row + attachments; shared by `create_workspace` and routine runs.
 pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, args: NewWorkspaceArgs) -> CmdResult<Workspace> {
-    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix } = args;
+    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix, teammate } = args;
     AgentKind::parse(&agent).ok_or("unknown agent")?;
     let repo = state.db().repo(&repo_id).map_err(err)?;
     let slug = match issue_number {
@@ -395,6 +416,7 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
         profile: profile.filter(|p| !p.is_empty()),
         snoozed_until: 0,
         routine_id,
+        teammate,
         ..Default::default()
     };
     state.db().insert_workspace(&ws).map_err(err)?;
@@ -423,7 +445,7 @@ async fn create_workspace(
     issue_number: Option<i64>,
     profile: Option<String>,
 ) -> CmdResult<Workspace> {
-    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None }).await?;
+    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
         if issue_number.is_none() && is_derived_name(&ws.name, &p) {
@@ -1248,6 +1270,16 @@ pub fn run() {
             remote::remote_pairing,
             remote::remote_devices,
             remote::remote_revoke,
+            teammates::list_teammates,
+            teammates::get_teammate,
+            teammates::save_teammate,
+            teammates::delete_teammate,
+            teammates::teammate_thread,
+            teammates::teammate_tasks,
+            teammates::teammate_send,
+            teammates::teammate_mark_seen,
+            teammates::teammate_memory,
+            teammates::set_teammate_memory,
             routines::list_routines,
             routines::save_routine,
             routines::delete_routine,

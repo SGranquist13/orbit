@@ -546,4 +546,40 @@ await step("resume-after-restart", async () => {
   await shot("10-resumed");
 });
 
+await step("teammates", async () => {
+  // A custom teammate (Claude haiku) takes a one-line task: it creates its own workspace, the turn
+  // ends, and a report lands in its thread. Runs last so its workspace cannot disturb earlier steps.
+  const slug = "e2e-helper";
+  const saved = await invoke("save_teammate", {
+    input: { name: "E2E helper", avatar: "E", description: "Throwaway teammate for the e2e", agent: "claude", model: "haiku", profile: null, repos: [], instructions: "Answer in one word. Never edit files." },
+  });
+  if (saved.slug !== slug || saved.bundled) throw new Error(`bad teammate: ${JSON.stringify(saved)}`);
+  const team = await invoke("list_teammates");
+  if (!team.some((t) => t.slug === slug) || !team.some((t) => t.slug === "builder" && t.bundled)) throw new Error(`teammate list wrong: ${team.map((t) => t.slug)}`);
+  const known = new Set((await invoke("list_workspaces")).map((w) => w.id));
+  const sent = await invoke("teammate_send", { slug, text: "Reply with exactly the word: ready. Do not edit files.", repoId: null, newTask: null });
+  if (!sent.newTask || known.has(sent.workspaceId)) throw new Error(`expected a new task workspace: ${JSON.stringify(sent)}`);
+  const report = await until("teammate report in the thread", async () => {
+    const thread = await invoke("teammate_thread", { slug, limit: 50 });
+    return thread.find((m) => m.kind === "task_report" || m.kind === "error") ?? null;
+  }, 180_000, 2000);
+  if (report.kind !== "task_report" || !/ready/i.test(report.text)) throw new Error(`bad report: ${JSON.stringify(report)}`);
+  const ws = (await invoke("list_workspaces")).find((w) => w.teammate === slug);
+  if (!ws || ws.id !== sent.workspaceId || ws.model !== "haiku") throw new Error(`no teammate workspace: ${JSON.stringify(ws)}`);
+  const [task] = await invoke("teammate_tasks", { slug });
+  if (task.workspaceId !== ws.id || !["done", "waiting"].includes(task.status)) throw new Error(`bad task: ${JSON.stringify(task)}`);
+  if (!(await invoke("teammate_memory", { slug })).includes("Memory")) throw new Error("memory file was not created on first use");
+  // Open the thread through the teammates palette (Ctrl+Shift+T) and look at it.
+  await key("t", { ctrl: true, shift: true });
+  await waitFor("teammates palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+  await type("E2E helper");
+  await key("Enter");
+  await waitFor("thread view with the report", `const t = document.querySelector('[data-teammate-thread="${slug}"]'); return !!t && t.innerText.toLowerCase().includes('ready')`, 10_000);
+  await shot("12-teammate-thread");
+  await invoke("delete_teammate", { slug });
+  if ((await invoke("list_teammates")).some((t) => t.slug === slug)) throw new Error("teammate still listed after delete");
+  await js(`location.reload()`);
+  await sleep(1500);
+});
+
 await h.finish();
