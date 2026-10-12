@@ -16,7 +16,7 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 
 **Want (user's idea):** hand a task to a dedicated agent, a coworker, and get finished work back. Reference: Grok Bot (2026-10-12 screenshot): a sidebar of named teammates (Chief, Sales Outbound, Inbox Manager, ...), each with an avatar, last-message preview and time; you message one, it works with its tools and comes back with "Done".
 
-**Standalone, not a replacement for profiles.** Profiles stay as the per-workspace mode (and get a clearer name, see below). A teammate is a separate thing: a persistent, named identity you delegate to, which can itself use a profile/role for its workspaces.
+**Standalone, not a replacement for profiles.** Profiles stay as the per-workspace mode (see below). A teammate is a separate thing: a persistent, named identity you delegate to, which can itself use a profile/role for its workspaces.
 
 **Sketch (Orbit's version, coding-focused):**
 - **A teammate** = name + avatar (greyscale glyph; colour only for status) + instructions + default agent/model + permissions (read-only enforced where set) + skills/packs + repos it may work in + **its own memory** (a notes file it reads and appends to) + **its own routines** (#6).
@@ -33,7 +33,7 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 - Autonomy: ship PRs alone, or stop at "ready for you"? [stop at a draft PR, as routines do]
 - Custom teammates from the UI (name, avatar, instructions, model)? [yes; saved in the same agent file format]
 
-**Rename "profiles" (separate small change):** a profile is really the *role* the agent plays in one workspace (the context prompt already says "Your role"). Candidates: **Role** (fits "Planner", "Reviewer"; matches the prompt), **Mode** (as in "plan mode"; but Claude Code already uses that word for permissions), **Hat**. [Proposed: **Role**: "Role: Planner" in the composer, "Switch role..." in the palette, Settings "Skills & roles".]
+**Profiles stay** (user, 2026-10-12): they are the per-workspace mode, like Cline's / Roo's modes and similar features in other harnesses. Possibly rename them to **Modes** to match that convention (note: Claude Code also uses "mode" for permission modes, which Orbit shows in Settings > Agents). Undecided.
 
 ### 6. Routines (scheduled runs)
 
