@@ -575,11 +575,10 @@ await step("teammates", async () => {
   const [task] = await invoke("teammate_tasks", { slug });
   if (task.workspaceId !== ws.id || !["done", "waiting"].includes(task.status)) throw new Error(`bad task: ${JSON.stringify(task)}`);
   if (!(await invoke("teammate_memory", { slug })).includes("Memory")) throw new Error("memory file was not created on first use");
-  // Open the thread through the teammates palette (Ctrl+Shift+T) and look at it.
+  // Open the Teammates view (Ctrl+Shift+T), pick the teammate in the list and look at its thread.
   await key("t", { ctrl: true, shift: true });
-  await waitFor("teammates palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
-  await type("E2E helper");
-  await key("Enter");
+  await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${slug}"]')`, 5000);
+  await js(`document.querySelector('[data-teammates] [data-teammate="${slug}"]').click()`);
   await waitFor("thread view with the report", `const t = document.querySelector('[data-teammate-thread="${slug}"]'); return !!t && t.innerText.toLowerCase().includes('ready')`, 10_000);
   await shot("12-teammate-thread");
   await invoke("delete_teammate", { slug });

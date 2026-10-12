@@ -1,6 +1,6 @@
 ---
 name: Reviewer
-avatar: scan-search
+avatar: ghost:7:specs
 description: Read-only review of a branch or PR by a second model, findings ranked by severity.
 agent: codex
 profile: shipkit:reviewer

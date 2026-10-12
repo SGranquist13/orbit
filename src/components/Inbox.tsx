@@ -4,7 +4,8 @@ import { activeProfile } from "../lib/ipc";
 import { attentionReason, formatSnooze, isSnoozed, reasonMeta, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
 import { api, type Summary, type TeammateView, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
-import { AgentIcon, Avatar, Button, Kbd, StatusDot, TeammateDot, agentLabel, cn } from "./ui";
+import { TeammateAvatar } from "./TeammateAvatar";
+import { AgentIcon, Button, Kbd, StatusDot, TeammateDot, agentLabel, cn } from "./ui";
 
 type Tab = "needs" | "all";
 interface Row {
@@ -218,7 +219,7 @@ function TeammateInboxRow({ t }: { t: TeammateView }) {
         className="block w-full rounded-[5px] border-[1.5px] border-transparent px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-panel"
       >
         <div className="flex items-center gap-2.5">
-          <Avatar avatar={t.avatar} name={t.name} size={18} />
+          <TeammateAvatar avatar={t.avatar} name={t.name} size={20} />
           <span className="truncate text-[13px] font-medium">{t.name}</span>
           <span className="truncate text-[12px] text-mute">Teammate</span>
           <span className="ml-auto flex shrink-0 items-center gap-3">
