@@ -195,10 +195,10 @@ _Last verified: 2026-10-12: `bun run e2e` 20/20 (adds routines, trunk save point
 
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
-| Teammates section in the sidebar: named coworkers with avatar, status and last-message preview | P1 | ⬜ | Phase 1 |
-| Teammate thread: hand a task in chat; the teammate creates the workspace(s) itself and reports back with links and a result | P1 | ⬜ | Phase 1 |
-| Teammate memory (notes file it reads and appends to, editable) | P2 | ⬜ | Phase 1 |
-| Starter team (Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer) + create/edit custom teammates from the UI | P1 | ⬜ | Phase 1 |
+| Teammates section in the sidebar: named coworkers with avatar, status and last-message preview | P1 | 🟢 | Built 2026-10-12, mock-verified (section above the repo list, collapsed rail with status dots, workspace label in rows and header, palette "Ask a teammate…" and Ctrl+Shift+T, a `Teammate` row group in the inbox). Status derivation is unit-tested; first real-app run is the new `teammates` e2e step (never run) |
+| Teammate thread: hand a task in chat; the teammate creates the workspace(s) itself and reports back with links and a result | P1 | 🟢 | Rust: `teammate_send` (new task vs continue, repo choice), tables `teammate_messages` / `teammate_tasks`, `workspaces.teammate`, report on `TurnCompleted` via `llm::Task::TeammateReport` (own Settings > Models row) with the agent's last message as fallback. Delegation, repo choice, routing, report parsing/fallback and persistence are unit-tested; the UI flow only against the mock's scripted reports. Not yet run with a real agent. Teammates stop at a draft PR by instruction only (no enforcement). Phone mirroring not built |
+| Teammate memory (notes file it reads and appends to, editable) | P2 | 🟢 | `~/.orbit/teammates/<slug>.memory.md`, last 4 KB injected into each new session's context with the instruction to append learnings; Claude gets the folder via `--add-dir`, Codex only the path (its workspace-write sandbox may refuse the write). Editable in the editor's Memory tab. Excerpt cap and context text unit-tested; the agent actually appending is unverified. Edits apply to the next session, not a running one |
+| Starter team (Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer) + create/edit custom teammates from the UI | P1 | 🟢 | Definitions are markdown + frontmatter (`src-tauri/shipkit/teammates/*.md`, custom ones in `~/.orbit/teammates/`); a same-slug custom file overrides a starter one and "Reset to default" deletes it. Parse/render round-trip, override and reset unit-tested; editor dialog mock-verified |
 | Chief: splits a vague request and hands parts to other teammates; hand-off chips between teammates | P2 | ⬜ | Phase 2 |
 | Teammate routines (scheduled work owned by a teammate) | P3 | ⬜ | Phase 2 |
 

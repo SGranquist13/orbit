@@ -4,6 +4,7 @@ import { useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import type { Repo, Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
+import { TeammateLabel, TeammatesRail, TeammatesSection } from "./Teammates";
 import { AgentIcon, DiffStat, Kbd, OrbitMark, StatusDot, ThemeToggle, cn } from "./ui";
 
 export async function pickRepo() {
@@ -24,7 +25,8 @@ export function Sidebar() {
   const view = useApp((s) => s.view);
   const summaries = useApp((s) => s.summaries);
   const prs = useApp((s) => s.prs);
-  const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id])).length;
+  const teammatesNeedYou = useApp((s) => s.teammates.filter((t) => t.status === "needsYou").length);
+  const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id])).length + teammatesNeedYou;
   const activeRoutines = useApp((s) => s.routines.filter((r) => r.enabled).length);
   const collapsed = useApp((s) => s.sidebarCollapsed);
   if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} />;
@@ -82,6 +84,7 @@ export function Sidebar() {
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <TeammatesSection />
         {repos.map((repo) => (
           <RepoGroup key={repo.id} repo={repo} workspaces={workspaces.filter((w) => w.repoId === repo.id)} />
         ))}
@@ -163,6 +166,8 @@ function Rail({ workspaces, needsYou, activeRoutines }: { workspaces: Workspace[
       </nav>
       <div className="dither-rule w-full bg-line-strong" />
       <div className="flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto py-2">
+        <TeammatesRail />
+        <div className="my-1 h-px w-5 bg-line" />
         {workspaces.map((ws) => (
           <button
             key={ws.id}
@@ -276,6 +281,7 @@ function WorkspaceRow({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-30" />}
         <StatusDot status={ws.status} unread={unread} />
         <span className={cn("relative min-w-0 flex-1 truncate", unread && "text-fg")}>{ws.name}</span>
+        {ws.teammate && <TeammateLabel slug={ws.teammate} className="relative max-w-[72px] truncate" />}
         {ws.routineId && (
           <span title="Started by a routine" className="relative shrink-0 text-mute">
             <Clock className="size-3" />

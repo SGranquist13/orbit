@@ -6,6 +6,7 @@ Working notes for features we're thinking about. **Nothing here gets built until
 
 Raw ideas, as they come. Unsorted, unfiltered.
 
+- Phone mirror of teammates: threads (and the teammate status) should reach `ide_mobile` like workspaces do. Needs a protocol change in `ide_mobile/docs/protocol.md` first (a `teammates` snapshot plus `teammate-message` / `teammate-status` pushes, and a `teammate_send` RPC). Note `Workspace` now serializes a new `teammate` field (additive, the phone ignores it).
 - Phone mirror: a workspace that Orbit archives itself (a quiet routine run) or the user archives never reaches the phone as gone, because `Workspace` has no archived flag and the protocol has no "workspace removed" message; it only disappears at the next `snapshot`. Needs a protocol change in `ide_mobile/docs/protocol.md` first (e.g. `{"t":"workspace-removed","workspaceId"}`), then `remote::publish_*` from `archive_inner`.
 
 ## Shaping

@@ -10,6 +10,7 @@ import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
 import { SimplifyPanel } from "./components/SimplifyPanel";
 import { Settings } from "./components/Settings";
+import { TeammateEditor, TeammateThread } from "./components/Teammates";
 import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
@@ -26,6 +27,8 @@ export default function App() {
   const shipOpen = useApp((s) => s.shipOpen);
   const simplifyOpen = useApp((s) => s.simplifyOpen);
   const focusMode = useApp((s) => s.focusMode);
+  const teammateEditor = useApp((s) => s.teammateEditor);
+  const selectedTeammate = useApp((s) => s.selectedTeammate);
 
   useEffect(() => {
     useApp.getState().init().catch((e) => useApp.getState().setError(String(e)));
@@ -50,6 +53,11 @@ export default function App() {
         // Routines. Not Ctrl+Shift+R (reload) or Ctrl+Shift+J (DevTools console) in WebView2.
         e.preventDefault();
         s.setView(s.view === "routines" ? "workspace" : "routines");
+      } else if (key === "t" && e.shiftKey) {
+        // Ask a teammate: the palette restricted to teammates.
+        e.preventDefault();
+        if (s.paletteOpen) s.setPaletteOpen(false);
+        else s.openPalette("teammates");
       } else if (e.key === ",") {
         e.preventDefault();
         if (s.view === "settings") s.closeSettings();
@@ -94,6 +102,8 @@ export default function App() {
         <Issues />
       ) : view === "routines" ? (
         <Routines />
+      ) : view === "teammate" && selectedTeammate ? (
+        <TeammateThread key={selectedTeammate} slug={selectedTeammate} />
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />
@@ -103,6 +113,7 @@ export default function App() {
         <Empty />
       )}
       {newOpen && <NewWorkspace />}
+      {teammateEditor && <TeammateEditor key={teammateEditor} slug={teammateEditor} />}
       {paletteOpen && <Palette />}
       {packsOpen && <Packs />}
       {ticketOpen && <NewTicket />}

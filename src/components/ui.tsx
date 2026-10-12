@@ -1,6 +1,6 @@
-import { Hexagon, Moon, Sun } from "lucide-react";
+import { Bot, BookOpen, Bug, Compass, FlaskConical, Hammer, Hexagon, Map as MapIcon, Moon, PenLine, Rocket, ScanSearch, ShieldCheck, Sparkles, Sun, Telescope, Ticket, Wrench, Zap, type LucideIcon } from "lucide-react";
 import { cn } from "../lib/cn";
-import type { AgentKind, WorkspaceStatus } from "../lib/ipc";
+import type { AgentKind, TeammateStatus, WorkspaceStatus } from "../lib/ipc";
 import orbitArt from "../assets/orbit.png";
 import { resolvedTheme, useTheme } from "../lib/theme";
 
@@ -112,4 +112,45 @@ export function OrbitMark({ size, zoom = 1, className }: { size: number; zoom?: 
       />
     </span>
   );
+}
+
+/** Icons a teammate's `avatar` may name (anything else is shown as text: a glyph or letter). */
+export const AVATAR_ICONS: Record<string, LucideIcon> = {
+  hammer: Hammer,
+  bug: Bug,
+  map: MapIcon,
+  "scan-search": ScanSearch,
+  rocket: Rocket,
+  ticket: Ticket,
+  bot: Bot,
+  sparkles: Sparkles,
+  compass: Compass,
+  "pen-line": PenLine,
+  wrench: Wrench,
+  "book-open": BookOpen,
+  "shield-check": ShieldCheck,
+  zap: Zap,
+  telescope: Telescope,
+  "flask-conical": FlaskConical,
+};
+
+/** A teammate's avatar in a small greyscale square: an icon from `AVATAR_ICONS`, else the glyph/letter. */
+export function Avatar({ avatar, name, size = 24, className }: { avatar: string; name: string; size?: number; className?: string }) {
+  const Icon = AVATAR_ICONS[avatar];
+  const glyph = (avatar || name).trim().slice(0, 2).toUpperCase();
+  return (
+    <span
+      className={cn("inline-grid shrink-0 place-items-center rounded-[4px] border-[1.5px] border-line-strong bg-raised text-fg", className)}
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      {Icon ? <Icon style={{ width: size * 0.54, height: size * 0.54 }} strokeWidth={2.25} /> : <span style={{ fontSize: size * 0.46 }} className="font-semibold leading-none">{glyph}</span>}
+    </span>
+  );
+}
+
+/** Teammate status marker: run = working, warn = needs you, bad = its last message was an error. */
+export function TeammateDot({ status, failed, className }: { status: TeammateStatus; failed?: boolean; className?: string }) {
+  const tone = status === "working" ? "bg-run animate-pulse-dot" : status === "needsYou" ? (failed ? "bg-bad" : "bg-warn") : "bg-mute/50";
+  return <span className={cn("inline-block size-2 shrink-0", tone, className)} title={status === "working" ? "Working" : status === "needsYou" ? "Needs you" : "Idle"} />;
 }

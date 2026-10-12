@@ -1,18 +1,23 @@
 import { Command } from "cmdk";
-import { AlarmClock, CalendarClock, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Undo2, UserRound, Zap } from "lucide-react";
+import { useState } from "react";
+import { AlarmClock, CalendarClock, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
 import { pickRepo } from "./Sidebar";
-import { AgentIcon, StatusDot } from "./ui";
+import { AgentIcon, Avatar, StatusDot, TeammateDot } from "./ui";
 
 export function Palette() {
   const workspaces = useApp((s) => s.workspaces);
   const repos = useApp((s) => s.repos);
   const skills = useApp((s) => s.skills);
   const profiles = useApp((s) => s.profiles);
+  const teammates = useApp((s) => s.teammates);
+  // "Ask a teammate" narrows the palette to teammates; the scope can come from the store (Ctrl Shift T) or the entry.
+  const [scope, setScope] = useState(useApp.getState().paletteScope);
+  const [search, setSearch] = useState("");
   const selectedId = useApp((s) => s.selectedId);
   const selected = workspaces.find((w) => w.id === selectedId);
   const currentProfile = selected && activeProfile(profiles, selected);
@@ -37,12 +42,41 @@ export function Palette() {
       >
         <Command.Input
           autoFocus
-          placeholder="Jump to a workspace or run a command…"
+          value={search}
+          onValueChange={setSearch}
+          placeholder={scope === "teammates" ? "Ask a teammate…" : "Jump to a workspace or run a command…"}
           className="h-12 w-full border-b-[1.5px] border-line-strong bg-transparent px-4 text-[15px] font-medium placeholder:text-mute focus:outline-none"
         />
         <Command.List className="max-h-[380px] overflow-y-auto p-1.5">
           <Command.Empty className="px-3 py-6 text-center text-[12px] text-mute">No results.</Command.Empty>
+          {teammates.length > 0 && (
+            <Command.Group heading="Teammates" className={heading}>
+              {teammates.map((t) => (
+                <Command.Item key={t.slug} value={`Ask ${t.name} (teammate) ${t.description}`} className={item} onSelect={run(() => useApp.getState().openTeammate(t.slug))}>
+                  <Avatar avatar={t.avatar} name={t.name} size={18} className="border-transparent bg-transparent" />
+                  <span className="shrink-0">Ask {t.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-mute">{t.description}</span>
+                  <TeammateDot status={t.status} />
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
+          {scope !== "teammates" && (
+          <>
           <Command.Group heading="Actions" className={heading}>
+            <Command.Item
+              className={item}
+              value="Ask a teammate… (hand off a task)"
+              onSelect={() => {
+                setScope("teammates");
+                setSearch("");
+              }}
+            >
+              <Users className="size-3.5" /> Ask a teammate…
+            </Command.Item>
+            <Command.Item className={item} value="New teammate" onSelect={run(() => useApp.getState().setTeammateEditor("new"))}>
+              <Plus className="size-3.5" /> New teammate
+            </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setView("inbox"))}>
               <Inbox className="size-3.5" /> Open inbox
             </Command.Item>
@@ -243,6 +277,8 @@ export function Palette() {
                 </Command.Item>
               ))}
             </Command.Group>
+          )}
+          </>
           )}
         </Command.List>
       </Command>

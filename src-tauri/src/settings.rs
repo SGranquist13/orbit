@@ -378,6 +378,8 @@ mod tests {
         assert!(d.patched(&json!({ "modelCommitMessage": "off" })).is_err());
         assert!(d.patched(&json!({ "modelRoutineSummary": "local:" })).is_err());
         assert!(d.patched(&json!({ "modelPrDescription": "haiku" })).is_err());
+        assert_eq!(d.patched(&json!({ "modelTeammateReport": "local:llama3.2:3b" })).unwrap().model_teammate_report, "local:llama3.2:3b");
+        assert!(d.patched(&json!({ "modelTeammateReport": "haiku" })).is_err());
         assert!(d.patched(&json!({ "localProvider": "vllm" })).is_err());
         assert!(d.patched(&json!({ "localTimeoutSecs": 0 })).is_err());
     }
