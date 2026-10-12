@@ -46,7 +46,14 @@ export function createHarness({ scratch, port = 9333, only }) {
   // ── App process ─────────────────────────────────────────────
   async function launch() {
     app = spawn(exe, [], {
-      env: { ...process.env, ORBIT_HOME: home, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+      // Own WebView2 profile: otherwise a running Orbit (the user's own window) owns the shared browser
+      // process, the test window joins it, and the debugging port never opens.
+      env: {
+        ...process.env,
+        ORBIT_HOME: home,
+        WEBVIEW2_USER_DATA_FOLDER: path.join(scratch, "webview2"),
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+      },
       stdio: "ignore",
     });
     for (let i = 0; i < 60; i++) {
