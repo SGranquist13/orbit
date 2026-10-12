@@ -290,6 +290,8 @@ pub struct Routine {
     pub next_run_at: Option<i64>,
     /// Status of the most recent run, for the list's dot (computed on read).
     pub last_status: Option<String>,
+    /// Slug of the teammate that owns this routine: its runs are tasks in that teammate's thread.
+    pub teammate: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -324,9 +326,32 @@ pub struct RoutineInput {
     #[serde(default)]
     pub standing_workspace_id: Option<String>,
     pub enabled: bool,
+    /// Owner: a teammate slug, or None for a plain routine.
+    #[serde(default)]
+    pub teammate: Option<String>,
 }
 
 // ---------------------------------------------------------------- pure decisions
+
+/// The teammate a run goes through, if any. Only message routines can be owned: a teammate takes a task,
+/// not a skill call or a Simplify pass.
+pub fn owner_of(r: &Routine) -> Option<&str> {
+    r.teammate.as_deref().filter(|_| matches!(r.action, Action::Prompt { .. }))
+}
+
+/// Rules for owned routines: message only, and a fresh workspace each run (each run is a new task).
+pub fn check_owner(teammate: Option<&str>, action: &Action, mode: Mode) -> Result<(), String> {
+    if teammate.is_none() {
+        return Ok(());
+    }
+    if !matches!(action, Action::Prompt { .. }) {
+        return Err("A teammate's routine sends a message; skills and Simplify run without an owner".into());
+    }
+    if mode != Mode::Fresh {
+        return Err("A teammate's routine starts a new task each run".into());
+    }
+    Ok(())
+}
 
 /// Which due routines to start this tick, oldest due first. Busy ones are skipped (and rescheduled);
 /// at the concurrency cap the rest stay due for the next tick.
@@ -540,7 +565,29 @@ pub async fn start_run(app: &AppHandle, state: &AppState, routine_id: &str) -> R
     }
 }
 
+/// An owned routine: the run is a task in the teammate's thread, marked as scheduled.
+async fn launch_via_teammate(app: &AppHandle, state: &AppState, routine: &Routine, slug: &str) -> Result<Workspace, String> {
+    let Action::Prompt { text } = &routine.action else { return Err("not a message routine".into()) };
+    let t = crate::teammates::get(&state.home, slug).ok_or_else(|| format!("The owner `{slug}` no longer exists"))?;
+    let repos = state.db().repos().map_err(err)?;
+    let repo_id = crate::teammates::pick_repo(Some(&routine.repo_id), &t.repos, &repos)?;
+    let start = crate::teammates::Start {
+        slug: slug.to_string(),
+        repo_id,
+        name: Some(format!("{} {}", routine.name, Local::now().format("%Y-%m-%d %H:%M"))),
+        display: text.clone(),
+        payload: format!("{}\n\n{text}", routine_note(&routine.name)),
+        origin: crate::teammates::Origin { parent_task_id: None, kind: Some("routine".into()), reference: Some(routine.name.clone()) },
+        start_ref: None,
+        user_message: false,
+    };
+    crate::teammates::start_task(app, state, start).await.map(|(_, ws)| ws)
+}
+
 async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<Workspace, String> {
+    if let Some(slug) = owner_of(routine) {
+        return launch_via_teammate(app, state, routine, slug).await;
+    }
     let existing = routine
         .standing_workspace_id
         .as_deref()
@@ -566,6 +613,7 @@ async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<
                     routine_id: Some(routine.id.clone()),
                     branch_prefix: (routine.action == Action::Simplify).then(|| SIMPLIFY_PREFIX.to_string()),
                     teammate: None,
+                    start_ref: None,
                 },
             )
             .await?;
@@ -861,6 +909,11 @@ pub fn save_routine(app: AppHandle, state: State<AppState>, input: RoutineInput)
         Action::Skill { skill_id, .. } if skill_id.trim().is_empty() => return Err("pick a skill".into()),
         _ => {}
     }
+    let teammate = input.teammate.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    check_owner(teammate.as_deref(), &input.action, input.mode)?;
+    if let Some(slug) = &teammate {
+        crate::teammates::get(&state.home, slug).ok_or_else(|| format!("No teammate `{slug}`"))?;
+    }
     state.db().repo(&input.repo_id).map_err(|_| "pick a repository".to_string())?;
     let now = db::now();
     let next = if input.enabled { next_after_ms(&input.schedule, now) } else { None };
@@ -891,6 +944,7 @@ pub fn save_routine(app: AppHandle, state: State<AppState>, input: RoutineInput)
         last_run_at: existing.as_ref().and_then(|r| r.last_run_at),
         next_run_at: next,
         last_status: None,
+        teammate,
     };
     if existing.is_some() {
         state.db().update_routine(&routine).map_err(err)?;
@@ -1107,7 +1161,38 @@ mod tests {
             last_run_at: None,
             next_run_at: next,
             last_status: None,
+            teammate: None,
         }
+    }
+
+    #[test]
+    fn owned_routines_route_through_the_teammate() {
+        let mut r = routine("r", true, None);
+        assert_eq!(owner_of(&r), None);
+        r.teammate = Some("builder".into());
+        assert_eq!(owner_of(&r), Some("builder"));
+        // Only message routines can be owned; a skill or Simplify routine ignores a stale owner.
+        r.action = Action::Simplify;
+        assert_eq!(owner_of(&r), None);
+        r.action = Action::Skill { skill_id: "a:b".into(), args: String::new() };
+        assert_eq!(owner_of(&r), None);
+
+        let prompt = Action::Prompt { text: "x".into() };
+        assert!(check_owner(None, &Action::Simplify, Mode::Standing).is_ok());
+        assert!(check_owner(Some("builder"), &prompt, Mode::Fresh).is_ok());
+        assert!(check_owner(Some("builder"), &Action::Simplify, Mode::Fresh).is_err());
+        assert!(check_owner(Some("builder"), &prompt, Mode::Standing).is_err());
+        // The owner survives the database round trip.
+        let db = Db::memory();
+        db.insert_repo(&db::Repo { id: "r".into(), name: "repo".into(), path: "/x".into(), base_branch: "main".into() }).unwrap();
+        let mut owned = routine("owned", true, Some(5));
+        owned.repo_id = "r".into();
+        owned.teammate = Some("reviewer".into());
+        db.insert_routine(&owned).unwrap();
+        assert_eq!(db.routine("owned").unwrap().teammate.as_deref(), Some("reviewer"));
+        owned.teammate = None;
+        db.update_routine(&owned).unwrap();
+        assert_eq!(db.routine("owned").unwrap().teammate, None);
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub enum Task {
     RoutineSummary,
     PrDescription,
     TeammateReport,
+    ChiefPlan,
 }
 
 impl Task {
@@ -40,6 +41,7 @@ impl Task {
             Task::RoutineSummary => &s.model_routine_summary,
             Task::PrDescription => &s.model_pr_description,
             Task::TeammateReport => &s.model_teammate_report,
+            Task::ChiefPlan => &s.model_chief_plan,
         }
     }
 }
@@ -112,6 +114,8 @@ pub fn last_errors() -> HashMap<String, String> {
 /// - `CommitMessage`: `{"subject": string, "body": string}`; required, so `Ok(Some(_))` always (or `Err`).
 /// - `RoutineSummary`: `{"summary": string, "nothingToDo": boolean}`; required.
 /// - `TeammateReport`: `{"summary": string, "needsYou": boolean, "question"?: string}`; required (`teammates::report`).
+/// - `ChiefPlan`: `{"summary": string, "parts": [{"teammate": string, "title": string, "brief": string, "dependsOn"?: integer[]}]}`; required (`chief::plan_request`).
+///   The combined report of a finished plan reuses `TeammateReport`.
 /// - `PrDescription`: `{"title": string, "body": string}`; required. Only called when this task is
 ///   set to a local model (see `trunk::pr_draft_enabled`).
 pub async fn complete_json(state: &Inner, task: Task, system: &str, prompt: &str, schema: &Value) -> anyhow::Result<Option<Value>> {

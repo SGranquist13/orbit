@@ -79,6 +79,7 @@ pub struct Settings {
     pub model_routine_summary: String,
     pub model_pr_description: String,
     pub model_teammate_report: String,
+    pub model_chief_plan: String,
     /// Experimental: offer "Local: <model>" in the New Workspace model picker.
     pub local_agents: bool,
     // simplify (simplify.rs)
@@ -136,6 +137,7 @@ impl Default for Settings {
             model_routine_summary: "default".into(),
             model_pr_description: "default".into(),
             model_teammate_report: "default".into(),
+            model_chief_plan: "default".into(),
             local_agents: false,
             simplify_model: "sonnet".into(),
             simplify_max_candidates: 12,
@@ -247,6 +249,7 @@ impl Settings {
         check_task_model("modelRoutineSummary", &self.model_routine_summary, false)?;
         check_task_model("modelPrDescription", &self.model_pr_description, false)?;
         check_task_model("modelTeammateReport", &self.model_teammate_report, false)?;
+        check_task_model("modelChiefPlan", &self.model_chief_plan, false)?;
         if !(1..=600).contains(&self.local_timeout_secs) {
             return Err(format!("invalid localTimeoutSecs {} (expected 1-600)", self.local_timeout_secs));
         }

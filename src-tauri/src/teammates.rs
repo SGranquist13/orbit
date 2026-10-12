@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, State};
 
 /// Starter team: (slug, file contents). Also written to `packs/shipkit/teammates/` on startup.
 pub const BUNDLED: &[(&str, &str)] = &[
+    ("chief", include_str!("../shipkit/teammates/chief.md")),
     ("builder", include_str!("../shipkit/teammates/builder.md")),
     ("debugger", include_str!("../shipkit/teammates/debugger.md")),
     ("planner", include_str!("../shipkit/teammates/planner.md")),
@@ -368,9 +369,11 @@ pub struct TeammateMessage {
     pub status: Option<String>,
     /// Changed files in the task workspace when a report was posted.
     pub files: Option<i64>,
+    /// Extra reference: the plan id (`plan`, combined report), the target teammate (`handoff`), or the origin (`brief`).
+    pub meta: Option<String>,
 }
 
-fn message(slug: &str, role: &str, kind: &str, text: &str, workspace_id: Option<&str>) -> TeammateMessage {
+pub(crate) fn message(slug: &str, role: &str, kind: &str, text: &str, workspace_id: Option<&str>) -> TeammateMessage {
     TeammateMessage {
         id: uuid::Uuid::new_v4().to_string(),
         slug: slug.to_string(),
@@ -381,6 +384,7 @@ fn message(slug: &str, role: &str, kind: &str, text: &str, workspace_id: Option<
         kind: kind.into(),
         status: None,
         files: None,
+        meta: None,
     }
 }
 
@@ -396,6 +400,12 @@ pub struct TeammateTask {
     pub created_at: i64,
     pub finished_at: Option<i64>,
     pub summary: Option<String>,
+    /// What started this task: a Chief plan's id (`origin_kind` = chief) or the task it was handed off from.
+    pub parent_task_id: Option<String>,
+    /// `chief` | `handoff` | `routine`; None for a task the user started.
+    pub origin_kind: Option<String>,
+    /// Slug of the delegating teammate (chief, handoff) or the routine's name (routine).
+    pub origin_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -474,7 +484,7 @@ pub struct Report {
     pub question: Option<String>,
 }
 
-fn clip(text: &str, max: usize) -> String {
+pub(crate) fn clip(text: &str, max: usize) -> String {
     let t = text.trim();
     if t.chars().count() <= max {
         t.to_string()
@@ -536,11 +546,11 @@ fn report_prompt(name: &str, digest: &[String], files: &[String]) -> String {
 
 // ---------------------------------------------------------------- runtime
 
-fn changed(app: &AppHandle, slug: &str) {
+pub(crate) fn changed(app: &AppHandle, slug: &str) {
     let _ = app.emit("teammate-changed", slug);
 }
 
-fn post(app: &AppHandle, state: &AppState, m: TeammateMessage) {
+pub(crate) fn post(app: &AppHandle, state: &AppState, m: TeammateMessage) {
     let slug = m.slug.clone();
     let _ = state.db().insert_teammate_message(&m);
     changed(app, &slug);
@@ -571,6 +581,7 @@ pub fn finish_turn(app: &AppHandle, state: &AppState, ws_id: &str, is_error: boo
         let mut m = message(&task.slug, route.role, route.kind, &text, Some(ws_id));
         m.status = Some(route.task_status.into());
         post(app, state, m);
+        crate::chief::task_changed(app, state, &task.id);
         return;
     }
     let (app, state, ws_id) = (app.clone(), state.clone(), ws_id.to_string());
@@ -604,6 +615,7 @@ async fn report(app: &AppHandle, state: &AppState, task: &TeammateTask, ws_id: &
     m.status = Some(route.task_status.into());
     m.files = files.map(|f| f.len() as i64);
     post(app, state, m);
+    crate::chief::task_changed(app, state, &task.id);
 }
 
 // ---------------------------------------------------------------- commands
@@ -633,7 +645,14 @@ fn view(state: &AppState, teammate: Teammate) -> TeammateView {
     let seen = state.db().setting(&seen_key(&slug)).ok().flatten().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
     let unseen = report_ts.is_some_and(|ts| ts > seen);
     let open: Vec<&str> = tasks.iter().filter(|t| t.status == "running" || t.status == "waiting").map(|t| t.status.as_str()).collect();
-    TeammateView { status: derive_status(&open, unseen), open_tasks: open.len(), last_message, unseen, teammate }
+    let status = if slug == crate::chief::SLUG {
+        let plans = state.db().plans(&slug).unwrap_or_default();
+        let shapes: Vec<(String, Vec<crate::chief::PartState>)> = plans.iter().map(|p| (p.status.clone(), crate::chief::part_states(state, p))).collect();
+        crate::chief::derive_status(&shapes, unseen)
+    } else {
+        derive_status(&open, unseen)
+    };
+    TeammateView { status, open_tasks: open.len(), last_message, unseen, teammate }
 }
 
 #[tauri::command]
@@ -672,8 +691,9 @@ pub fn teammate_thread(state: State<AppState>, slug: String, limit: Option<u32>)
 }
 
 #[tauri::command]
-pub fn teammate_tasks(state: State<AppState>, slug: String) -> CmdResult<Vec<TeammateTask>> {
-    state.db().teammate_tasks(&slug).map_err(err)
+pub fn teammate_tasks(state: State<AppState>, slug: String) -> CmdResult<Vec<crate::handoff::TaskView>> {
+    let tasks = state.db().teammate_tasks(&slug).map_err(err)?;
+    Ok(tasks.into_iter().map(|t| crate::handoff::task_view(&state, t)).collect())
 }
 
 /// The user opened the thread: reports up to now no longer count as unseen.
@@ -704,7 +724,8 @@ pub fn set_teammate_memory(state: State<AppState>, slug: String, text: String) -
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendResult {
-    pub workspace_id: String,
+    /// None for Chief: it plans instead of opening a workspace.
+    pub workspace_id: Option<String>,
     pub new_task: bool,
 }
 
@@ -732,6 +753,9 @@ pub async fn teammate_send(
         return Err("Write a message first".into());
     }
     let t = get(&state.home, &slug).ok_or_else(|| format!("No teammate `{slug}`"))?;
+    if slug == crate::chief::SLUG {
+        return crate::chief::send(&app, &state, &t, text, repo_id).await;
+    }
     let open = state.db().open_teammate_task(&slug).map_err(err)?;
     // A task whose workspace has been archived cannot be continued.
     let live = state.db().workspaces().map_err(err)?;
@@ -746,54 +770,135 @@ pub async fn teammate_send(
                 post(&app, &state, message(&slug, "system", "error", &format!("Couldn't reach the task: {e}"), Some(&task.workspace_id)));
                 return Err(err(e));
             }
-            Ok(SendResult { workspace_id: task.workspace_id, new_task: false })
+            Ok(SendResult { workspace_id: Some(task.workspace_id), new_task: false })
         }
         Delegation::New => {
             let repos = state.db().repos().map_err(err)?;
             let repo_id = pick_repo(repo_id.as_deref(), &t.repos, &repos)?;
-            let name = task_name(&text);
-            let ws = create_workspace_inner(
-                &app,
-                &state,
-                NewWorkspaceArgs {
-                    repo_id: repo_id.clone(),
-                    name: name.clone(),
-                    agent: t.agent.clone(),
-                    model: t.model.clone(),
-                    issue_number: None,
-                    profile: t.profile.clone(),
-                    routine_id: None,
-                    branch_prefix: None,
-                    teammate: Some(slug.clone()),
-                },
-            )
-            .await?;
-            let task = TeammateTask {
-                id: uuid::Uuid::new_v4().to_string(),
-                slug: slug.clone(),
-                workspace_id: ws.id.clone(),
-                repo_id,
-                status: "running".into(),
-                created_at: db::now(),
-                finished_at: None,
-                summary: None,
-            };
-            state.db().insert_teammate_task(&task).map_err(err)?;
-            post(&app, &state, message(&slug, "user", "message", &text, Some(&ws.id)));
-            let mut started = message(&slug, "teammate", "task_started", &ws.name, Some(&ws.id));
-            started.status = Some("running".into());
-            post(&app, &state, started);
-            if crate::is_derived_name(&ws.name, &text) {
-                tauri::async_runtime::spawn(crate::name_workspace(app.clone(), state.inner().clone(), ws.id.clone(), ws.name.clone(), text.clone()));
-            }
-            if let Err(e) = crate::send(&app, &state, &ws.id, text.clone(), None, text) {
-                let _ = state.db().update_teammate_task(&task.id, "error", Some(&e.to_string()), Some(db::now()));
-                post(&app, &state, message(&slug, "system", "error", &format!("Couldn't start the task: {e}"), Some(&ws.id)));
-                return Err(err(e));
-            }
-            Ok(SendResult { workspace_id: ws.id, new_task: true })
+            let start = Start { slug, repo_id, name: None, display: text.clone(), payload: text, origin: Origin::default(), start_ref: None, user_message: true };
+            let (_, ws) = start_task(&app, &state, start).await?;
+            Ok(SendResult { workspace_id: Some(ws.id), new_task: true })
         }
     }
+}
+
+/// Where a task came from. All None = the user typed it into the teammate's thread.
+#[derive(Debug, Clone, Default)]
+pub struct Origin {
+    pub parent_task_id: Option<String>,
+    pub kind: Option<String>,
+    pub reference: Option<String>,
+}
+
+pub struct Start {
+    pub slug: String,
+    pub repo_id: String,
+    /// Workspace name; None = derived from `display`.
+    pub name: Option<String>,
+    /// What the thread shows: the user's message, or the brief for a delegated task.
+    pub display: String,
+    /// What the agent receives.
+    pub payload: String,
+    pub origin: Origin,
+    /// Branch or ref the new worktree starts from instead of the repo's base (review hand-offs).
+    pub start_ref: Option<String>,
+    /// A task the user typed shows their message bubble; a delegated one shows its brief.
+    pub user_message: bool,
+}
+
+fn task_row(slug: &str, ws_id: &str, repo_id: &str, origin: &Origin) -> TeammateTask {
+    TeammateTask {
+        id: uuid::Uuid::new_v4().to_string(),
+        slug: slug.to_string(),
+        workspace_id: ws_id.to_string(),
+        repo_id: repo_id.to_string(),
+        status: "running".into(),
+        created_at: db::now(),
+        finished_at: None,
+        summary: None,
+        parent_task_id: origin.parent_task_id.clone(),
+        origin_kind: origin.kind.clone(),
+        origin_ref: origin.reference.clone(),
+    }
+}
+
+/// The thread entries a new task leaves: the user's message or the delegated brief, then the "Started" card.
+fn announce(app: &AppHandle, state: &AppState, s: &Start, ws: &db::Workspace) {
+    if s.user_message {
+        post(app, state, message(&s.slug, "user", "message", &s.display, Some(&ws.id)));
+    } else {
+        let mut brief = message(&s.slug, "system", "brief", &s.display, Some(&ws.id));
+        brief.meta = s.origin.kind.clone();
+        post(app, state, brief);
+    }
+    let mut started = message(&s.slug, "teammate", "task_started", &ws.name, Some(&ws.id));
+    started.status = Some("running".into());
+    post(app, state, started);
+}
+
+/// Creates the workspace for a new task, records it, posts to the thread and sends the first prompt.
+pub(crate) async fn start_task(app: &AppHandle, state: &AppState, s: Start) -> CmdResult<(TeammateTask, db::Workspace)> {
+    let t = get(&state.home, &s.slug).ok_or_else(|| format!("No teammate `{}`", s.slug))?;
+    let name = s.name.clone().unwrap_or_else(|| task_name(&s.display));
+    let ws = create_workspace_inner(
+        app,
+        state,
+        NewWorkspaceArgs {
+            repo_id: s.repo_id.clone(),
+            name,
+            agent: t.agent.clone(),
+            model: t.model.clone(),
+            issue_number: None,
+            profile: t.profile.clone(),
+            routine_id: None,
+            branch_prefix: None,
+            teammate: Some(s.slug.clone()),
+            start_ref: s.start_ref.clone(),
+        },
+    )
+    .await?;
+    let task = task_row(&s.slug, &ws.id, &s.repo_id, &s.origin);
+    state.db().insert_teammate_task(&task).map_err(err)?;
+    announce(app, state, &s, &ws);
+    if s.name.is_none() && crate::is_derived_name(&ws.name, &s.display) {
+        tauri::async_runtime::spawn(crate::name_workspace(app.clone(), state.clone(), ws.id.clone(), ws.name.clone(), s.display.clone()));
+    }
+    if let Err(e) = crate::send(app, state, &ws.id, s.display.clone(), None, s.payload.clone()) {
+        let _ = state.db().update_teammate_task(&task.id, "error", Some(&e.to_string()), Some(db::now()));
+        post(app, state, message(&s.slug, "system", "error", &format!("Couldn't start the task: {e}"), Some(&ws.id)));
+        return Err(err(e));
+    }
+    Ok((task, ws))
+}
+
+/// Hands an existing workspace to another teammate of the same agent: the workspace takes over its role
+/// (profile, identity, memory), keeps its branch and history, and a new task is opened for it.
+pub(crate) fn adopt_task(app: &AppHandle, state: &AppState, s: Start, ws_id: &str) -> CmdResult<(TeammateTask, db::Workspace)> {
+    let t = get(&state.home, &s.slug).ok_or_else(|| format!("No teammate `{}`", s.slug))?;
+    let ws = state.db().workspace(ws_id).map_err(|_| "That workspace no longer exists".to_string())?;
+    if ws.agent != t.agent {
+        return Err(format!("{} uses a different agent than the workspace", t.name));
+    }
+    if ws.status == "running" {
+        return Err("That workspace is still working".into());
+    }
+    state.db().set_workspace_teammate(ws_id, Some(&s.slug)).map_err(err)?;
+    let ws = crate::switch_profile(app, state, ws_id, t.profile.as_deref()).map_err(err)?;
+    let note = format!("[Orbit: this workspace was handed to {} ({}). Follow their instructions from now on; the earlier role no longer applies.]\n\n", t.name, s.slug);
+    {
+        let mut notices = state.role_notices.lock().unwrap();
+        let merged = format!("{}{note}", notices.remove(ws_id).unwrap_or_default());
+        notices.insert(ws_id.to_string(), merged);
+    }
+    let task = task_row(&s.slug, ws_id, &ws.repo_id, &s.origin);
+    state.db().insert_teammate_task(&task).map_err(err)?;
+    announce(app, state, &s, &ws);
+    if let Err(e) = crate::send(app, state, ws_id, s.display.clone(), None, s.payload.clone()) {
+        let _ = state.db().update_teammate_task(&task.id, "error", Some(&e.to_string()), Some(db::now()));
+        post(app, state, message(&s.slug, "system", "error", &format!("Couldn't start the task: {e}"), Some(ws_id)));
+        return Err(err(e));
+    }
+    Ok((task, ws))
 }
 
 #[cfg(test)]
@@ -827,7 +932,7 @@ mod tests {
     }
 
     fn task(id: &str, status: &str) -> TeammateTask {
-        TeammateTask { id: id.into(), slug: "builder".into(), workspace_id: format!("w-{id}"), repo_id: "r".into(), status: status.into(), created_at: 1, finished_at: None, summary: None }
+        TeammateTask { id: id.into(), slug: "builder".into(), workspace_id: format!("w-{id}"), repo_id: "r".into(), status: status.into(), created_at: 1, finished_at: None, summary: None, parent_task_id: None, origin_kind: None, origin_ref: None }
     }
 
     #[test]
@@ -835,7 +940,7 @@ mod tests {
         let home = tmp_home();
         let team = list(&home);
         let slugs: Vec<&str> = team.iter().map(|t| t.slug.as_str()).collect();
-        assert_eq!(slugs, ["builder", "debugger", "planner", "reviewer", "shipper", "ticket-writer"]);
+        assert_eq!(slugs, ["chief", "builder", "debugger", "planner", "reviewer", "shipper", "ticket-writer"]);
         let by = |s: &str| team.iter().find(|t| t.slug == s).unwrap();
         assert_eq!(by("builder").profile.as_deref(), Some("shipkit:builder"));
         assert_eq!(by("builder").agent, "claude");
@@ -889,9 +994,9 @@ mod tests {
         let o = save(&home, over).unwrap();
         assert!(o.bundled && o.overridden);
         let team = list(&home);
-        assert_eq!(team[0].slug, "builder");
-        assert_eq!(team[0].name, "Builder (mine)");
-        assert!(team[0].overridden);
+        assert_eq!(team[1].slug, "builder");
+        assert_eq!(team[1].name, "Builder (mine)");
+        assert!(team[1].overridden);
         assert_eq!(team.iter().filter(|t| t.slug == "builder").count(), 1);
         // Reset to default deletes the override only.
         delete(&home, "builder").unwrap();
