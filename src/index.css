@@ -24,6 +24,15 @@
   --color-info: var(--info);
   --color-merged: var(--merged);
   --color-overlay: var(--overlay);
+  --color-avatar-1: var(--avatar-1);
+  --color-avatar-2: var(--avatar-2);
+  --color-avatar-3: var(--avatar-3);
+  --color-avatar-4: var(--avatar-4);
+  --color-avatar-5: var(--avatar-5);
+  --color-avatar-6: var(--avatar-6);
+  --color-avatar-7: var(--avatar-7);
+  --color-avatar-8: var(--avatar-8);
+  --color-avatar-ink: var(--avatar-ink);
 
   --shadow-hard: var(--hard-shadow);
   --shadow-hard-sm: var(--hard-shadow-sm);
@@ -63,6 +72,17 @@
   --merged: #b28cff;
 
   --overlay: rgb(0 0 0 / 0.7);
+
+  /* Teammate avatars: the one colourful exception (CLAUDE.md). Status never uses these. */
+  --avatar-1: #f08a7e;
+  --avatar-2: #f2b866;
+  --avatar-3: #e4d26c;
+  --avatar-4: #7fd1a4;
+  --avatar-5: #6cc4c8;
+  --avatar-6: #7fb1f0;
+  --avatar-7: #a99bf0;
+  --avatar-8: #ee9ac6;
+  --avatar-ink: #1d1b26;
   --hard-shadow: 4px 4px 0 0 #000, 4px 4px 0 1px var(--line-strong);
   --hard-shadow-sm: 2px 2px 0 0 #000, 2px 2px 0 1px var(--line-strong);
   --pop-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.85), 0 0 0 1px var(--line-strong);
@@ -93,6 +113,17 @@
   --merged: #7440e6;
 
   --overlay: rgb(243 243 241 / 0.75);
+
+  /* Teammate avatars: the one colourful exception (CLAUDE.md). Status never uses these. */
+  --avatar-1: #ea7461;
+  --avatar-2: #eba043;
+  --avatar-3: #d6bb3e;
+  --avatar-4: #5cbf8a;
+  --avatar-5: #4fb3b8;
+  --avatar-6: #6198e8;
+  --avatar-7: #8e7be6;
+  --avatar-8: #e67db1;
+  --avatar-ink: #1d1b26;
   --hard-shadow: 4px 4px 0 0 var(--ink);
   --hard-shadow-sm: 2px 2px 0 0 var(--ink);
   --pop-shadow: 6px 6px 0 0 var(--ink), 0 0 0 1.5px var(--ink);
@@ -280,4 +311,18 @@ input:focus-visible {
   vertical-align: -0.15em;
   background: var(--accent);
   animation: caret 1s steps(1) infinite;
+}
+
+/* Working teammates blink every few seconds. */
+@keyframes avatar-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.1); }
+}
+.avatar-blink .avatar-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: avatar-blink 4.5s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-blink .avatar-eyes { animation: none; }
 }

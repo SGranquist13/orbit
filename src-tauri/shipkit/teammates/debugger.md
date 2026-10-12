@@ -1,6 +1,6 @@
 ---
 name: Debugger
-avatar: bug
+avatar: triangle:1:focus
 description: Reproduces a bug, finds the root cause, and fixes it with a regression test.
 agent: claude
 model: sonnet

@@ -7,7 +7,8 @@ import { api, activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
 import { pickRepo } from "./Sidebar";
-import { AgentIcon, Avatar, StatusDot, TeammateDot } from "./ui";
+import { TeammateAvatar } from "./TeammateAvatar";
+import { AgentIcon, StatusDot, TeammateDot } from "./ui";
 
 export function Palette() {
   const workspaces = useApp((s) => s.workspaces);
@@ -53,7 +54,7 @@ export function Palette() {
             <Command.Group heading="Teammates" className={heading}>
               {teammates.map((t) => (
                 <Command.Item key={t.slug} value={`Ask ${t.name} (teammate) ${t.description}`} className={item} onSelect={run(() => useApp.getState().openTeammate(t.slug))}>
-                  <Avatar avatar={t.avatar} name={t.name} size={18} className="border-transparent bg-transparent" />
+                  <TeammateAvatar avatar={t.avatar} name={t.name} size={20} />
                   <span className="shrink-0">Ask {t.name}</span>
                   <span className="min-w-0 flex-1 truncate text-[11.5px] text-mute">{t.description}</span>
                   <TeammateDot status={t.status} />

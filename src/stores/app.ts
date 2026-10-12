@@ -22,6 +22,7 @@ import {
   type Workspace,
   type WorkspaceUsage,
 } from "../lib/ipc";
+import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
 
 export type View = "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate";
@@ -187,7 +188,7 @@ export const useApp = create<AppState>((set, get) => ({
   routines: [],
   routinesTick: 0,
   teammates: [],
-  selectedTeammate: null,
+  selectedTeammate: rememberedTeammate(),
   teammatesTick: 0,
   teammateFocus: 0,
   teammateEditor: null,
@@ -271,7 +272,7 @@ export const useApp = create<AppState>((set, get) => ({
       // Keep the last known list; the next change event refetches.
     }
   },
-  openTeammate: (slug) => set((s) => ({ selectedTeammate: slug, view: "teammate", previousView: "teammate", paletteOpen: false, teammateFocus: s.teammateFocus + 1 })),
+  openTeammate: (slug) => (rememberTeammate(slug), set((s) => ({ selectedTeammate: slug, view: "teammate", previousView: "teammate", paletteOpen: false, teammateFocus: s.teammateFocus + 1 }))),
   setTeammateEditor: (slug) => set({ teammateEditor: slug }),
   openPalette: (scope) => set({ paletteOpen: true, paletteScope: scope ?? null }),
   refreshRoutines: async () => {

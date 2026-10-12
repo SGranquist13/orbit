@@ -10,7 +10,7 @@ import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
 import { SimplifyPanel } from "./components/SimplifyPanel";
 import { Settings } from "./components/Settings";
-import { TeammateEditor, TeammateThread } from "./components/Teammates";
+import { TeammateEditor, Teammates } from "./components/Teammates";
 import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
@@ -28,7 +28,6 @@ export default function App() {
   const simplifyOpen = useApp((s) => s.simplifyOpen);
   const focusMode = useApp((s) => s.focusMode);
   const teammateEditor = useApp((s) => s.teammateEditor);
-  const selectedTeammate = useApp((s) => s.selectedTeammate);
 
   useEffect(() => {
     useApp.getState().init().catch((e) => useApp.getState().setError(String(e)));
@@ -54,10 +53,9 @@ export default function App() {
         e.preventDefault();
         s.setView(s.view === "routines" ? "workspace" : "routines");
       } else if (key === "t" && e.shiftKey) {
-        // Ask a teammate: the palette restricted to teammates.
+        // Teammates view. "Ask a teammate…" stays in the palette.
         e.preventDefault();
-        if (s.paletteOpen) s.setPaletteOpen(false);
-        else s.openPalette("teammates");
+        s.setView(s.view === "teammate" ? "workspace" : "teammate");
       } else if (e.key === ",") {
         e.preventDefault();
         if (s.view === "settings") s.closeSettings();
@@ -102,8 +100,8 @@ export default function App() {
         <Issues />
       ) : view === "routines" ? (
         <Routines />
-      ) : view === "teammate" && selectedTeammate ? (
-        <TeammateThread key={selectedTeammate} slug={selectedTeammate} />
+      ) : view === "teammate" ? (
+        <Teammates />
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />

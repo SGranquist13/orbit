@@ -1,12 +1,15 @@
-// AI teammates (src-tauri/src/teammates.rs): the sidebar section, a teammate's thread, and the editor dialog.
-import { ChevronDown, ChevronRight, LoaderCircle, Plus, SendHorizontal } from "lucide-react";
+// AI teammates (src-tauri/src/teammates.rs): the Teammates view (list + thread) and the editor dialog.
+import { LoaderCircle, Plus, Search, SendHorizontal, Shuffle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { timeAgo } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, type AgentKind, type Teammate, type TeammateMessage, type TeammateTask, type TeammateTaskStatus, type TeammateView } from "../lib/ipc";
 import { defaultModelFor, modelsFor } from "../lib/settings";
+import { rememberedTeammate } from "../lib/lastTeammate";
 import { useApp } from "../stores/app";
-import { AVATAR_ICONS, AgentIcon, Avatar, Button, Kbd, TeammateDot, agentLabel, cn } from "./ui";
+import { AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
+import { TeammateAvatar } from "./TeammateAvatar";
+import { AgentIcon, Button, Kbd, TeammateDot, agentLabel, cn } from "./ui";
 
 /** One line of the teammate's last message, "You: " when the user spoke last. */
 function preview(t: TeammateView) {
@@ -18,84 +21,103 @@ function preview(t: TeammateView) {
 
 const failed = (t: TeammateView) => t.lastMessage?.kind === "error";
 
-// ---------------------------------------------------------------- sidebar
+// ---------------------------------------------------------------- view
 
-/** Teammates above the repo list: one row each, collapsible, with "+" to create one. */
-export function TeammatesSection() {
+/** The Teammates view: people on the left (search, "+"), the selected thread on the right. */
+export function Teammates() {
   const teammates = useApp((s) => s.teammates);
-  const view = useApp((s) => s.view);
   const selected = useApp((s) => s.selectedTeammate);
-  const [collapsed, setCollapsed] = useState(false);
-  const needs = teammates.filter((t) => t.status === "needsYou").length;
+  const [query, setQuery] = useState("");
+
+  // Land on the remembered teammate (or the first) when the view opens without a valid selection.
+  useEffect(() => {
+    if (!teammates.length || (selected && teammates.some((t) => t.slug === selected))) return;
+    const remembered = rememberedTeammate();
+    const pick = teammates.find((t) => t.slug === remembered) ?? teammates[0];
+    useApp.setState({ selectedTeammate: pick.slug });
+  }, [teammates, selected]);
+
+  const q = query.trim().toLowerCase();
+  const shown = q ? teammates.filter((t) => `${t.name} ${t.description}`.toLowerCase().includes(q)) : teammates;
+
   return (
-    <section className="mt-1" data-teammates>
-      <div className="flex items-center">
-        <button onClick={() => setCollapsed((c) => !c)} className="label flex h-6 min-w-0 flex-1 items-center gap-1 px-2 text-mute hover:text-dim">
-          {collapsed ? <ChevronRight className="size-3" strokeWidth={3} /> : <ChevronDown className="size-3" strokeWidth={3} />}
-          <span className="flex-1 truncate text-left">Teammates</span>
-          {needs > 0 && <span className="text-warn">{needs}</span>}
-        </button>
-        <button
-          onClick={() => useApp.getState().setTeammateEditor("new")}
-          title="New teammate"
-          aria-label="New teammate"
-          className="mr-0.5 grid size-5 place-items-center rounded-[3px] text-mute hover:bg-hover hover:text-fg"
-        >
-          <Plus className="size-3" strokeWidth={2.75} />
-        </button>
-      </div>
-      {!collapsed && (
-        <ul className="mt-0.5 space-y-px">
-          {teammates.map((t) => (
-            <li key={t.slug}>
-              <button
-                onClick={() => useApp.getState().openTeammate(t.slug)}
-                data-teammate={t.slug}
-                className={cn(
-                  "group relative flex h-10 w-full items-center gap-2.5 overflow-hidden rounded-[4px] px-2 text-left transition-colors",
-                  view === "teammate" && selected === t.slug ? "bg-raised text-fg" : "text-dim hover:bg-hover/70 hover:text-fg",
-                )}
-              >
-                {t.status === "working" && <span className="dither-sweep bg-run opacity-30" />}
-                <span className="relative">
-                  <Avatar avatar={t.avatar} name={t.name} size={24} />
-                  <TeammateDot status={t.status} failed={failed(t)} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-panel" />
-                </span>
-                <span className="relative min-w-0 flex-1">
-                  <span className="flex items-baseline gap-1.5">
-                    <span className={cn("min-w-0 flex-1 truncate text-[12px] font-medium", t.unseen && "text-fg")}>{t.name}</span>
-                    {t.lastMessage && <span className="shrink-0 text-[10px] tabular-nums text-mute">{timeAgo(t.lastMessage.ts)}</span>}
-                  </span>
-                  <span className="block truncate text-[11px] text-mute">{preview(t)}</span>
-                </span>
-              </button>
-            </li>
+    <div className="flex min-w-0 flex-1 bg-bg" data-teammates>
+      <aside className="flex w-[300px] shrink-0 flex-col border-r-[1.5px] border-line">
+        <header className="flex h-12 shrink-0 items-center gap-2 px-4" data-tauri-drag-region>
+          <h1 className="text-[15px] font-semibold tracking-[-0.02em]">Teammates</h1>
+          <button
+            onClick={() => useApp.getState().setTeammateEditor("new")}
+            title="New teammate"
+            aria-label="New teammate"
+            className="ml-auto grid size-7 place-items-center rounded-[4px] border-[1.5px] border-line-strong text-fg hover:bg-fg hover:text-bg"
+          >
+            <Plus className="size-3.5" strokeWidth={2.5} />
+          </button>
+        </header>
+        <div className="dither-rule bg-line-strong" />
+        <div className="px-3 pb-1 pt-3">
+          <label className="flex h-8 items-center gap-2 rounded-[4px] border-[1.5px] border-line bg-bg px-2.5 focus-within:border-line-strong">
+            <Search className="size-3.5 shrink-0 text-mute" strokeWidth={2.25} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search teammates"
+              aria-label="Search teammates"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] placeholder:text-mute focus:outline-none"
+            />
+          </label>
+        </div>
+        <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
+          {shown.map((t) => (
+            <TeammateRow key={t.slug} t={t} selected={t.slug === selected} />
           ))}
+          {shown.length === 0 && teammates.length > 0 && <li className="px-3 py-6 text-center text-[12px] text-mute">No teammate matches.</li>}
         </ul>
+      </aside>
+      {selected && teammates.some((t) => t.slug === selected) ? (
+        <TeammateThread key={selected} slug={selected} />
+      ) : (
+        <main className="grid min-w-0 flex-1 place-items-center px-6">
+          <div className="text-center">
+            <p className="label text-mute">No teammates yet</p>
+            <p className="mx-auto mt-1.5 max-w-[340px] text-[12.5px] leading-relaxed text-mute">
+              A teammate is a named coworker with its own instructions and memory. Hand it a task and it works in its own workspace.
+            </p>
+            <Button variant="outline" className="mt-4" onClick={() => useApp.getState().setTeammateEditor("new")}>
+              <Plus className="size-3.5" /> New teammate
+            </Button>
+          </div>
+        </main>
       )}
-    </section>
+    </div>
   );
 }
 
-/** Collapsed sidebar: just the avatars with their status dots. */
-export function TeammatesRail() {
-  const teammates = useApp((s) => s.teammates);
-  const view = useApp((s) => s.view);
-  const selected = useApp((s) => s.selectedTeammate);
+function TeammateRow({ t, selected }: { t: TeammateView; selected: boolean }) {
   return (
-    <>
-      {teammates.map((t) => (
-        <button
-          key={t.slug}
-          onClick={() => useApp.getState().openTeammate(t.slug)}
-          title={`${t.name}: ${preview(t)}`}
-          className={cn("relative grid size-9 place-items-center rounded-[4px] hover:bg-hover", view === "teammate" && selected === t.slug && "bg-raised")}
-        >
-          <Avatar avatar={t.avatar} name={t.name} size={22} />
-          <TeammateDot status={t.status} failed={failed(t)} className="absolute bottom-1 right-1 ring-2 ring-panel" />
-        </button>
-      ))}
-    </>
+    <li>
+      <button
+        onClick={() => useApp.getState().openTeammate(t.slug)}
+        data-teammate={t.slug}
+        className={cn(
+          "group relative flex w-full items-center gap-3 overflow-hidden rounded-[5px] px-2.5 py-2 text-left transition-colors",
+          selected ? "bg-raised text-fg" : "text-dim hover:bg-hover/70 hover:text-fg",
+        )}
+      >
+        {t.status === "working" && <span className="dither-sweep bg-run opacity-30" />}
+        <span className="relative shrink-0">
+          <TeammateAvatar avatar={t.avatar} name={t.name} size={34} blink={t.status === "working"} />
+          <TeammateDot status={t.status} failed={failed(t)} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-bg" />
+        </span>
+        <span className="relative min-w-0 flex-1">
+          <span className="flex items-baseline gap-1.5">
+            <span className={cn("min-w-0 flex-1 truncate text-[13px] font-medium", t.unseen && "text-fg")}>{t.name}</span>
+            {t.lastMessage && <span className="shrink-0 text-[10.5px] tabular-nums text-mute">{timeAgo(t.lastMessage.ts)}</span>}
+          </span>
+          <span className={cn("block truncate text-[11.5px]", t.unseen ? "text-dim" : "text-mute")}>{preview(t)}</span>
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -105,7 +127,7 @@ export function TeammateLabel({ slug, className }: { slug: string; className?: s
   if (!t) return null;
   return (
     <span className={cn("flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-mute", className)} title={`Created by ${t.name}`}>
-      <Avatar avatar={t.avatar} name={t.name} size={14} className="border" />
+      <TeammateAvatar avatar={t.avatar} name={t.name} size={16} />
       {t.name}
     </span>
   );
@@ -196,7 +218,7 @@ function MessageRow({ m, tasks, teammate }: { m: TeammateMessage; tasks: Teammat
   }
   return (
     <div className="flex items-start gap-2.5">
-      <Avatar avatar={teammate.avatar} name={teammate.name} size={22} className="mt-0.5" />
+      <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={28} className="mt-0.5" />
       <p className="selectable min-w-0 flex-1 whitespace-pre-wrap pt-0.5 text-[14px] leading-relaxed text-fg">{m.text}</p>
     </div>
   );
@@ -286,7 +308,7 @@ export function TeammateThread({ slug }: { slug: string }) {
   return (
     <div className="relative flex min-w-0 flex-1 flex-col bg-bg" data-teammate-thread={slug}>
       <header className="relative flex h-12 shrink-0 items-center gap-3 px-6" data-tauri-drag-region>
-        <Avatar avatar={teammate.avatar} name={teammate.name} size={26} />
+        <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={28} blink={teammate.status === "working"} />
         <h1 className="shrink-0 text-[15px] font-semibold tracking-[-0.02em]">{teammate.name}</h1>
         <span className="min-w-0 truncate text-[12.5px] text-mute">{teammate.description}</span>
         <span className="flex-1" />
@@ -308,7 +330,7 @@ export function TeammateThread({ slug }: { slug: string }) {
         <div className="mx-auto max-w-[760px] space-y-4 px-6 py-5">
           {messages.length === 0 && (
             <div className="py-16 text-center">
-              <Avatar avatar={teammate.avatar} name={teammate.name} size={44} className="mx-auto" />
+              <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={64} className="mx-auto" />
               <p className="mt-3 text-[13px] font-medium text-dim">Hand {teammate.name} a task.</p>
               <p className="mx-auto mt-1 max-w-[420px] text-[12.5px] leading-relaxed text-mute">
                 It creates its own workspace, does the work there, and reports back here with a link and the result.
@@ -396,7 +418,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
   const creating = slug === "new";
   const [tab, setTab] = useState<Tab>("definition");
   const [name, setName] = useState(existing?.name ?? "");
-  const [avatar, setAvatar] = useState(existing?.avatar ?? "");
+  const [avatar, setAvatar] = useState<AvatarSpec>(() => (existing ? parseAvatar(existing.avatar, existing.name) : randomAvatar()));
   const [description, setDescription] = useState(existing?.description ?? "");
   const [agent, setAgent] = useState<AgentKind>(existing?.agent ?? settings?.defaultAgent ?? "claude");
   const [model, setModel] = useState(existing?.model ?? "");
@@ -427,7 +449,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
       const saved = await api.saveTeammate({
         slug: creating ? null : slug,
         name,
-        avatar,
+        avatar: formatAvatar(avatar),
         description,
         agent,
         model: model || null,
@@ -464,7 +486,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
     try {
       await api.deleteTeammate(slug);
       await useApp.getState().refreshTeammates();
-      if (!reset && useApp.getState().selectedTeammate === slug) useApp.setState({ selectedTeammate: null, view: "workspace" });
+      if (!reset && useApp.getState().selectedTeammate === slug) useApp.setState({ selectedTeammate: null });
       close();
     } catch (e) {
       useApp.getState().setError(String(e));
@@ -484,7 +506,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
         data-teammate-editor
       >
         <div className="flex items-center gap-3 border-b border-line px-4 py-3">
-          <Avatar avatar={avatar} name={name || "?"} size={26} />
+          <TeammateAvatar spec={avatar} size={28} />
           <span className="text-[14px] font-semibold tracking-[-0.01em]">{creating ? "New teammate" : existing?.name}</span>
           {existing?.overridden && <span className="text-[11.5px] text-mute">edited from the starter</span>}
           <span className="flex-1" />
@@ -505,28 +527,11 @@ export function TeammateEditor({ slug }: { slug: string }) {
 
         {tab === "definition" ? (
           <div className="space-y-3.5 px-4 py-4">
-            <div className="grid grid-cols-[1fr_auto] gap-3">
-              <div>
-                <label className={label}>Name</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scout" autoFocus className={field} />
-              </div>
-              <div>
-                <label className={label}>Avatar</label>
-                <input value={avatar} onChange={(e) => setAvatar(e.target.value)} maxLength={14} placeholder="S" className={cn(field, "w-24 text-center")} />
-              </div>
+            <div>
+              <label className={label}>Name</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scout" autoFocus className={field} />
             </div>
-            <div className="flex flex-wrap gap-1">
-              {Object.keys(AVATAR_ICONS).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setAvatar(k)}
-                  title={k}
-                  className={cn("rounded-[4px] p-0.5", avatar === k ? "bg-fg" : "hover:bg-hover")}
-                >
-                  <Avatar avatar={k} name={k} size={24} className={avatar === k ? "border-fg" : "border-transparent bg-transparent"} />
-                </button>
-              ))}
-            </div>
+            <AvatarPicker value={avatar} onChange={setAvatar} />
             <div>
               <label className={label}>Description</label>
               <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it is good at" className={field} />
@@ -649,6 +654,54 @@ export function TeammateEditor({ slug }: { slug: string }) {
               Save
             </Button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Shape, colour and expression rows with a live preview and a Shuffle button. */
+function AvatarPicker({ value, onChange }: { value: AvatarSpec; onChange: (a: AvatarSpec) => void }) {
+  const chip = (on: boolean) => cn("grid place-items-center rounded-[5px] border-[1.5px] transition-colors", on ? "border-fg bg-raised" : "border-transparent hover:bg-hover");
+  return (
+    <div data-avatar-picker>
+      <div className="mb-1 flex items-center">
+        <label className="label block text-mute">Avatar</label>
+        <Button variant="ghost" className="ml-auto h-6 px-2" onClick={() => onChange(randomAvatar())}>
+          <Shuffle className="size-3" /> Shuffle
+        </Button>
+      </div>
+      <div className="flex items-start gap-4 rounded-[5px] border-[1.5px] border-line bg-bg p-3">
+        <TeammateAvatar spec={value} size={72} />
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {AVATAR_SHAPES.map((shape) => (
+              <button key={shape} title={shape} aria-label={shape} aria-pressed={value.shape === shape} onClick={() => onChange({ ...value, shape })} className={cn(chip(value.shape === shape), "size-9")}>
+                <TeammateAvatar spec={{ ...value, shape }} size={26} />
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {AVATAR_COLORS.map((color) => (
+              <button
+                key={color}
+                title={`Colour ${color}`}
+                aria-label={`Colour ${color}`}
+                aria-pressed={value.color === color}
+                onClick={() => onChange({ ...value, color })}
+                className={cn("size-6 rounded-full border-[1.5px] p-[2px]", value.color === color ? "border-fg" : "border-transparent hover:border-line-strong")}
+              >
+                <span className="block size-full rounded-full" style={{ background: `var(--avatar-${color})` }} />
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {AVATAR_EXPRESSIONS.map((expression) => (
+              <button key={expression} title={expression} aria-label={expression} aria-pressed={value.expression === expression} onClick={() => onChange({ ...value, expression })} className={cn(chip(value.expression === expression), "size-8")}>
+                <TeammateAvatar spec={{ ...value, expression }} size={22} />
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 ---
 name: Planner
-avatar: map
+avatar: circle:6:smile
 description: Explores the code and writes an implementation plan. Changes nothing.
 agent: claude
 model: opus

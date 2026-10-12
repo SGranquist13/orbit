@@ -1,10 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
 import { useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import type { Repo, Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
-import { TeammateLabel, TeammatesRail, TeammatesSection } from "./Teammates";
+import { TeammateLabel } from "./Teammates";
 import { AgentIcon, DiffStat, Kbd, OrbitMark, StatusDot, ThemeToggle, cn } from "./ui";
 
 export async function pickRepo() {
@@ -29,7 +29,7 @@ export function Sidebar() {
   const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id])).length + teammatesNeedYou;
   const activeRoutines = useApp((s) => s.routines.filter((r) => r.enabled).length);
   const collapsed = useApp((s) => s.sidebarCollapsed);
-  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} />;
+  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} teammatesNeedYou={teammatesNeedYou} />;
 
   return (
     <aside className="relative flex h-full w-[216px] shrink-0 flex-col border-r-[1.5px] border-line bg-panel">
@@ -73,6 +73,14 @@ export function Sidebar() {
           onClick={() => useApp.getState().setView(view === "routines" ? "workspace" : "routines")}
         />
         <NavItem
+          icon={<Users className="size-3.5" strokeWidth={2.5} />}
+          label="Teammates"
+          kbd="Ctrl Shift T"
+          active={view === "teammate"}
+          count={teammatesNeedYou}
+          onClick={() => useApp.getState().setView(view === "teammate" ? "workspace" : "teammate")}
+        />
+        <NavItem
           icon={<CircleDot className="size-3.5" strokeWidth={2.5} />}
           label="Issues"
           kbd="Ctrl Shift G"
@@ -84,7 +92,6 @@ export function Sidebar() {
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <TeammatesSection />
         {repos.map((repo) => (
           <RepoGroup key={repo.id} repo={repo} workspaces={workspaces.filter((w) => w.repoId === repo.id)} />
         ))}
@@ -112,7 +119,7 @@ export function Sidebar() {
 }
 
 /** Icon-only sidebar: nav actions plus one status dot per workspace. */
-function Rail({ workspaces, needsYou, activeRoutines }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number }) {
+function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number; teammatesNeedYou: number }) {
   const view = useApp((s) => s.view);
   const selectedId = useApp((s) => s.selectedId);
   const summaries = useApp((s) => s.summaries);
@@ -151,6 +158,18 @@ function Rail({ workspaces, needsYou, activeRoutines }: { workspaces: Workspace[
           )}
         </button>
         <button
+          onClick={() => useApp.getState().setView(view === "teammate" ? "workspace" : "teammate")}
+          title="Teammates (Ctrl Shift T)"
+          className={cn(btn, view === "teammate" && "bg-raised text-fg")}
+        >
+          <Users className="size-3.5" strokeWidth={2.5} />
+          {teammatesNeedYou > 0 && (
+            <span className="absolute right-0.5 top-0.5 rounded-[3px] bg-fg px-1 text-[9px] font-semibold leading-3.5 tabular-nums text-bg">
+              {teammatesNeedYou}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
           title="Issues (Ctrl Shift G)"
           className={cn(btn, view === "issues" && "bg-raised text-fg")}
@@ -166,8 +185,6 @@ function Rail({ workspaces, needsYou, activeRoutines }: { workspaces: Workspace[
       </nav>
       <div className="dither-rule w-full bg-line-strong" />
       <div className="flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto py-2">
-        <TeammatesRail />
-        <div className="my-1 h-px w-5 bg-line" />
         {workspaces.map((ws) => (
           <button
             key={ws.id}
