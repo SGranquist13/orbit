@@ -523,7 +523,8 @@ pub fn report_text(r: &Report) -> String {
 
 const REPORT_SYSTEM: &str = "You write the one report a coworker sends back after finishing a turn of work. Reply with JSON only. \
 `summary`: 1 to 3 plain sentences saying what was done and where the result is (branch, PR link, files), no markdown headings. \
-`needsYou`: true only if the coworker is blocked on an answer or a decision from the person. \
+`needsYou`: true only if the coworker explicitly asks the person a question or says it cannot continue without a decision. \
+A short or terse reply (even a single word), or a reply that merely completes the request, is finished work: needsYou false. \
 `question`: when needsYou, the exact question to put to them, otherwise omit.";
 
 fn report_schema() -> Value {
@@ -1115,6 +1116,8 @@ mod tests {
         let f = fallback_report(Some(&long));
         assert_eq!(f.summary.chars().count(), SUMMARY_CHARS + 1);
         assert!(f.summary.ends_with('…') && !f.needs_you);
+        assert!(!fallback_report(Some("set")).needs_you);
+        assert!(REPORT_SYSTEM.contains("single word"));
         assert!(fallback_report(Some("Added the test.\n\nShould I also update the docs?")).needs_you);
         assert_eq!(fallback_report(None).summary, "Finished.");
         assert_eq!(fallback_report(Some("   ")).summary, "Finished.");

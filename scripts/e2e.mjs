@@ -563,7 +563,7 @@ await step("teammates", async () => {
   const team = await invoke("list_teammates");
   if (!team.some((t) => t.slug === slug) || !team.some((t) => t.slug === "builder" && t.bundled)) throw new Error(`teammate list wrong: ${team.map((t) => t.slug)}`);
   const known = new Set((await invoke("list_workspaces")).map((w) => w.id));
-  const sent = await invoke("teammate_send", { slug, text: "Reply with exactly the word: ready. Do not edit files.", repoId: null, newTask: null });
+  const sent = await invoke("teammate_send", { slug, text: "Reply with exactly the word: ready. That is the whole task and it is complete once you reply; nothing is needed from anyone. Do not edit files.", repoId: null, newTask: null });
   if (!sent.newTask || known.has(sent.workspaceId)) throw new Error(`expected a new task workspace: ${JSON.stringify(sent)}`);
   const report = await until("teammate report in the thread", async () => {
     const thread = await invoke("teammate_thread", { slug, limit: 50 });
@@ -602,7 +602,7 @@ await step("teammates-handoff", async () => {
   // A finishes a one-word task; its result is handed to B through the command the chips call. B's task
   // carries the hand-off brief and "from A"; A's thread shows "Handed to B".
   const [a, b] = await makePair("E2E Hand");
-  await invoke("teammate_send", { slug: a, text: "Reply with exactly the word: ready. Do not edit files.", repoId: null, newTask: null });
+  await invoke("teammate_send", { slug: a, text: "Reply with exactly the word: ready. That is the whole task and it is complete once you reply; nothing is needed from anyone. Do not edit files.", repoId: null, newTask: null });
   const report = await until("A's report", async () => (await invoke("teammate_thread", { slug: a, limit: 50 })).find((m) => m.kind === "task_report" || m.kind === "error") ?? null, 180_000, 2000);
   if (report.kind !== "task_report") throw new Error(`A failed: ${report.text}`);
   const [task] = await invoke("teammate_tasks", { slug: a });
@@ -645,8 +645,8 @@ await step("chief", async () => {
     plan: {
       summary: plan.summary,
       parts: [
-        { teammate: a, title: "Say ready", brief: "Reply with exactly the word: ready. Do not edit files.", dependsOn: [] },
-        { teammate: b, title: "Say set", brief: "Reply with exactly the word: set. Do not edit files.", dependsOn: [0] },
+        { teammate: a, title: "Say ready", brief: "Reply with exactly the word: ready. That is the whole task and it is complete once you reply; nothing is needed from anyone. Do not edit files.", dependsOn: [] },
+        { teammate: b, title: "Say set", brief: "Reply with exactly the word: set. That is the whole task and it is complete once you reply; nothing is needed from anyone. Do not edit files.", dependsOn: [0] },
       ],
     },
   });
