@@ -308,7 +308,7 @@ pub async fn send(app: &AppHandle, state: &AppState, t: &Teammate, text: String,
     let plan = Plan { id: uuid::Uuid::new_v4().to_string(), slug: SLUG.into(), repo_id, request: text.clone(), summary: String::new(), parts: vec![], status: "planning".into(), created_at: db::now() };
     state.db().insert_plan(&plan).map_err(err)?;
     post(app, state, message(SLUG, "user", "message", &text, None));
-    let mut card = message(SLUG, "teammate", "plan", "", None);
+    let mut card = message(SLUG, "teammate", "plan", &format!("Plan: {}", clip(&text, 80)), None);
     card.meta = Some(plan.id.clone());
     post(app, state, card);
     tauri::async_runtime::spawn(plan_request(app.clone(), state.clone(), plan.id.clone(), t.instructions.clone()));

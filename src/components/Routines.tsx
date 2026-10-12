@@ -181,6 +181,7 @@ export function Routines() {
 
 function RoutineRow({ routine: r, repo, selected, now }: { routine: Routine; repo: string | undefined; selected: boolean; now: number }) {
   const [busy, setBusy] = useState(false);
+  const owner = useApp((s) => s.teammates.find((t) => t.slug === r.teammate));
   const finishedOnce = r.schedule.kind === "once" && !r.enabled && r.lastStatus;
   const next = r.enabled && r.nextRunAt ? `Next ${formatNext(r.nextRunAt, now)}` : finishedOnce ? "Done" : "Off";
   const runNow = async () => {
@@ -208,6 +209,7 @@ function RoutineRow({ routine: r, repo, selected, now }: { routine: Routine; rep
           <div className="truncate text-[11.5px] tabular-nums text-mute">
             {describeSchedule(r.schedule)}
             {repo && <> · {repo}</>}
+            {owner && <> · {owner.name}</>}
           </div>
           <div className="text-[11.5px] tabular-nums text-mute">{next}</div>
         </div>
@@ -247,6 +249,7 @@ function Editor({ routine }: { routine: Routine | null }) {
   const skills = useApp((s) => s.skills);
   const profiles = useApp((s) => s.profiles);
   const settings = useApp((s) => s.settings);
+  const teammates = useApp((s) => s.teammates);
   const selectedRepo = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId)?.repoId);
   const initial = useMemo(() => defaultAgentModel(), []);
 
@@ -259,8 +262,22 @@ function Editor({ routine }: { routine: Routine | null }) {
   const [model, setModel] = useState(routine ? (routine.model ?? "") : initial.model);
   const [profile, setProfile] = useState(routine?.profile ?? "");
   const [mode, setMode] = useState<RoutineMode>(routine?.mode ?? "fresh");
+  const [owner, setOwner] = useState(routine?.teammate ?? "");
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
+  const ownerTeammate = teammates.find((t) => t.slug === owner);
+
+  // An owner runs the routine as a task in its thread, with its own agent and model: message routines only.
+  const pickOwner = (slug: string) => {
+    setOwner(slug);
+    const t = teammates.find((x) => x.slug === slug);
+    if (!t) return;
+    setWhat("message");
+    setAgent(t.agent);
+    setModel(t.model ?? "");
+    setProfile(t.profile ?? "");
+    setMode("fresh");
+  };
 
   const models = modelsFor(agent, settings);
   if (model && !models.includes(model)) models.push(model);
@@ -277,12 +294,13 @@ function Editor({ routine }: { routine: Routine | null }) {
         repoId,
         name: name.trim(),
         schedule,
-        action: what === "simplify" ? { kind: "simplify" } : textToAction(prompt, skills),
+        action: what === "simplify" ? { kind: "simplify" } : owner ? { kind: "prompt", text: prompt.trim() } : textToAction(prompt, skills),
         agent,
         model: model || null,
         profile: profile || null,
         mode,
         enabled: rearm || (routine?.enabled ?? true),
+        teammate: owner || null,
       });
       localStorage.setItem("lastRepo", repoId);
       await useApp.getState().refreshRoutines();
@@ -337,7 +355,10 @@ function Editor({ routine }: { routine: Routine | null }) {
             { value: "message", label: "Message" },
             { value: "simplify", label: SIMPLIFY_NAME },
           ]}
-          onChange={setWhat}
+          onChange={(w) => {
+            setWhat(w);
+            if (w === "simplify") setOwner("");
+          }}
         />
       </div>
 
@@ -370,6 +391,22 @@ function Editor({ routine }: { routine: Routine | null }) {
           <WhenControl schedule={schedule} onChange={setSchedule} />
         </div>
         <SchedulePreview schedule={schedule} />
+        {what === "message" && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5" data-routine-owner>
+            <Select
+              label="Owner"
+              className="min-w-[160px]"
+              value={owner}
+              options={[{ value: "", label: "Owner: none" }, ...teammates.filter((t) => t.slug !== "chief").map((t) => ({ value: t.slug, label: `Owner: ${t.name}` }))]}
+              onChange={pickOwner}
+            />
+            <span className="min-w-0 flex-1 text-[11.5px] leading-relaxed text-mute">
+              {ownerTeammate
+                ? `Each run is a new task in ${ownerTeammate.name}'s thread, with its agent and model.`
+                : "A teammate can own a routine: its runs show up in their thread, marked as scheduled."}
+            </span>
+          </div>
+        )}
       </div>
 
       <input
@@ -390,6 +427,7 @@ function Editor({ routine }: { routine: Routine | null }) {
             <Labeled label="Agent">
               <Select
                 label="Agent"
+                className={ownerTeammate ? "pointer-events-none opacity-50" : ""}
                 value={agent}
                 options={(["claude", "codex"] as const).map((a) => ({ value: a, label: agentLabel[a] }))}
                 onChange={(a) => {
@@ -397,7 +435,7 @@ function Editor({ routine }: { routine: Routine | null }) {
                   setModel(a === agent ? model : "");
                 }}
               />
-              <Select label="Model" value={model} options={models.map((m) => ({ value: m, label: m || "Default model" }))} onChange={setModel} />
+              <Select label="Model" className={ownerTeammate ? "pointer-events-none opacity-50" : ""} value={model} options={models.map((m) => ({ value: m, label: m || "Default model" }))} onChange={setModel} />
             </Labeled>
             <Labeled label="Profile">
               <Select
@@ -411,12 +449,12 @@ function Editor({ routine }: { routine: Routine | null }) {
             <Labeled label="Workspace">
               <Segmented
                 label="Workspace per run"
-                value={mode}
+                value={ownerTeammate ? "fresh" : mode}
                 options={[
                   { value: "fresh", label: "New each run" },
                   { value: "standing", label: "One standing workspace" },
                 ]}
-                onChange={setMode}
+                onChange={(m) => !ownerTeammate && setMode(m)}
               />
             </Labeled>
             <p className="text-[11.5px] leading-relaxed text-mute">

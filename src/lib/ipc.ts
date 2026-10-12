@@ -370,6 +370,7 @@ export interface Settings {
   modelRoutineSummary: string;
   modelPrDescription: string;
   modelTeammateReport: string;
+  modelChiefPlan: string;
   localAgents: boolean;
   remoteEnabled: boolean;
   remotePort: number;
@@ -473,6 +474,8 @@ export interface Routine {
   lastRunAt: number | null;
   nextRunAt: number | null;
   lastStatus: RunStatus | null;
+  /** Slug of the teammate that owns this routine; its runs are tasks in that teammate's thread. */
+  teammate: string | null;
 }
 
 export interface RoutineRun {
@@ -499,6 +502,8 @@ export interface RoutineInput {
   /** Bind a standing routine to an existing workspace (scheduling from the chat). */
   standingWorkspaceId?: string | null;
   enabled: boolean;
+  /** Owner: a teammate slug (message routines only). */
+  teammate?: string | null;
 }
 
 /** A named coworker you hand tasks to (src-tauri/src/teammates.rs). */
@@ -533,11 +538,13 @@ export interface TeammateMessage {
   role: "user" | "teammate" | "system";
   text: string;
   workspaceId: string | null;
-  kind: "message" | "task_started" | "task_report" | "error";
+  kind: "message" | "task_started" | "task_report" | "error" | "plan" | "brief" | "handoff";
   /** Task status when a started/report card was posted. */
   status: TeammateTaskStatus | null;
   /** Files changed in the task workspace when a report was posted. */
   files: number | null;
+  /** Plan id (plan card, combined report), target teammate slug (handoff), or origin kind (brief). */
+  meta: string | null;
 }
 
 export interface TeammateTask {
@@ -549,6 +556,44 @@ export interface TeammateTask {
   createdAt: number;
   finishedAt: number | null;
   summary: string | null;
+  /** The Chief plan, or the task a hand-off came from. */
+  parentTaskId: string | null;
+  originKind: "chief" | "handoff" | "routine" | null;
+  /** Delegating teammate slug (chief, handoff) or the routine's name (routine). */
+  originRef: string | null;
+  /** Hand-off chips the finished report offers. */
+  handoffs: HandoffChip[];
+  /** Slugs this task was already handed to. */
+  handedTo: string[];
+}
+
+export interface HandoffChip {
+  to: string;
+  label: string;
+}
+
+export type PartState = "pending" | "running" | "waiting" | "done" | "failed";
+
+export interface PlanPart {
+  teammate: string;
+  title: string;
+  brief: string;
+  dependsOn: number[];
+  taskId: string | null;
+  failed: string | null;
+}
+
+/** Chief's plan: parts per teammate, with live state per part (`views`, same order as `parts`). */
+export interface PlanView {
+  id: string;
+  slug: string;
+  repoId: string;
+  request: string;
+  summary: string;
+  status: "planning" | "proposed" | "running" | "done" | "cancelled" | "failed";
+  createdAt: number;
+  parts: PlanPart[];
+  views: (PlanPart & { state: PartState; summary: string | null; workspaceId: string | null })[];
 }
 
 /** A teammate plus what the sidebar needs: status, last message, unseen report. */
@@ -583,7 +628,17 @@ export const api = {
   teammateTasks: (slug: string) => invoke<TeammateTask[]>("teammate_tasks", { slug }),
   /** `newTask`: true forces a new task; omitted continues the open one if there is one. Rejects "Pick a repository…" when it can't choose. */
   teammateSend: (slug: string, text: string, repoId?: string | null, newTask?: boolean | null) =>
-    invoke<{ workspaceId: string; newTask: boolean }>("teammate_send", { slug, text, repoId: repoId ?? null, newTask: newTask ?? null }),
+    invoke<{ workspaceId: string | null; newTask: boolean }>("teammate_send", { slug, text, repoId: repoId ?? null, newTask: newTask ?? null }),
+  /** Chief's plans for its thread (live part state included). */
+  teammatePlans: (slug: string) => invoke<PlanView[]>("teammate_plans", { slug }),
+  chiefPlanStart: (planId: string) => invoke<void>("chief_plan_start", { planId }),
+  /** Replaces a proposed plan's summary and parts (unknown teammates dropped, cycles rejected). */
+  chiefPlanEdit: (planId: string, plan: { summary: string; parts: { teammate: string; title: string; brief: string; dependsOn: number[] }[] }) =>
+    invoke<void>("chief_plan_edit", { planId, plan }),
+  chiefPlanCancel: (planId: string) => invoke<void>("chief_plan_cancel", { planId }),
+  /** Hands a finished task's result to another teammate as a new task. */
+  teammateHandoff: (fromTaskId: string, toSlug: string, note?: string | null) =>
+    invoke<{ workspaceId: string | null; newTask: boolean }>("teammate_handoff", { fromTaskId, toSlug, note: note ?? null }),
   teammateMarkSeen: (slug: string) => invoke<void>("teammate_mark_seen", { slug }),
   teammateMemory: (slug: string) => invoke<string>("teammate_memory", { slug }),
   setTeammateMemory: (slug: string, text: string) => invoke<void>("set_teammate_memory", { slug, text }),

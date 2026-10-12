@@ -383,6 +383,8 @@ mod tests {
         assert!(d.patched(&json!({ "modelPrDescription": "haiku" })).is_err());
         assert_eq!(d.patched(&json!({ "modelTeammateReport": "local:llama3.2:3b" })).unwrap().model_teammate_report, "local:llama3.2:3b");
         assert!(d.patched(&json!({ "modelTeammateReport": "haiku" })).is_err());
+        assert_eq!(d.patched(&json!({ "modelChiefPlan": "local:llama3.2:3b" })).unwrap().model_chief_plan, "local:llama3.2:3b");
+        assert!(d.patched(&json!({ "modelChiefPlan": "off" })).is_err(), "Chief's plan is required, so it cannot be turned off");
         assert!(d.patched(&json!({ "localProvider": "vllm" })).is_err());
         assert!(d.patched(&json!({ "localTimeoutSecs": 0 })).is_err());
     }

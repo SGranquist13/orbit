@@ -3,12 +3,13 @@ import { LoaderCircle, Plus, Search, SendHorizontal, Shuffle } from "lucide-reac
 import { useEffect, useMemo, useRef, useState } from "react";
 import { timeAgo } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
-import { api, type AgentKind, type Teammate, type TeammateMessage, type TeammateTask, type TeammateTaskStatus, type TeammateView } from "../lib/ipc";
+import { api, type AgentKind, type PlanView, type Teammate, type TeammateMessage, type TeammateTask, type TeammateTaskStatus, type TeammateView } from "../lib/ipc";
 import { defaultModelFor, modelsFor } from "../lib/settings";
 import { rememberedTeammate } from "../lib/lastTeammate";
 import { useApp } from "../stores/app";
 import { AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
 import { TeammateAvatar } from "./TeammateAvatar";
+import { BriefBlock, HandoffChips, HandoffLine, OriginLabel, PlanCard, RoutinesLine, ScheduleButton } from "./TeammateExtras";
 import { AgentIcon, Button, Kbd, TeammateDot, agentLabel, cn } from "./ui";
 
 /** One line of the teammate's last message, "You: " when the user spoke last. */
@@ -168,7 +169,13 @@ function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-[4px] border-[1.5px] border-line bg-panel px-3.5 py-2.5">{children}</div>;
 }
 
-function MessageRow({ m, tasks, teammate }: { m: TeammateMessage; tasks: TeammateTask[]; teammate: Teammate }) {
+function MessageRow({ m, tasks, teammate, plans, latestReport, onPlanChanged }: { m: TeammateMessage; tasks: TeammateTask[]; teammate: Teammate; plans: PlanView[]; latestReport: Set<string>; onPlanChanged: () => void }) {
+  if (m.kind === "plan") {
+    const plan = plans.find((p) => p.id === m.meta);
+    return plan ? <PlanCard plan={plan} onChanged={onPlanChanged} /> : null;
+  }
+  if (m.kind === "brief") return <BriefBlock text={m.text} task={tasks.find((t) => t.workspaceId === m.workspaceId && t.originKind)} />;
+  if (m.kind === "handoff") return <HandoffLine slug={m.meta} text={m.text} />;
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
@@ -179,12 +186,14 @@ function MessageRow({ m, tasks, teammate }: { m: TeammateMessage; tasks: Teammat
     );
   }
   if (m.kind === "task_started") {
-    const live = tasks.find((t) => t.workspaceId === m.workspaceId)?.status ?? m.status ?? "running";
+    const task = tasks.find((t) => t.workspaceId === m.workspaceId);
+    const live = task?.status ?? m.status ?? "running";
     return (
       <Card>
         <div className="flex items-center gap-2.5">
           <span className="label text-mute">Started</span>
           <WorkspaceLink id={m.workspaceId} fallback={m.text} />
+          <OriginLabel task={task} />
           <span className="ml-auto flex items-center gap-3">
             <StatusChip status={live} />
             <span className="text-[11px] tabular-nums text-mute">{timeAgo(m.ts)}</span>
@@ -195,11 +204,13 @@ function MessageRow({ m, tasks, teammate }: { m: TeammateMessage; tasks: Teammat
   }
   if (m.kind === "task_report") {
     const status = m.status ?? "done";
+    const task = m.workspaceId ? tasks.find((t) => t.workspaceId === m.workspaceId) : undefined;
+    const chips = task && status === "done" && task.status === "done" && latestReport.has(m.id);
     return (
       <Card>
         <div className="flex items-center gap-2.5">
           <StatusChip status={status} />
-          <WorkspaceLink id={m.workspaceId} fallback="Workspace" />
+          {m.workspaceId ? <WorkspaceLink id={m.workspaceId} fallback="Workspace" /> : <span className="label text-mute">Combined report</span>}
           <span className="ml-auto flex items-center gap-3 text-[11px] tabular-nums text-mute">
             {m.files != null && m.files > 0 && (
               <span>
@@ -210,6 +221,7 @@ function MessageRow({ m, tasks, teammate }: { m: TeammateMessage; tasks: Teammat
           </span>
         </div>
         <p className="selectable mt-2 whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg">{m.text}</p>
+        {chips && <HandoffChips task={task} selfSlug={teammate.slug} />}
       </Card>
     );
   }
@@ -234,6 +246,8 @@ export function TeammateThread({ slug }: { slug: string }) {
   const focusTick = useApp((s) => s.teammateFocus);
   const [messages, setMessages] = useState<TeammateMessage[]>([]);
   const [tasks, setTasks] = useState<TeammateTask[]>([]);
+  const [plans, setPlans] = useState<PlanView[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [newTask, setNewTask] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -246,6 +260,7 @@ export function TeammateThread({ slug }: { slug: string }) {
     let live = true;
     api.teammateThread(slug).then((m) => live && setMessages(m), () => {});
     api.teammateTasks(slug).then((t) => live && setTasks(t), () => {});
+    if (slug === "chief") api.teammatePlans(slug).then((p) => live && setPlans(p), () => {});
     return () => {
       live = false;
     };
@@ -265,13 +280,23 @@ export function TeammateThread({ slug }: { slug: string }) {
   useEffect(() => {
     setNewTask(false);
     setText("");
+    setNotice(null);
   }, [slug]);
+
+  // Hand-off chips belong to the newest report of each workspace only.
+  const latestReport = useMemo(() => {
+    const newest = new Map<string, string>();
+    for (const m of messages) if (m.kind === "task_report" && m.workspaceId) newest.set(m.workspaceId, m.id);
+    return new Set(newest.values());
+  }, [messages]);
+  const refetchPlans = () => void api.teammatePlans(slug).then(setPlans, () => {});
 
   const pool = useMemo(
     () => (teammate && teammate.repos.length ? repos.filter((r) => teammate.repos.some((a) => a === r.id || a.toLowerCase() === r.name.toLowerCase())) : repos),
     [repos, teammate],
   );
-  const openTask = tasks.find((t) => OPEN.includes(t.status) && workspaces.some((w) => w.id === t.workspaceId));
+  const isChief = slug === "chief";
+  const openTask = isChief ? undefined : tasks.find((t) => OPEN.includes(t.status) && workspaces.some((w) => w.id === t.workspaceId));
   const starting = newTask || !openTask;
   const needsRepo = starting && pool.length > 1;
   // Remembered repo, else the one the user is looking at, else the first allowed.
@@ -295,6 +320,7 @@ export function TeammateThread({ slug }: { slug: string }) {
       const [m, t] = await Promise.all([api.teammateThread(slug), api.teammateTasks(slug)]);
       setMessages(m);
       setTasks(t);
+      if (isChief) refetchPlans();
     } catch (e) {
       useApp.getState().setError(String(e));
     } finally {
@@ -324,6 +350,7 @@ export function TeammateThread({ slug }: { slug: string }) {
           Edit
         </Button>
       </header>
+      <RoutinesLine slug={slug} />
       <div className="dither-rule bg-line-strong" />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -331,14 +358,16 @@ export function TeammateThread({ slug }: { slug: string }) {
           {messages.length === 0 && (
             <div className="py-16 text-center">
               <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={64} className="mx-auto" />
-              <p className="mt-3 text-[13px] font-medium text-dim">Hand {teammate.name} a task.</p>
+              <p className="mt-3 text-[13px] font-medium text-dim">{isChief ? "Tell Chief what you want done." : `Hand ${teammate.name} a task.`}</p>
               <p className="mx-auto mt-1 max-w-[420px] text-[12.5px] leading-relaxed text-mute">
-                It creates its own workspace, does the work there, and reports back here with a link and the result.
+                {isChief
+                  ? "Chief splits it into parts, proposes a plan with the right teammate for each, and runs it when you press Start all. It reports back once everything is done."
+                  : "It creates its own workspace, does the work there, and reports back here with a link and the result."}
               </p>
             </div>
           )}
           {messages.map((m) => (
-            <MessageRow key={m.id} m={m} tasks={tasks} teammate={teammate} />
+            <MessageRow key={m.id} m={m} tasks={tasks} teammate={teammate} plans={plans} latestReport={latestReport} onPlanChanged={refetchPlans} />
           ))}
           {teammate.status === "working" && (
             <div className="flex items-center gap-2 text-[12px] text-mute">
@@ -376,6 +405,17 @@ export function TeammateThread({ slug }: { slug: string }) {
                   ))}
                 </select>
               )}
+              {!isChief && (
+                <ScheduleButton
+                  teammate={teammate}
+                  repoId={repoId}
+                  text={text}
+                  onScheduled={(when) => {
+                    setNotice(`Scheduled: ${when}. It appears under Routines.`);
+                    setText("");
+                  }}
+                />
+              )}
               {openTask && (
                 <button
                   onClick={() => setNewTask((n) => !n)}
@@ -390,7 +430,7 @@ export function TeammateThread({ slug }: { slug: string }) {
                 </button>
               )}
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-mute">
-                {starting ? "Starts a new task in its own workspace" : `Continues: ${continuing}`}
+                {notice ?? (isChief ? "Chief proposes a plan first; nothing starts until you press Start all" : starting ? "Starts a new task in its own workspace" : `Continues: ${continuing}`)}
               </span>
               <Kbd>Enter</Kbd>
               <Button variant="primary" onClick={() => void send()} disabled={!text.trim() || busy || (needsRepo && !repoId)}>

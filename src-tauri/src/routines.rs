@@ -912,6 +912,9 @@ pub fn save_routine(app: AppHandle, state: State<AppState>, input: RoutineInput)
     let teammate = input.teammate.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
     check_owner(teammate.as_deref(), &input.action, input.mode)?;
     if let Some(slug) = &teammate {
+        if slug == crate::chief::SLUG {
+            return Err("Chief plans work for others; give the routine to the teammate that does it".into());
+        }
         crate::teammates::get(&state.home, slug).ok_or_else(|| format!("No teammate `{slug}`"))?;
     }
     state.db().repo(&input.repo_id).map_err(|_| "pick a repository".to_string())?;
