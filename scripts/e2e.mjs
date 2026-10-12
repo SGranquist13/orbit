@@ -385,6 +385,14 @@ await step("routines", async () => {
     const [r] = await invoke("routine_runs", { routineId: routine.id, limit: 1 });
     return r && r.status !== "running" ? r : null;
   }, 180_000, 2000);
+  // The row is finished as "done" first; the quiet check flips it a moment later, so let it settle.
+  if (run.status === "done") {
+    await until("routine run settled", async () => {
+      const [r] = await invoke("routine_runs", { routineId: routine.id, limit: 1 });
+      if (r.status !== "done") Object.assign(run, r);
+      return r.status !== "done";
+    }, 30_000, 1000).catch(() => {});
+  }
   if (run.status !== "quiet") throw new Error(`expected a quiet run, got ${run.status}: ${run.summary}`);
   if (!(run.summary ?? "").trim()) throw new Error("routine run has no summary");
   await until("quiet workspace archived", async () => {
