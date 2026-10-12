@@ -22,6 +22,7 @@ pub enum Task {
     CommitMessage,
     RoutineSummary,
     PrDescription,
+    TeammateReport,
 }
 
 impl Task {
@@ -38,6 +39,7 @@ impl Task {
             Task::CommitMessage => &s.model_commit_message,
             Task::RoutineSummary => &s.model_routine_summary,
             Task::PrDescription => &s.model_pr_description,
+            Task::TeammateReport => &s.model_teammate_report,
         }
     }
 }
@@ -109,6 +111,7 @@ pub fn last_errors() -> HashMap<String, String> {
 /// - `WorkspaceName`: `{"name": string}` (<= 5 words); optional, off by default.
 /// - `CommitMessage`: `{"subject": string, "body": string}`; required, so `Ok(Some(_))` always (or `Err`).
 /// - `RoutineSummary`: `{"summary": string, "nothingToDo": boolean}`; required.
+/// - `TeammateReport`: `{"summary": string, "needsYou": boolean, "question"?: string}`; required (`teammates::report`).
 /// - `PrDescription`: `{"title": string, "body": string}`; required. Only called when this task is
 ///   set to a local model (see `trunk::pr_draft_enabled`).
 pub async fn complete_json(state: &Inner, task: Task, system: &str, prompt: &str, schema: &Value) -> anyhow::Result<Option<Value>> {

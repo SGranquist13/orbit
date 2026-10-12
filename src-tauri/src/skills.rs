@@ -100,6 +100,7 @@ pub fn install_builtin(home: &Path) -> anyhow::Result<()> {
         std::fs::create_dir_all(p.parent().expect("has parent"))?;
         std::fs::write(&p, body)?;
     }
+    crate::teammates::install_bundled(&root)?;
     Ok(())
 }
 
