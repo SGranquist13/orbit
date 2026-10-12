@@ -14,6 +14,8 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 
 ### 10. AI teammates (standalone feature)
 
+**Decided (2026-10-12):** build it with the proposed defaults (Teammates section above the repo list; stop at a draft PR; hand-offs via Chief or explicit chips; custom teammates from the UI, saved as files). Phase 1: teammates, threads, delegation, memory, custom teammates. Phase 2: Chief splitting work, hand-off chips, teammate routines.
+
 **Want (user's idea):** hand a task to a dedicated agent, a coworker, and get finished work back. Reference: Grok Bot (2026-10-12 screenshot): a sidebar of named teammates (Chief, Sales Outbound, Inbox Manager, ...), each with an avatar, last-message preview and time; you message one, it works with its tools and comes back with "Done".
 
 **Standalone, not a replacement for profiles.** Profiles stay as the per-workspace mode (see below). A teammate is a separate thing: a persistent, named identity you delegate to, which can itself use a profile/role for its workspaces.

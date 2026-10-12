@@ -191,6 +191,17 @@ _Last verified: 2026-10-12: `bun run e2e` 20/20 (adds routines, trunk save point
 | Settings > Models: provider, URL, key, timeout, live status, installed models + Test, per-task model, "Use local for all", Default Claude model | P2 | 🟢 | Mock-verified; `local_models_status` / `test_local_model` commands tested only via the live test and mock |
 | Experimental: run agents on local models (`local:<model>` in the New Workspace picker; Claude Code via `ANTHROPIC_BASE_URL`, Codex via `model_provider="ollama"`) | P3 | 🟡 | Live-checked: both CLIs connect and finish a turn against Ollama. Small models (3B, 7B coder) could not complete a tool call under Claude Code. Cost/context meter are wrong for local models. Spawn args/env unit-tested; not run through Orbit itself |
 
+## AI teammates (PLANNING #10, decided 2026-10-12)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| Teammates section in the sidebar: named coworkers with avatar, status and last-message preview | P1 | ⬜ | Phase 1 |
+| Teammate thread: hand a task in chat; the teammate creates the workspace(s) itself and reports back with links and a result | P1 | ⬜ | Phase 1 |
+| Teammate memory (notes file it reads and appends to, editable) | P2 | ⬜ | Phase 1 |
+| Starter team (Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer) + create/edit custom teammates from the UI | P1 | ⬜ | Phase 1 |
+| Chief: splits a vague request and hands parts to other teammates; hand-off chips between teammates | P2 | ⬜ | Phase 2 |
+| Teammate routines (scheduled work owned by a teammate) | P3 | ⬜ | Phase 2 |
+
 ## Mock vs real
 
 The mock (`bun run dev` in a browser) renders the **same components** as the real app, so styling matches exactly. The differences are all in the data:
