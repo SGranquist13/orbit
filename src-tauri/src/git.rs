@@ -115,6 +115,16 @@ pub fn create_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> an
     Ok(())
 }
 
+/// A new branch at `start` (an existing branch or ref), e.g. a teammate's work handed on for review.
+pub fn create_worktree_from(repo: &Path, path: &Path, branch: &str, start: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let p = path.to_string_lossy();
+    run(repo, &["worktree", "add", "-b", branch, &p, start])?;
+    Ok(())
+}
+
 pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
     run(repo, &["worktree", "remove", "--force", &path.to_string_lossy()])?;
     Ok(())

@@ -587,4 +587,91 @@ await step("teammates", async () => {
   await sleep(1500);
 });
 
+/** Two throwaway Claude-haiku teammates for the hand-off and Chief steps. */
+async function makePair(prefix) {
+  const mk = (name) =>
+    invoke("save_teammate", {
+      input: { name, avatar: "", description: "Throwaway teammate that replies with the one word it is told to. Never edits files.", agent: "claude", model: "haiku", profile: null, repos: [], instructions: "Answer in one word. Never edit files." },
+    });
+  const a = await mk(`${prefix} A`);
+  const b = await mk(`${prefix} B`);
+  return [a.slug, b.slug];
+}
+
+await step("teammates-handoff", async () => {
+  // A finishes a one-word task; its result is handed to B through the command the chips call. B's task
+  // carries the hand-off brief and "from A"; A's thread shows "Handed to B".
+  const [a, b] = await makePair("E2E Hand");
+  await invoke("teammate_send", { slug: a, text: "Reply with exactly the word: ready. Do not edit files.", repoId: null, newTask: null });
+  const report = await until("A's report", async () => (await invoke("teammate_thread", { slug: a, limit: 50 })).find((m) => m.kind === "task_report" || m.kind === "error") ?? null, 180_000, 2000);
+  if (report.kind !== "task_report") throw new Error(`A failed: ${report.text}`);
+  const [task] = await invoke("teammate_tasks", { slug: a });
+  if (!Array.isArray(task.handoffs) || !Array.isArray(task.handedTo)) throw new Error(`tasks lack hand-off fields: ${JSON.stringify(task)}`);
+  const sent = await invoke("teammate_handoff", { fromTaskId: task.id, toSlug: b, note: null });
+  if (!sent.newTask || !sent.workspaceId) throw new Error(`hand-off did not open a task: ${JSON.stringify(sent)}`);
+  await until("B's report", async () => (await invoke("teammate_thread", { slug: b, limit: 50 })).find((m) => m.kind === "task_report" || m.kind === "error") ?? null, 180_000, 2000);
+  const threadB = await invoke("teammate_thread", { slug: b, limit: 50 });
+  const brief = threadB.find((m) => m.kind === "brief");
+  if (!brief || !/handed this to you/i.test(brief.text) || !/ready/i.test(brief.text) || !/Branch:/.test(brief.text)) throw new Error(`bad hand-off brief: ${JSON.stringify(brief)}`);
+  const [taskB] = await invoke("teammate_tasks", { slug: b });
+  if (taskB.originKind !== "handoff" || taskB.parentTaskId !== task.id || taskB.originRef !== a) throw new Error(`bad task origin: ${JSON.stringify(taskB)}`);
+  const after = await invoke("teammate_thread", { slug: a, limit: 50 });
+  if (!after.some((m) => m.kind === "handoff" && /Handed to/.test(m.text) && m.meta === b)) throw new Error("source thread lacks the Handed to line");
+  const [taskA] = await invoke("teammate_tasks", { slug: a });
+  if (!taskA.handedTo.includes(b)) throw new Error(`source task does not list B: ${JSON.stringify(taskA.handedTo)}`);
+  await key("t", { ctrl: true, shift: true });
+  await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${a}"]')`, 5000);
+  await js(`document.querySelector('[data-teammates] [data-teammate="${a}"]').click()`);
+  await waitFor("Handed to in A's thread", `const t = document.querySelector('[data-teammate-thread="${a}"]'); return !!t && t.innerText.includes('Handed to')`, 10_000);
+  await shot("13-handoff");
+  for (const slug of [a, b]) await invoke("delete_teammate", { slug });
+});
+
+await step("chief", async () => {
+  // Chief plans a trivial request with a real (haiku) planning call; the plan's parts are then pinned to
+  // two throwaway teammates (B after A) so no starter teammate runs a costly turn. Start all runs A, then B
+  // with A's result in its brief, then Chief posts the combined report.
+  const [a, b] = await makePair("E2E Chief");
+  await invoke("update_settings", { patch: { suggestionModel: "haiku" } });
+  const sent = await invoke("teammate_send", { slug: "chief", text: `Have ${a} reply "ready" and then ${b} reply "set". Each teammate only replies with that word.`, repoId: null, newTask: null });
+  if (sent.workspaceId !== null) throw new Error(`Chief should not open a workspace: ${JSON.stringify(sent)}`);
+  const plan = await until("Chief's plan", async () => {
+    const p = (await invoke("teammate_plans", { slug: "chief" })).at(-1);
+    return p && p.status !== "planning" ? p : null;
+  }, 150_000, 2000);
+  if (plan.status !== "proposed" || !plan.parts.length) throw new Error(`Chief could not plan: ${JSON.stringify(plan).slice(0, 400)}`);
+  await invoke("chief_plan_edit", {
+    planId: plan.id,
+    plan: {
+      summary: plan.summary,
+      parts: [
+        { teammate: a, title: "Say ready", brief: "Reply with exactly the word: ready. Do not edit files.", dependsOn: [] },
+        { teammate: b, title: "Say set", brief: "Reply with exactly the word: set. Do not edit files.", dependsOn: [0] },
+      ],
+    },
+  });
+  await invoke("chief_plan_start", { planId: plan.id });
+  await until("plan done", async () => {
+    const p = (await invoke("teammate_plans", { slug: "chief" })).find((x) => x.id === plan.id);
+    if (p?.views.some((v) => v.state === "failed")) throw new Error(`a part failed: ${JSON.stringify(p.views.map((v) => [v.title, v.state, v.summary]))}`);
+    return p?.status === "done" ? p : null;
+  }, 420_000, 3000);
+  const [taskA] = await invoke("teammate_tasks", { slug: a });
+  const [taskB] = await invoke("teammate_tasks", { slug: b });
+  if (taskA.parentTaskId !== plan.id || taskA.originKind !== "chief" || taskB.parentTaskId !== plan.id) throw new Error("child tasks are not linked to the plan");
+  if (taskB.createdAt < taskA.finishedAt) throw new Error("B started before A was done");
+  const briefB = (await invoke("teammate_thread", { slug: b, limit: 50 })).find((m) => m.kind === "brief");
+  if (!briefB || !/Earlier parts of this plan are done/.test(briefB.text)) throw new Error(`B's brief lacks A's result: ${JSON.stringify(briefB)}`);
+  const combined = (await invoke("teammate_thread", { slug: "chief", limit: 50 })).find((m) => m.kind === "task_report" && m.meta === plan.id);
+  if (!combined || !combined.text.trim()) throw new Error("no combined report in Chief's thread");
+  await key("t", { ctrl: true, shift: true });
+  await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="chief"]')`, 5000);
+  await js(`document.querySelector('[data-teammates] [data-teammate="chief"]').click()`);
+  await waitFor("plan card in Chief's thread", `return !!document.querySelector('[data-plan="${plan.id}"]')`, 10_000);
+  await shot("14-chief-plan");
+  for (const slug of [a, b]) await invoke("delete_teammate", { slug });
+  await js(`location.reload()`);
+  await sleep(1500);
+});
+
 await h.finish();

@@ -3,7 +3,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
-import type { AgentEvent, Attachment, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -300,6 +300,7 @@ let settings: Settings = {
   modelRoutineSummary: "default",
   modelPrDescription: "default",
   modelTeammateReport: "default",
+  modelChiefPlan: "default",
   localAgents: false,
   remoteEnabled: false,
   remotePort: 47821,
@@ -355,7 +356,7 @@ const nextAt = (r: Routine) => previewTimes(r.schedule, 1)[0] ?? null;
 const rt = (id: string, repoId: string, name: string, schedule: Routine["schedule"], text: string, p: Partial<Routine> = {}): Routine => {
   const r: Routine = {
     id, repoId, name, schedule, action: { kind: "prompt", text }, agent: "claude", model: null, profile: null, mode: "fresh",
-    standingWorkspaceId: null, enabled: true, createdAt: now - 20 * day, lastRunAt: null, nextRunAt: null, lastStatus: null, ...p,
+    standingWorkspaceId: null, enabled: true, createdAt: now - 20 * day, lastRunAt: null, nextRunAt: null, lastStatus: null, teammate: null, ...p,
   };
   r.nextRunAt = r.enabled ? nextAt(r) : null;
   return r;
@@ -376,6 +377,9 @@ let routines: Routine[] = [
   rt("rt5", "r1", "Weekly simplify", { kind: "weekly", weekday: 5, time: "16:00" }, "", {
     action: { kind: "simplify" }, lastRunAt: now - 6 * day, lastStatus: "done",
   }),
+  rt("rt6", "r1", "Dependency bump check", { kind: "weekly", weekday: 1, time: "08:00" }, "Check for outdated dependencies and open a draft PR with the safe bumps. Note anything risky in the PR description.", {
+    teammate: "builder", model: "sonnet", lastRunAt: now - 2 * day, lastStatus: "done",
+  }),
 ];
 const run = (id: string, routineId: string, ageMin: number, status: RoutineRun["status"], summary: string | null, workspaceId: string | null = null): RoutineRun => ({
   id, routineId, workspaceId, startedAt: now - ageMin * min, finishedAt: status === "running" ? null : now - ageMin * min + 4 * min, status, summary,
@@ -390,6 +394,7 @@ let routineRuns: RoutineRun[] = [
   run("ru7", "rt4", 24 * 60, "done", "Hero updated; opened draft PR #31.", "w4"),
   run("ru8", "rt5", 6 * 24 * 60, "done", "Simplified 3 spots in the slug and session code and opened draft PR #34. One candidate was skipped because the checks failed.", "w2"),
   run("ru9", "rt5", 13 * 24 * 60, "quiet", "Looked at 4 files changed in the last 7 days and found 2 candidates (0 low-risk)."),
+  run("ru10", "rt6", 2 * 24 * 60, "done", "Bumped 5 dev dependencies; 2 majors left for you. Draft PR #422.", "w6"),
 ];
 
 function saveMockRoutine(input: RoutineInput): Routine {
@@ -404,7 +409,7 @@ function saveMockRoutine(input: RoutineInput): Routine {
     repoId: input.repoId, name, schedule: input.schedule, action: input.action, agent: input.agent, model: input.model ?? null,
     profile: input.profile ?? null, mode: input.mode, standingWorkspaceId: input.standingWorkspaceId ?? existing?.standingWorkspaceId ?? null,
     enabled: input.enabled, createdAt: existing?.createdAt ?? Date.now(), lastRunAt: existing?.lastRunAt ?? null,
-    nextRunAt: input.enabled ? (times[0] ?? null) : null, lastStatus: existing?.lastStatus ?? null,
+    nextRunAt: input.enabled ? (times[0] ?? null) : null, lastStatus: existing?.lastStatus ?? null, teammate: input.teammate || null,
   };
   routines = existing ? routines.map((x) => (x.id === r.id ? r : x)) : [...routines, r];
   return r;
@@ -433,6 +438,8 @@ const tm = (slug: string, name: string, avatar: string, description: string, age
   slug, name, avatar, description, agent, model, profile, repos: [], readonly: null, instructions, bundled: true, overridden: false,
 });
 const STARTERS: Teammate[] = [
+  tm("chief", "Chief", "cloud:5:happy", "Takes a vague request, splits it into parts and hands each to the right teammate.", "claude", "sonnet", "shipkit:planner",
+    "You are the coordinator. You never write code yourself. Split a request into the smallest set of parts your teammates can do, and write each brief so it stands alone."),
   tm("builder", "Builder", "squircle:2:smile", "Implements a task end to end in its own workspace, with tests, and leaves a draft PR.", "claude", "sonnet", "shipkit:builder",
     "You implement what you are handed: read the code, make a focused change that matches the project's conventions, add or adjust tests, and run the checks.\nStop at a draft pull request. Never merge. If the request is ambiguous in a way that changes the design, ask one short question first."),
   tm("debugger", "Debugger", "triangle:1:focus", "Reproduces a bug, finds the root cause, and fixes it with a regression test.", "claude", "sonnet", "shipkit:debugger",
@@ -455,6 +462,7 @@ const STARTER_DEFAULTS = STARTERS.map((s) => ({ ...s }));
 const overridden = new Set<string>();
 let tmThreads: Record<string, TeammateMessage[]> = {};
 let tmTasks: TeammateTask[] = [];
+let tmPlans: MockPlan[] = [];
 const tmSeen: Record<string, number> = {};
 const tmMemory: Record<string, string> = {
   builder: "# Memory\n- Prefers small PRs, one concern each.\n- Run `bun run typecheck` before opening a PR.\n- Auth code lives in src/auth; the legacy cookie path must keep working.\n",
@@ -462,11 +470,23 @@ const tmMemory: Record<string, string> = {
 
 let tmId = 0;
 const tmMsg = (slug: string, ageMin: number, p: Partial<TeammateMessage> & Pick<TeammateMessage, "role" | "kind" | "text">): TeammateMessage => ({
-  id: `tm${++tmId}`, slug, ts: now - ageMin * min, workspaceId: null, status: null, files: null, ...p,
+  id: `tm${++tmId}`, slug, ts: now - ageMin * min, workspaceId: null, status: null, files: null, meta: null, ...p,
 });
 const tmTask = (slug: string, workspaceId: string, status: TeammateTask["status"], ageMin: number, summary: string | null = null): TeammateTask => ({
   id: `tk${++tmId}`, slug, workspaceId, repoId: "r1", status, createdAt: now - ageMin * min, finishedAt: status === "done" || status === "error" ? now - (ageMin - 5) * min : null, summary,
+  parentTaskId: null, originKind: null, originRef: null, handoffs: [], handedTo: [],
 });
+
+interface MockPlan {
+  id: string;
+  slug: string;
+  repoId: string;
+  request: string;
+  summary: string;
+  status: PlanView["status"];
+  createdAt: number;
+  parts: PlanPart[];
+}
 
 function seedTeammates() {
   // Builder: finished one task yesterday, is working on w1 now.
@@ -480,6 +500,17 @@ function seedTeammates() {
   tmTasks.push(tmTask("builder", "w2", "done", 1500, "Idempotent webhook handler; draft PR #412."), tmTask("builder", "w1", "running", 12));
   workspaces[0].teammate = "builder";
   workspaces[1].teammate = "builder";
+  // A scheduled run: the routine "Dependency bump check" started this task two days ago.
+  tmThreads.builder.splice(
+    0, 0,
+    tmMsg("builder", 2880, { role: "system", kind: "brief", text: "Check for outdated dependencies and open a draft PR with the safe bumps. Note anything risky in the PR description.", workspaceId: "w6", meta: "routine" }),
+    tmMsg("builder", 2880, { role: "teammate", kind: "task_started", text: "Dependency bump check", workspaceId: "w6", status: "running" }),
+    tmMsg("builder", 2870, { role: "teammate", kind: "task_report", text: "Bumped 5 dev dependencies; 2 majors left for you. Draft PR #422.", workspaceId: "w6", status: "done", files: 2 }),
+  );
+  const bumpTask = tmTask("builder", "w6", "done", 2880, "Bumped 5 dev dependencies; 2 majors left for you. Draft PR #422.");
+  Object.assign(bumpTask, { originKind: "routine", originRef: "Dependency bump check" });
+  tmTasks.push(bumpTask);
+  workspaces[5].teammate = "builder";
   // Debugger: asked a question and waits.
   tmThreads.debugger = [
     tmMsg("debugger", 190, { role: "user", kind: "message", text: "Refresh the homepage hero crashes the build", workspaceId: "w4" }),
@@ -505,6 +536,50 @@ function seedTeammates() {
     tmMsg("planner", 2990, { role: "system", kind: "error", text: "No repository is added yet, so there was nothing to plan against." }),
   ];
   tmSeen.planner = now;
+  seedChief();
+}
+
+/** Chief: a running plan (one part done, one running, one waiting on both) and a fresh one waiting for Start. */
+function seedChief() {
+  const builderDone = tmTasks.find((k) => k.slug === "builder" && k.workspaceId === "w2")!;
+  workspaces[4].teammate = "planner";
+  workspaces[4].status = "running";
+  const plannerTask = tmTask("planner", "w5", "running", 9);
+  tmTasks.push(plannerTask);
+  tmThreads.planner.push(
+    tmMsg("planner", 9, { role: "system", kind: "brief", text: "Write the rollout checklist for the billing webhook change: what to deploy first, what to watch, how to roll back.", workspaceId: "w5", meta: "chief" }),
+    tmMsg("planner", 9, { role: "teammate", kind: "task_started", text: "Plan the rollout checklist", workspaceId: "w5", status: "running" }),
+  );
+  const plan1: MockPlan = {
+    id: "plan1", slug: "chief", repoId: "r1", status: "running", createdAt: now - 30 * min,
+    request: "Make the billing webhook change safe to ship: idempotent handler, a rollout checklist, and a review before it goes out.",
+    summary: "Three parts: Builder makes the handler idempotent while Planner drafts the rollout checklist in parallel; Reviewer checks the branch once both are done.",
+    parts: [
+      { teammate: "builder", title: "Make the webhook handler idempotent", brief: "Make the Stripe webhook handler idempotent, with tests for duplicate delivery. Open a draft PR.", dependsOn: [], taskId: builderDone.id, failed: null },
+      { teammate: "planner", title: "Plan the rollout checklist", brief: "Write the rollout checklist for the billing webhook change.", dependsOn: [], taskId: plannerTask.id, failed: null },
+      { teammate: "reviewer", title: "Review the combined branch", brief: "Review the idempotency change and check the rollout checklist covers its risks.", dependsOn: [0, 1], taskId: null, failed: null },
+    ],
+  };
+  Object.assign(builderDone, { originKind: "chief", originRef: "chief", parentTaskId: "plan1" });
+  Object.assign(plannerTask, { originKind: "chief", originRef: "chief", parentTaskId: "plan1" });
+  const plan2: MockPlan = {
+    id: "plan2", slug: "chief", repoId: "r2", status: "proposed", createdAt: now - 2 * min,
+    request: "Refresh the homepage: new hero, updated pricing copy, and tidy the footer links.",
+    summary: "Two independent parts that can run side by side, then a review of both branches.",
+    parts: [
+      { teammate: "builder", title: "New hero and pricing copy", brief: "Replace the homepage hero and update the pricing copy to match the new plan names.", dependsOn: [], taskId: null, failed: null },
+      { teammate: "debugger", title: "Fix the broken footer links", brief: "Find and fix the broken links in the footer, with a link-check test.", dependsOn: [], taskId: null, failed: null },
+      { teammate: "reviewer", title: "Review both changes", brief: "Review both branches for regressions in layout and links.", dependsOn: [0, 1], taskId: null, failed: null },
+    ],
+  };
+  tmPlans = [plan1, plan2];
+  tmThreads.chief = [
+    tmMsg("chief", 31, { role: "user", kind: "message", text: plan1.request }),
+    tmMsg("chief", 30, { role: "teammate", kind: "plan", text: `Plan: ${plan1.request}`, meta: "plan1" }),
+    tmMsg("chief", 3, { role: "user", kind: "message", text: plan2.request }),
+    tmMsg("chief", 2, { role: "teammate", kind: "plan", text: `Plan: ${plan2.request}`, meta: "plan2" }),
+  ];
+  tmSeen.chief = now;
 }
 
 function tmDefs(): Teammate[] {
@@ -517,13 +592,69 @@ function tmView(t: Teammate): TeammateView {
   const open = tasks.filter((k) => k.status === "running" || k.status === "waiting");
   const lastReport = Math.max(0, ...thread.filter((m) => m.kind === "task_report" || m.kind === "error").map((m) => m.ts));
   const unseen = lastReport > (tmSeen[t.slug] ?? 0);
-  const status: TeammateView["status"] = open.some((k) => k.status === "running") ? "working" : open.length || unseen ? "needsYou" : "idle";
+  let status: TeammateView["status"] = open.some((k) => k.status === "running") ? "working" : open.length || unseen ? "needsYou" : "idle";
+  if (t.slug === "chief") {
+    const live = tmPlans.map(planView);
+    const needs = live.some((p) => p.status === "proposed" || (p.status === "running" && p.views.some((v) => v.state === "failed" || v.state === "waiting")));
+    const working = live.some((p) => p.status === "planning" || (p.status === "running" && p.views.some((v) => v.state === "running" || v.state === "pending")));
+    status = needs ? "needsYou" : working ? "working" : unseen ? "needsYou" : "idle";
+  }
   return { ...t, overridden: overridden.has(t.slug), status, lastMessage: thread[thread.length - 1] ?? null, openTasks: open.length, unseen };
 }
 
-function tmPost(slug: string, m: Omit<TeammateMessage, "id" | "slug" | "ts" | "workspaceId" | "status" | "files"> & Partial<TeammateMessage>) {
-  (tmThreads[slug] ??= []).push({ id: `tm${++tmId}`, slug, ts: Date.now(), workspaceId: null, status: null, files: null, ...m });
+function tmPost(slug: string, m: Omit<TeammateMessage, "id" | "slug" | "ts" | "workspaceId" | "status" | "files" | "meta"> & Partial<TeammateMessage>) {
+  (tmThreads[slug] ??= []).push({ id: `tm${++tmId}`, slug, ts: Date.now(), workspaceId: null, status: null, files: null, meta: null, ...m });
 }
+
+function planView(p: MockPlan): PlanView {
+  const views = p.parts.map((part) => {
+    const task = tmTasks.find((k) => k.id === part.taskId);
+    const state: PartState = part.failed ? "failed" : !task ? "pending" : task.status === "running" ? "running" : task.status === "waiting" ? "waiting" : task.status === "done" ? "done" : "failed";
+    return { ...part, state, summary: task?.summary ?? part.failed, workspaceId: task?.workspaceId ?? null };
+  });
+  return { ...p, parts: p.parts.map((x) => ({ ...x })), views };
+}
+
+/** The role a teammate plays: its profile's name, else its slug. */
+const tmRole = (slug: string) => (tmDefs().find((x) => x.slug === slug)?.profile ?? "").split(":").pop() || slug;
+
+/** Mirror of handoff::default_chips. */
+function tmChips(t: TeammateTask): HandoffChip[] {
+  if (t.status !== "done") return [];
+  const role = tmRole(t.slug);
+  const text = t.summary ?? "";
+  const team = tmDefs().filter((x) => x.slug !== t.slug && x.slug !== "chief");
+  const find = (r: string) => team.find((x) => x.slug === r) ?? team.find((x) => tmRole(x.slug) === r);
+  const want: [string, string][] = [];
+  if (role === "planner") want.push(["builder", "Hand to {}"]);
+  else if (role === "builder" || role === "debugger") want.push(["reviewer", "Ask {} to check"]);
+  else if (role === "reviewer" && !/no findings|no issues|looks good|lgtm|nothing to fix/i.test(text)) want.push(["builder", "Hand fixes to {}"]);
+  if (role !== "shipper" && role !== "ticket-writer" && /\/pull\/|pr #\d|pull request #\d/i.test(text)) want.push(["shipper", "Hand to {}"]);
+  const chips: HandoffChip[] = [];
+  for (const [r, label] of want) {
+    const c = find(r);
+    if (c && !chips.some((x) => x.to === c.slug)) chips.push({ to: c.slug, label: label.replace("{}", c.name) });
+  }
+  return chips.slice(0, 3);
+}
+
+function tmTaskRows(slug: string): TeammateTask[] {
+  return tmTasks
+    .filter((k) => k.slug === slug)
+    .map((k) => {
+      const handedTo = tmTasks.filter((c) => c.parentTaskId === k.id && c.originKind === "handoff").map((c) => c.slug);
+      return { ...k, handoffs: tmChips(k).filter((c) => !handedTo.includes(c.to)), handedTo };
+    })
+    .reverse();
+}
+
+const tmReportFor = (slug: string): string => {
+  const role = tmRole(slug);
+  if (role === "reviewer") return "Two findings. High: refreshSession can double-submit when the token expires mid-request (src/auth/session.ts:61). Low: the new cookie helper has no test for the legacy path.";
+  if (role === "planner") return "Plan ready: three steps in order (schema, handler, backfill), with the risks and one open question about retention.";
+  if (role === "shipper") return "Checks are green and the branch is rebased. Draft PR #431 is open.";
+  return "Done. The change is on its own branch with tests, and draft PR #430 is open for you to look at.";
+};
 
 /** Mock of the report model: finishes the turn a couple of seconds later; a message ending in "?" is answered with a question. */
 function tmFinishLater(task: TeammateTask, text: string) {
@@ -532,13 +663,83 @@ function tmFinishLater(task: TeammateTask, text: string) {
     const asks = /\bwhich\b|\bor\b.*\?$/i.test(text) && text.trim().endsWith("?");
     task.status = asks ? "waiting" : "done";
     task.finishedAt = asks ? null : Date.now();
+    const report = asks ? "I found two ways to do this and they differ in what they break.\n\nWhich one do you want?" : tmReportFor(task.slug);
+    task.summary = report;
     if (w) { w.status = "done"; void emit("workspace", { ...w }); }
-    tmPost(task.slug, {
-      role: "teammate", kind: "task_report", workspaceId: task.workspaceId, status: task.status, files: 3,
-      text: asks ? "I found two ways to do this and they differ in what they break.\n\nWhich one do you want?" : "Done. The change is on its own branch with tests, and a draft PR is open for you to look at.",
-    });
+    tmPost(task.slug, { role: "teammate", kind: "task_report", workspaceId: task.workspaceId, status: task.status, files: 3, text: report });
     void emit("teammate-changed", task.slug);
+    if (task.originKind === "chief" && task.parentTaskId) mockAdvance(task.parentTaskId);
   }, 2200);
+}
+
+interface Origin { kind: "chief" | "handoff" | "routine"; ref: string; parent: string | null }
+
+/** Creates a task's workspace, posts its thread entries and (mock) finishes it a moment later. */
+function tmStartTask(t: Teammate, repo: { id: string }, text: string, opts: { user: boolean; name?: string; origin?: Origin }) {
+  const name = opts.name ?? text.split("\n")[0].slice(0, 60);
+  const w = ws(`w${workspaces.length + 1}`, repo.id, name, t.agent, "running");
+  w.teammate = t.slug;
+  w.profile = t.profile;
+  workspaces.unshift(w);
+  void emit("workspace", { ...w });
+  const task = tmTask(t.slug, w.id, "running", 0);
+  task.repoId = repo.id;
+  if (opts.origin) Object.assign(task, { originKind: opts.origin.kind, originRef: opts.origin.ref, parentTaskId: opts.origin.parent });
+  tmTasks.push(task);
+  if (opts.user) tmPost(t.slug, { role: "user", kind: "message", text, workspaceId: w.id });
+  else tmPost(t.slug, { role: "system", kind: "brief", text, workspaceId: w.id, meta: opts.origin?.kind ?? null });
+  tmPost(t.slug, { role: "teammate", kind: "task_started", text: name, workspaceId: w.id, status: "running" });
+  tmFinishLater(task, text);
+  void emit("teammate-changed", t.slug);
+  return { task, w };
+}
+
+function mockAdvance(planId: string) {
+  const plan = tmPlans.find((p) => p.id === planId);
+  if (!plan || plan.status !== "running") return;
+  const view = planView(plan);
+  view.views.forEach((v, i) => {
+    if (v.state !== "pending" || !v.dependsOn.every((d) => view.views[d].state === "done")) return;
+    const t = tmDefs().find((x) => x.slug === v.teammate)!;
+    const repo = repos.find((r) => r.id === plan.repoId)!;
+    const earlier = v.dependsOn.map((d) => `- ${view.views[d].title}: ${view.views[d].summary}`).join("\n");
+    const brief = earlier ? `${v.brief}\n\nEarlier parts of this plan are done. Build on them:\n${earlier}` : v.brief;
+    const { task } = tmStartTask(t, repo, brief, { user: false, name: v.title, origin: { kind: "chief", ref: "chief", parent: plan.id } });
+    plan.parts[i].taskId = task.id;
+  });
+  const after = planView(plan);
+  if (after.views.every((v) => v.state === "done")) {
+    plan.status = "done";
+    tmPost("chief", {
+      role: "teammate", kind: "task_report", status: "done", meta: plan.id,
+      text: `${plan.summary}\n\nAll parts are done:\n${after.views.map((v) => `- ${v.title} (${v.teammate}): ${v.summary}`).join("\n")}`,
+    });
+  }
+  void emit("teammate-changed", "chief");
+}
+
+function tmChiefSend(a: { text: string; repoId: string | null }) {
+  const t = tmDefs().find((x) => x.slug === "chief")!;
+  const pool = repos.filter((r) => !t.repos.length || t.repos.some((x) => x === r.id || x.toLowerCase() === r.name.toLowerCase()));
+  const repo = a.repoId ? pool.find((r) => r.id === a.repoId) : pool.length === 1 ? pool[0] : undefined;
+  if (!repo) throw pool.length ? "Pick a repository for this task" : "Add a repository first";
+  const text = a.text.trim();
+  const plan: MockPlan = { id: `plan${tmPlans.length + 1}-${Date.now() % 10000}`, slug: "chief", repoId: repo.id, request: text, summary: "", status: "planning", createdAt: Date.now(), parts: [] };
+  tmPlans.push(plan);
+  tmPost("chief", { role: "user", kind: "message", text });
+  tmPost("chief", { role: "teammate", kind: "plan", text: `Plan: ${text.slice(0, 80)}`, meta: plan.id });
+  setTimeout(() => {
+    plan.status = "proposed";
+    plan.summary = "Planner looks at the approach first, Builder implements it, and Reviewer checks the result.";
+    plan.parts = [
+      { teammate: "planner", title: "Plan the approach", brief: `Explore the code and plan: ${text}`, dependsOn: [], taskId: null, failed: null },
+      { teammate: "builder", title: "Implement it", brief: `Implement the plan for: ${text}`, dependsOn: [0], taskId: null, failed: null },
+      { teammate: "reviewer", title: "Review the result", brief: "Review the branch for correctness and missing tests.", dependsOn: [1], taskId: null, failed: null },
+    ];
+    void emit("teammate-changed", "chief");
+  }, 1500);
+  void emit("teammate-changed", "chief");
+  return { workspaceId: null, newTask: true };
 }
 
 function tmSend(a: { slug: string; text: string; repoId: string | null; newTask: boolean | null }) {
@@ -546,6 +747,7 @@ function tmSend(a: { slug: string; text: string; repoId: string | null; newTask:
   if (!t) throw `No teammate \`${a.slug}\``;
   const text = a.text.trim();
   if (!text) throw "Write a message first";
+  if (a.slug === "chief") return tmChiefSend({ text, repoId: a.repoId });
   const open = tmTasks.find((k) => k.slug === a.slug && (k.status === "running" || k.status === "waiting") && workspaces.some((w) => w.id === k.workspaceId));
   if (open && a.newTask !== true) {
     tmPost(a.slug, { role: "user", kind: "message", text, workspaceId: open.workspaceId });
@@ -560,19 +762,28 @@ function tmSend(a: { slug: string; text: string; repoId: string | null; newTask:
   const pool = repos.filter((r) => !t.repos.length || t.repos.some((x) => x === r.id || x.toLowerCase() === r.name.toLowerCase()));
   const repo = a.repoId ? pool.find((r) => r.id === a.repoId) : pool.length === 1 ? pool[0] : undefined;
   if (!repo) throw pool.length ? "Pick a repository for this task" : "None of this teammate's repositories are added to Orbit";
-  const name = text.split("\n")[0].slice(0, 60);
-  const w = ws(`w${workspaces.length + 1}`, repo.id, name, t.agent, "running");
-  w.teammate = t.slug;
-  w.profile = t.profile;
-  workspaces.unshift(w);
-  void emit("workspace", { ...w });
-  const task = tmTask(a.slug, w.id, "running", 0);
-  task.repoId = repo.id;
-  tmTasks.push(task);
-  tmPost(a.slug, { role: "user", kind: "message", text, workspaceId: w.id });
-  tmPost(a.slug, { role: "teammate", kind: "task_started", text: name, workspaceId: w.id, status: "running" });
-  tmFinishLater(task, text);
-  void emit("teammate-changed", a.slug);
+  const { w } = tmStartTask(t, repo, text, { user: true });
+  return { workspaceId: w.id, newTask: true };
+}
+
+function tmHandoff(a: { fromTaskId: string; toSlug: string; note: string | null }) {
+  const src = tmTasks.find((k) => k.id === a.fromTaskId);
+  if (!src) throw "That task no longer exists";
+  if (src.status === "running") throw "Wait for the task to finish before handing it on";
+  const to = tmDefs().find((x) => x.slug === a.toSlug);
+  if (!to || to.slug === "chief") throw "Chief plans work; hand a result to a teammate that does it";
+  if (to.slug === src.slug) throw "A teammate can't hand work to itself";
+  const from = tmDefs().find((x) => x.slug === src.slug)!;
+  const w0 = workspaces.find((x) => x.id === src.workspaceId);
+  const repo = repos.find((r) => r.id === src.repoId) ?? repos[0];
+  const job = tmRole(to.slug) === "reviewer" ? "Review the changes on that branch. You are read-only: report findings ranked by severity."
+    : tmRole(to.slug) === "shipper" ? "Get that branch shippable: run the checks, rebase on the base branch, and open or update the draft pull request. Never merge."
+    : tmRole(to.slug) === "builder" && tmRole(from.slug) === "reviewer" ? "Fix the findings above on this branch, highest severity first."
+    : "Continue from their report.";
+  const brief = `${from.name} handed this to you. Their report:\n\n${src.summary ?? "Finished."}\n\nBranch: ${w0?.branch ?? "unknown"}\nChanged files (3): src/auth/session.ts, src/auth/cookie.ts, src/auth/session.test.ts\n\nYour job: ${job}${a.note?.trim() ? `\n\nFrom the user: ${a.note.trim()}` : ""}`;
+  const { w } = tmStartTask(to, repo, brief, { user: false, name: `${to.name}: ${w0?.name ?? "handed task"}`, origin: { kind: "handoff", ref: src.slug, parent: src.id } });
+  tmPost(src.slug, { role: "system", kind: "handoff", text: `Handed to ${to.name}`, workspaceId: w.id, meta: to.slug });
+  void emit("teammate-changed", src.slug);
   return { workspaceId: w.id, newTask: true };
 }
 
@@ -738,7 +949,35 @@ export function installMockBackend() {
         case "teammate_thread":
           return (tmThreads[a.slug!] ?? []).slice(-((args as { limit?: number }).limit ?? 200));
         case "teammate_tasks":
-          return tmTasks.filter((k) => k.slug === a.slug).reverse();
+          return tmTaskRows(a.slug!);
+        case "teammate_plans":
+          return tmPlans.filter((p) => p.slug === a.slug).map(planView);
+        case "chief_plan_start": {
+          const plan = tmPlans.find((p) => p.id === (args as { planId: string }).planId);
+          if (!plan || plan.status !== "proposed") throw "This plan isn't waiting to be started";
+          plan.status = "running";
+          mockAdvance(plan.id);
+          return null;
+        }
+        case "chief_plan_edit": {
+          const { planId, plan: edit } = args as { planId: string; plan: { summary: string; parts: { teammate: string; title: string; brief: string; dependsOn: number[] }[] } };
+          const plan = tmPlans.find((p) => p.id === planId);
+          if (!plan || plan.status !== "proposed") throw "Only a plan that hasn't started can be edited";
+          const parts = edit.parts.filter((p) => p.brief.trim() && tmDefs().some((x) => x.slug === p.teammate));
+          if (!parts.length) throw "Chief couldn't match this request to any of your teammates";
+          plan.summary = edit.summary;
+          plan.parts = parts.map((p) => ({ ...p, title: p.title.trim() || p.brief.slice(0, 60), dependsOn: p.dependsOn.filter((d) => d < parts.length), taskId: null, failed: null }));
+          void emit("teammate-changed", "chief");
+          return null;
+        }
+        case "chief_plan_cancel": {
+          const plan = tmPlans.find((p) => p.id === (args as { planId: string }).planId);
+          if (plan && plan.status !== "done") plan.status = "cancelled";
+          void emit("teammate-changed", "chief");
+          return null;
+        }
+        case "teammate_handoff":
+          return tmHandoff(args as { fromTaskId: string; toSlug: string; note: string | null });
         case "teammate_send":
           return tmSend(args as { slug: string; text: string; repoId: string | null; newTask: boolean | null });
         case "teammate_mark_seen":

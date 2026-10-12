@@ -1,5 +1,6 @@
 use crate::agent::AgentEvent;
 use crate::routines::{Mode, Routine, RoutineRun};
+use crate::chief::Plan;
 use crate::teammates::{TeammateMessage, TeammateTask};
 use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -177,7 +178,8 @@ CREATE TABLE IF NOT EXISTS teammate_messages (
   workspace_id TEXT,
   kind TEXT NOT NULL,
   status TEXT,
-  files INTEGER
+  files INTEGER,
+  meta TEXT
 );
 CREATE INDEX IF NOT EXISTS teammate_messages_slug ON teammate_messages(slug, ts);
 CREATE TABLE IF NOT EXISTS teammate_tasks (
@@ -188,9 +190,23 @@ CREATE TABLE IF NOT EXISTS teammate_tasks (
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   finished_at INTEGER,
-  summary TEXT
+  summary TEXT,
+  parent_task_id TEXT,
+  origin_kind TEXT,
+  origin_ref TEXT
 );
 CREATE INDEX IF NOT EXISTS teammate_tasks_slug ON teammate_tasks(slug, created_at);
+CREATE TABLE IF NOT EXISTS teammate_plans (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  repo_id TEXT NOT NULL,
+  request TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  parts TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS teammate_plans_slug ON teammate_plans(slug, created_at);
 CREATE TABLE IF NOT EXISTS repo_related (
   repo_id TEXT NOT NULL REFERENCES repos(id),
   path TEXT NOT NULL,
@@ -234,6 +250,23 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
     })
 }
 
+const MSG_COLS: &str = "id, slug, ts, role, text, workspace_id, kind, status, files, meta";
+const TASK_COLS: &str = "id, slug, workspace_id, repo_id, status, created_at, finished_at, summary, parent_task_id, origin_kind, origin_ref";
+
+fn plan_from_row(r: &Row) -> rusqlite::Result<Plan> {
+    let parts: String = r.get(5)?;
+    Ok(Plan {
+        id: r.get(0)?,
+        slug: r.get(1)?,
+        repo_id: r.get(2)?,
+        request: r.get(3)?,
+        summary: r.get(4)?,
+        parts: serde_json::from_str(&parts).unwrap_or_default(),
+        status: r.get(6)?,
+        created_at: r.get(7)?,
+    })
+}
+
 fn teammate_message_from_row(r: &Row) -> rusqlite::Result<TeammateMessage> {
     Ok(TeammateMessage {
         id: r.get(0)?,
@@ -245,6 +278,7 @@ fn teammate_message_from_row(r: &Row) -> rusqlite::Result<TeammateMessage> {
         kind: r.get(6)?,
         status: r.get(7)?,
         files: r.get(8)?,
+        meta: r.get(9)?,
     })
 }
 
@@ -258,6 +292,9 @@ fn teammate_task_from_row(r: &Row) -> rusqlite::Result<TeammateTask> {
         created_at: r.get(5)?,
         finished_at: r.get(6)?,
         summary: r.get(7)?,
+        parent_task_id: r.get(8)?,
+        origin_kind: r.get(9)?,
+        origin_ref: r.get(10)?,
     })
 }
 
@@ -286,6 +323,7 @@ fn routine_from_row(r: &Row) -> rusqlite::Result<Routine> {
         last_run_at: r.get("last_run_at")?,
         next_run_at: r.get("next_run_at")?,
         last_status: r.get("last_status")?,
+        teammate: r.get("teammate")?,
     })
 }
 
@@ -339,6 +377,18 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("teammate", "ALTER TABLE workspaces ADD COLUMN teammate TEXT"),
     ] {
         if !cols.iter().any(|c| c == col) {
+            conn.execute(ddl, [])?;
+        }
+    }
+    for (table, col, ddl) in [
+        ("teammate_messages", "meta", "ALTER TABLE teammate_messages ADD COLUMN meta TEXT"),
+        ("teammate_tasks", "parent_task_id", "ALTER TABLE teammate_tasks ADD COLUMN parent_task_id TEXT"),
+        ("teammate_tasks", "origin_kind", "ALTER TABLE teammate_tasks ADD COLUMN origin_kind TEXT"),
+        ("teammate_tasks", "origin_ref", "ALTER TABLE teammate_tasks ADD COLUMN origin_ref TEXT"),
+        ("routines", "teammate", "ALTER TABLE routines ADD COLUMN teammate TEXT"),
+    ] {
+        let have: Vec<String> = conn.prepare(&format!("PRAGMA table_info({table})"))?.query_map([], |r| r.get::<_, String>(1))?.collect::<Result<_, _>>()?;
+        if !have.iter().any(|c| c == col) {
             conn.execute(ddl, [])?;
         }
     }
@@ -706,18 +756,15 @@ impl Db {
     // ---- teammates
     pub fn insert_teammate_message(&self, m: &TeammateMessage) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO teammate_messages (id, slug, ts, role, text, workspace_id, kind, status, files) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![m.id, m.slug, m.ts, m.role, m.text, m.workspace_id, m.kind, m.status, m.files],
+            "INSERT INTO teammate_messages (id, slug, ts, role, text, workspace_id, kind, status, files, meta) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![m.id, m.slug, m.ts, m.role, m.text, m.workspace_id, m.kind, m.status, m.files, m.meta],
         )?;
         Ok(())
     }
 
     /// The last `limit` messages of a thread, oldest first.
     pub fn teammate_thread(&self, slug: &str, limit: u32) -> anyhow::Result<Vec<TeammateMessage>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, slug, ts, role, text, workspace_id, kind, status, files FROM teammate_messages
-             WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT ?2",
-        )?;
+        let mut stmt = self.conn.prepare(&format!("SELECT {MSG_COLS} FROM teammate_messages WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT ?2"))?;
         let rows = stmt.query_map(params![slug, limit], teammate_message_from_row)?;
         let mut out: Vec<TeammateMessage> = rows.collect::<Result<_, _>>()?;
         out.reverse();
@@ -728,8 +775,7 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, slug, ts, role, text, workspace_id, kind, status, files FROM teammate_messages
-                 WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT 1",
+                &format!("SELECT {MSG_COLS} FROM teammate_messages WHERE slug = ?1 ORDER BY ts DESC, rowid DESC LIMIT 1"),
                 [slug],
                 teammate_message_from_row,
             )
@@ -747,8 +793,9 @@ impl Db {
 
     pub fn insert_teammate_task(&self, t: &TeammateTask) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO teammate_tasks (id, slug, workspace_id, repo_id, status, created_at, finished_at, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![t.id, t.slug, t.workspace_id, t.repo_id, t.status, t.created_at, t.finished_at, t.summary],
+            "INSERT INTO teammate_tasks (id, slug, workspace_id, repo_id, status, created_at, finished_at, summary, parent_task_id, origin_kind, origin_ref)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![t.id, t.slug, t.workspace_id, t.repo_id, t.status, t.created_at, t.finished_at, t.summary, t.parent_task_id, t.origin_kind, t.origin_ref],
         )?;
         Ok(())
     }
@@ -762,11 +809,19 @@ impl Db {
     }
 
     pub fn teammate_tasks(&self, slug: &str) -> anyhow::Result<Vec<TeammateTask>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
-             WHERE slug = ?1 ORDER BY created_at DESC, rowid DESC",
-        )?;
+        let mut stmt = self.conn.prepare(&format!("SELECT {TASK_COLS} FROM teammate_tasks WHERE slug = ?1 ORDER BY created_at DESC, rowid DESC"))?;
         let rows = stmt.query_map([slug], teammate_task_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn teammate_task(&self, id: &str) -> anyhow::Result<Option<TeammateTask>> {
+        Ok(self.conn.query_row(&format!("SELECT {TASK_COLS} FROM teammate_tasks WHERE id = ?1"), [id], teammate_task_from_row).optional()?)
+    }
+
+    /// Tasks started on behalf of a parent (a Chief plan's id, or the task a hand-off came from).
+    pub fn teammate_child_tasks(&self, parent_task_id: &str) -> anyhow::Result<Vec<TeammateTask>> {
+        let mut stmt = self.conn.prepare(&format!("SELECT {TASK_COLS} FROM teammate_tasks WHERE parent_task_id = ?1 ORDER BY created_at, rowid"))?;
+        let rows = stmt.query_map([parent_task_id], teammate_task_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -775,42 +830,75 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
-                 WHERE slug = ?1 AND status IN ('running', 'waiting') ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                &format!("SELECT {TASK_COLS} FROM teammate_tasks WHERE slug = ?1 AND status IN ('running', 'waiting') ORDER BY created_at DESC, rowid DESC LIMIT 1"),
                 [slug],
                 teammate_task_from_row,
             )
             .optional()?)
     }
 
-    /// The task that owns a workspace (a workspace is created for exactly one task).
+    /// The task that owns a workspace (the newest one, when a hand-off reused the workspace).
     pub fn teammate_task_for_workspace(&self, workspace_id: &str) -> anyhow::Result<Option<TeammateTask>> {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, slug, workspace_id, repo_id, status, created_at, finished_at, summary FROM teammate_tasks
-                 WHERE workspace_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                &format!("SELECT {TASK_COLS} FROM teammate_tasks WHERE workspace_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT 1"),
                 [workspace_id],
                 teammate_task_from_row,
             )
             .optional()?)
     }
 
+    pub fn set_workspace_teammate(&self, workspace_id: &str, slug: Option<&str>) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE workspaces SET teammate = ?2 WHERE id = ?1", params![workspace_id, slug])?;
+        Ok(())
+    }
+
     pub fn delete_teammate_data(&self, slug: &str) -> anyhow::Result<()> {
         self.conn.execute("DELETE FROM teammate_messages WHERE slug = ?1", [slug])?;
         self.conn.execute("DELETE FROM teammate_tasks WHERE slug = ?1", [slug])?;
+        self.conn.execute("DELETE FROM teammate_plans WHERE slug = ?1", [slug])?;
         Ok(())
+    }
+
+    // ---- Chief plans
+
+    pub fn insert_plan(&self, p: &Plan) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT INTO teammate_plans (id, slug, repo_id, request, summary, parts, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![p.id, p.slug, p.repo_id, p.request, p.summary, serde_json::to_string(&p.parts)?, p.status, p.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// Rewrites what planning, editing and running change: summary, parts and status.
+    pub fn update_plan(&self, p: &Plan) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE teammate_plans SET summary = ?2, parts = ?3, status = ?4 WHERE id = ?1",
+            params![p.id, p.summary, serde_json::to_string(&p.parts)?, p.status],
+        )?;
+        Ok(())
+    }
+
+    pub fn plan(&self, id: &str) -> anyhow::Result<Option<Plan>> {
+        Ok(self.conn.query_row("SELECT id, slug, repo_id, request, summary, parts, status, created_at FROM teammate_plans WHERE id = ?1", [id], plan_from_row).optional()?)
+    }
+
+    pub fn plans(&self, slug: &str) -> anyhow::Result<Vec<Plan>> {
+        let mut stmt = self.conn.prepare("SELECT id, slug, repo_id, request, summary, parts, status, created_at FROM teammate_plans WHERE slug = ?1 ORDER BY created_at, rowid")?;
+        let rows = stmt.query_map([slug], plan_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     // ---- routines
 
     pub fn insert_routine(&self, r: &Routine) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO routines (id, repo_id, name, schedule, action, agent, model, profile, mode, standing_workspace_id, enabled, created_at, last_run_at, next_run_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO routines (id, repo_id, name, schedule, action, agent, model, profile, mode, standing_workspace_id, enabled, created_at, last_run_at, next_run_at, teammate)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 r.id, r.repo_id, r.name, serde_json::to_string(&r.schedule)?, serde_json::to_string(&r.action)?, r.agent, r.model,
-                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.created_at, r.last_run_at, r.next_run_at
+                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.created_at, r.last_run_at, r.next_run_at, r.teammate
             ],
         )?;
         Ok(())
@@ -820,10 +908,10 @@ impl Db {
     pub fn update_routine(&self, r: &Routine) -> anyhow::Result<()> {
         self.conn.execute(
             "UPDATE routines SET repo_id = ?2, name = ?3, schedule = ?4, action = ?5, agent = ?6, model = ?7, profile = ?8, mode = ?9,
-             standing_workspace_id = ?10, enabled = ?11, next_run_at = ?12 WHERE id = ?1",
+             standing_workspace_id = ?10, enabled = ?11, next_run_at = ?12, teammate = ?13 WHERE id = ?1",
             params![
                 r.id, r.repo_id, r.name, serde_json::to_string(&r.schedule)?, serde_json::to_string(&r.action)?, r.agent, r.model,
-                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.next_run_at
+                r.profile, r.mode.as_str(), r.standing_workspace_id, r.enabled, r.next_run_at, r.teammate
             ],
         )?;
         Ok(())

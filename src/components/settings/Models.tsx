@@ -9,7 +9,7 @@ import { Dot, Row, Segmented, Select, SubHeading, TextInput, Toggle, save, useSe
 /** Small instruct model that returned valid JSON in our tests, ~2 GB. */
 const SUGGESTED_MODEL = "llama3.2:3b";
 
-type TaskField = "modelSuggestions" | "modelWorkspaceName" | "modelCommitMessage" | "modelRoutineSummary" | "modelPrDescription" | "modelTeammateReport";
+type TaskField = "modelSuggestions" | "modelWorkspaceName" | "modelCommitMessage" | "modelRoutineSummary" | "modelPrDescription" | "modelTeammateReport" | "modelChiefPlan";
 
 const TASKS: { field: TaskField; label: string; description: string; optional: boolean }[] = [
   { field: "modelSuggestions", label: "Inbox suggestions", description: "Next-prompt ideas on each inbox item.", optional: true },
@@ -18,6 +18,7 @@ const TASKS: { field: TaskField; label: string; description: string; optional: b
   { field: "modelRoutineSummary", label: "Routine summaries", description: "The one-line summary of each routine run, and whether it had nothing to do.", optional: false },
   { field: "modelPrDescription", label: "PR description drafts", description: "Only used with a local model: on Ship, Orbit drafts the PR title and body from the diff and hands it to the agent as a starting point. At Default the agent writes the PR itself.", optional: false },
   { field: "modelTeammateReport", label: "Teammate reports", description: "The short report a teammate posts in its thread when a task turn ends, and whether it needs you.", optional: false },
+  { field: "modelChiefPlan", label: "Chief's plans", description: "Splits a request into parts for your teammates when you message Chief. Also used for Chief's combined report (Teammate reports).", optional: false },
 ];
 
 export function formatBytes(n: number): string {
@@ -116,7 +117,7 @@ export function Models() {
   const useLocalForAll = () => {
     if (!defaultLocal) return;
     const value = `local:${defaultLocal}`;
-    void save({ localDefaultModel: defaultLocal, modelSuggestions: value, modelWorkspaceName: value, modelCommitMessage: value, modelRoutineSummary: value, modelPrDescription: value, modelTeammateReport: value });
+    void save({ localDefaultModel: defaultLocal, modelSuggestions: value, modelWorkspaceName: value, modelCommitMessage: value, modelRoutineSummary: value, modelPrDescription: value, modelTeammateReport: value, modelChiefPlan: value });
   };
 
   return (

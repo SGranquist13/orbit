@@ -15,7 +15,7 @@ Ideas we're actively working through: the problem, a rough sketch, open question
 
 ### 10. AI teammates (standalone feature)
 
-**Decided (2026-10-12):** build it with the proposed defaults (Teammates section above the repo list; stop at a draft PR; hand-offs via Chief or explicit chips; custom teammates from the UI, saved as files). Phase 1: teammates, threads, delegation, memory, custom teammates. Phase 2: Chief splitting work, hand-off chips, teammate routines.
+**Decided (2026-10-12):** build it with the proposed defaults (Teammates section above the repo list; stop at a draft PR; hand-offs via Chief or explicit chips; custom teammates from the UI, saved as files). Phase 1: teammates, threads, delegation, memory, custom teammates. Phase 2: Chief splitting work, hand-off chips, teammate routines. **Phase 2 built 2026-10-12 (all 🟢, see FEATURES.md):** Chief plans via a utility model call and runs the plan; hand-off chips by role plus a picker; routines can be owned by a teammate (Owner picker, clock button in the thread).
 
 **Want (user's idea):** hand a task to a dedicated agent, a coworker, and get finished work back. Reference: Grok Bot (2026-10-12 screenshot): a sidebar of named teammates (Chief, Sales Outbound, Inbox Manager, ...), each with an avatar, last-message preview and time; you message one, it works with its tools and comes back with "Done".
 

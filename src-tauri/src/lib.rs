@@ -15,6 +15,8 @@ mod routines;
 mod settings;
 mod simplify;
 mod skills;
+mod chief;
+mod handoff;
 mod teammates;
 mod trunk;
 mod usage;
@@ -374,11 +376,13 @@ pub(crate) struct NewWorkspaceArgs {
     pub branch_prefix: Option<String>,
     /// Set when a teammate creates the workspace for a task.
     pub teammate: Option<String>,
+    /// Branch or ref the worktree starts from instead of the repo's base (review hand-offs).
+    pub start_ref: Option<String>,
 }
 
 /// Worktree + branch + DB row + attachments; shared by `create_workspace` and routine runs.
 pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, args: NewWorkspaceArgs) -> CmdResult<Workspace> {
-    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix, teammate } = args;
+    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix, teammate, start_ref } = args;
     AgentKind::parse(&agent).ok_or("unknown agent")?;
     let repo = state.db().repo(&repo_id).map_err(err)?;
     let slug = match issue_number {
@@ -392,7 +396,10 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
     let path = state.home.join("worktrees").join(&repo.name).join(&dir_name);
 
     let (repo_path, base, wt_path, br) = (PathBuf::from(&repo.path), repo.base_branch.clone(), path.clone(), branch.clone());
-    tauri::async_runtime::spawn_blocking(move || git::create_worktree(&repo_path, &wt_path, &br, &base))
+    tauri::async_runtime::spawn_blocking(move || match start_ref {
+        Some(start) => git::create_worktree_from(&repo_path, &wt_path, &br, &start),
+        None => git::create_worktree(&repo_path, &wt_path, &br, &base),
+    })
         .await
         .map_err(err)?
         .map_err(err)?;
@@ -445,7 +452,7 @@ async fn create_workspace(
     issue_number: Option<i64>,
     profile: Option<String>,
 ) -> CmdResult<Workspace> {
-    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None }).await?;
+    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None, start_ref: None }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
         if issue_number.is_none() && is_derived_name(&ws.name, &p) {
@@ -549,14 +556,19 @@ async fn issue_url(state: State<'_, AppState>, workspace_id: String) -> CmdResul
 /// restrictions apply on the next message; a running turn keeps its old role until it ends.
 #[tauri::command]
 fn set_workspace_profile(app: AppHandle, state: State<AppState>, id: String, profile: Option<String>) -> CmdResult<Workspace> {
+    switch_profile(&app, &state, &id, profile.as_deref()).map_err(err)
+}
+
+/// Shared by the command and teammate hand-offs that reuse a workspace.
+pub(crate) fn switch_profile(app: &AppHandle, state: &AppState, id: &str, profile: Option<&str>) -> anyhow::Result<Workspace> {
     // Bind first: the db guard must be dropped before resolve_profile locks it again.
-    let current = state.db().workspace(&id).ok();
-    let before = current.and_then(|w| resolve_profile(&state, &w));
-    let ws = state.db().set_profile(&id, profile.as_deref().filter(|p| !p.is_empty())).map_err(err)?;
-    state.restart_session_if_idle(&id);
+    let current = state.db().workspace(id).ok();
+    let before = current.and_then(|w| resolve_profile(state, &w));
+    let ws = state.db().set_profile(id, profile.filter(|p| !p.is_empty()))?;
+    state.restart_session_if_idle(id);
     // A resumed agent keeps following the role it saw earlier in the conversation unless told
     // otherwise, so the next message carries an explicit hand-over note.
-    if let (Some(old), Some(new)) = (before, resolve_profile(&state, &ws)) {
+    if let (Some(old), Some(new)) = (before, resolve_profile(state, &ws)) {
         if old.id != new.id {
             let access = if new.readonly {
                 "You are now read-only: do not create, edit or delete files."
@@ -567,10 +579,10 @@ fn set_workspace_profile(app: AppHandle, state: State<AppState>, id: String, pro
                 "[Orbit: this workspace switched from the {} role to the {} role. Follow your new role instructions in the system prompt; they replace the earlier role. {access}]\n\n",
                 old.name, new.name
             );
-            state.role_notices.lock().unwrap().insert(id.clone(), note);
+            state.role_notices.lock().unwrap().insert(id.to_string(), note);
         }
     }
-    emit_workspace(&app, &ws);
+    emit_workspace(app, &ws);
     Ok(ws)
 }
 
@@ -1280,6 +1292,11 @@ pub fn run() {
             teammates::teammate_mark_seen,
             teammates::teammate_memory,
             teammates::set_teammate_memory,
+            chief::teammate_plans,
+            chief::chief_plan_start,
+            chief::chief_plan_edit,
+            chief::chief_plan_cancel,
+            handoff::teammate_handoff,
             routines::list_routines,
             routines::save_routine,
             routines::delete_routine,
