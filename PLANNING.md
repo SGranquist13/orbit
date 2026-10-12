@@ -12,6 +12,28 @@ Raw ideas, as they come. Unsorted, unfiltered.
 
 Ideas we're actively working through: the problem, a rough sketch, open questions.
 
+### 10. AI teammates (could replace profiles)
+
+**Want:** Named, long-lived AI teammates you hand work to, like the Grok Bot reference (2026-10-12 screenshot): a sidebar of teammates (Chief, Sales Outbound, Inbox Manager, …), each with an avatar, a last-message preview and a time; you message one, it goes off, uses tools, and comes back with finished work ("Done").
+
+**Why it might beat profiles (#3):** a profile is a *mode* you pick per workspace and forget. A teammate is an *identity* that persists: it remembers past work, owns its routines, and you talk to "the Reviewer" rather than configuring a workspace to behave like one. The mental model shifts from "workspaces with settings" to "people I delegate to".
+
+**Sketch (Orbit's version, coding-focused):**
+- **A teammate** = name + avatar (greyscale glyph; colour only for status) + role instructions (today's profile file) + default agent/model + permissions (read-only enforced, as now) + skills/packs + repos it works in + **its own memory** (a notes file it reads and appends to) + **its own routines** (#6).
+- **One thread per teammate** in the sidebar, above or instead of the repo → workspace tree: "Reviewer: 2 PRs reviewed, 1 needs you". You message the teammate; for each task it **spins up workspaces itself** (worktree + branch, as today) and reports back in its thread with links. Workspaces become the teammate's scratch space, not the main thing you navigate.
+- **Status like a person:** working on X / waiting for you / done, feeding the attention inbox (#2). Phone shows the same list.
+- **Starter team** = today's profiles promoted: Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer, plus a **Chief** that takes a vague request, splits it and hands parts to the others (the orchestrator pattern we use in this repo: Opus plans, Sonnet builds).
+- **Hand-offs between teammates:** Planner finishes → "hand to Builder" chip; Builder ships → Reviewer gets a review task. Rules or Chief decide.
+- **Tools beyond code (later):** the reference signs into Salesforce etc. via "Computer". For Orbit: GitHub (already), plus MCP connectors per teammate; browser/computer use is a separate, bigger step.
+
+**Open questions (proposed defaults in brackets):**
+- Replace profiles, or layer on top (a teammate *uses* a profile)? [teammates replace profiles in the UI; profile files stay as the teammate's role definition, so nothing is thrown away]
+- Does the repo/workspace sidebar stay? [yes, as a secondary "Workspaces" view; teammate threads become the default]
+- Memory: per-teammate notes file only, or per teammate × repo? [per teammate, with a repo section; user-editable]
+- Can teammates message each other directly, or only through you / Chief? [through Chief or explicit hand-off chips in v1]
+- How much autonomy: ship PRs on their own, or stop at "ready for you"? [stop at a draft PR, as routines do]
+- Custom teammates: create from the UI (name, avatar, role text, model), or files only? [both: UI writes the same agent file format]
+
 ### 6. Routines (scheduled runs)
 
 **Decided (2026-10-10):** a built-in app feature, not a skill: a **Routines button in the sidebar** opens the Routines view; the scheduler runs in the Rust core.
