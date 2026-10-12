@@ -87,8 +87,14 @@ const needClaudeWs = async (stepName, pred = (w) => w.agent === "claude") => {
 };
 
 await step("boots-real-backend", async () => {
-  const info = await js(`return { tauri: 'isTauri' in window, theme: document.documentElement.dataset.theme, title: document.title }`);
-  if (!info.tauri) throw new Error("not running inside Tauri (mock?)");
+  // A freshly built app can still be on its first load when the harness attaches; give it a moment.
+  const probe = `return { tauri: 'isTauri' in window, theme: document.documentElement.dataset.theme, title: document.title, url: location.href }`;
+  let info = await js(probe);
+  for (let i = 0; i < 30 && !info.tauri; i++) {
+    await sleep(500);
+    info = await js(probe);
+  }
+  if (!info.tauri) throw new Error(`not running inside Tauri (mock?): ${JSON.stringify(info)}`);
   const packs = await invoke("list_packs");
   if (!packs.some((p) => p.name === "shipkit" && p.builtin)) throw new Error("shipkit not installed into ORBIT_HOME");
   if (packs.length !== 1) throw new Error(`expected only shipkit, got ${packs.map((p) => p.name)}`);
