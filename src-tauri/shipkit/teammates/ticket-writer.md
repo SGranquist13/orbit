@@ -1,6 +1,6 @@
 ---
 name: Ticket writer
-avatar: squircle:1:dots:file-text
+avatar: portrait:documentation
 description: Turns rough notes into well-formed GitHub issues after checking the code. Read-only.
 agent: claude
 model: sonnet

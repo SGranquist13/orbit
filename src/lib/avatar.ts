@@ -1,3 +1,10 @@
+export const AVATAR_PORTRAITS = ["architect", "planner", "coder", "reviewer", "researcher", "devops", "optimizer", "analyst", "security", "communicator", "documentation", "qa", "data", "cloud", "database", "automation", "executor", "product", "creative", "mentor", "web", "compliance", "finance", "hr", "scheduling", "outreach", "strategy", "experimenter", "troubleshooter", "sustainability"] as const;
+export type AvatarPortrait = (typeof AVATAR_PORTRAITS)[number] | "support";
+const portraitFiles = import.meta.glob("../assets/teammates/*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+export function portraitUrl(portrait: AvatarPortrait) {
+  return portraitFiles[`../assets/teammates/${portrait}.png`];
+}
+
 // Teammate avatars: a teammate's `avatar` is "shape:colour[:expression[:badge[:accessory]]]" (e.g. "squircle:3:dots:code:none").
 // Empty or "none" skips a slot. Old values ("bean:3:smile") keep working; anything else (legacy glyphs, icon names, empty)
 // falls back to a deterministic pick from a seed.
@@ -30,6 +37,7 @@ export type AvatarExpression = (typeof AVATAR_EXPRESSIONS)[number];
 export type AvatarBadge = (typeof AVATAR_BADGES)[number];
 export type AvatarAccessory = (typeof AVATAR_ACCESSORIES)[number];
 export interface AvatarSpec {
+  portrait?: AvatarPortrait;
   shape: AvatarShape;
   color: number;
   expression: AvatarExpression;
@@ -48,11 +56,13 @@ const ALL_SHAPES: readonly string[] = [...AVATAR_SHAPES, ...LEGACY_SHAPES];
 export function parseAvatar(avatar: string, seed: string): AvatarSpec {
   const [shape, color, expression, badge, accessory] = (avatar || "").trim().toLowerCase().split(":");
   const h = hash(seed || avatar || "?");
+  const portrait = shape === "portrait" && (color === "support" || (AVATAR_PORTRAITS as readonly string[]).includes(color)) ? color as AvatarPortrait : undefined;
   const okShape = ALL_SHAPES.includes(shape);
   const n = Number(color);
   const okColor = Number.isInteger(n) && n >= 1 && n <= AVATAR_COLORS.length;
   const okExpr = (AVATAR_EXPRESSIONS as readonly string[]).includes(expression ?? "");
   return {
+    portrait,
     shape: okShape ? (shape as AvatarShape) : AVATAR_SHAPES[h % AVATAR_SHAPES.length],
     color: okColor ? n : ((h >>> 5) % AVATAR_COLORS.length) + 1,
     expression: okExpr ? (expression as AvatarExpression) : okShape ? "dots" : AVATAR_EXPRESSIONS[(h >>> 9) % 2],
@@ -62,12 +72,14 @@ export function parseAvatar(avatar: string, seed: string): AvatarSpec {
 }
 
 export function formatAvatar(a: AvatarSpec) {
+  if (a.portrait) return `portrait:${a.portrait}`;
   return `${a.shape}:${a.color}:${a.expression}:${a.badge ?? "none"}:${a.accessory ?? "none"}`;
 }
 
 export function randomAvatar(): AvatarSpec {
   const pick = <T,>(xs: readonly T[]) => xs[Math.floor(Math.random() * xs.length)];
   return {
+    portrait: pick(AVATAR_PORTRAITS),
     shape: pick(AVATAR_SHAPES),
     color: pick(AVATAR_COLORS),
     expression: "dots",

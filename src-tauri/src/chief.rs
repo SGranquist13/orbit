@@ -46,7 +46,7 @@ pub struct PlanPart {
     pub notified: bool,
 }
 
-/// `status`: planning | proposed | running | done | cancelled | failed.
+/// `status`: planning | proposed | running | reporting | done | cancelled | failed.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
@@ -113,7 +113,7 @@ pub fn derive_status(plans: &[(String, Vec<PartState>)], unseen_report: bool) ->
     let needs = plans.iter().any(|(status, parts)| {
         status == "proposed" || (status == "running" && parts.iter().any(|p| matches!(p, PartState::Failed | PartState::Waiting)))
     });
-    let working = plans.iter().any(|(status, parts)| status == "planning" || (status == "running" && parts.iter().any(|p| matches!(p, PartState::Running | PartState::Pending))));
+    let working = plans.iter().any(|(status, parts)| status == "planning" || status == "reporting" || (status == "running" && parts.iter().any(|p| matches!(p, PartState::Running | PartState::Pending))));
     if needs {
         Status::NeedsYou
     } else if working {
@@ -386,15 +386,20 @@ pub async fn advance(app: &AppHandle, state: &AppState, plan_id: &str) {
             }
         }
         let done = progress(&states, &deps) == Progress::Done;
+        // "reporting" (not "done") until the combined report is posted, so the plan is only done
+        // once its report exists; `advance` ignores non-running plans, so it can't post twice.
         if done {
-            plan.status = "done".into();
+            plan.status = "reporting".into();
         }
         save_plan(state, &plan);
         teammates::changed(app, SLUG);
         done.then_some(plan)
     };
-    if let Some(plan) = finished {
+    if let Some(mut plan) = finished {
         finish_plan(app, state, &plan).await;
+        plan.status = "done".into();
+        save_plan(state, &plan);
+        teammates::changed(app, SLUG);
     }
 }
 
@@ -622,6 +627,7 @@ mod tests {
         assert_eq!(derive_status(&[], false), S::Idle);
         assert_eq!(derive_status(&[], true), S::NeedsYou);
         assert_eq!(derive_status(&[plan("planning", &[])], false), S::Working);
+        assert_eq!(derive_status(&[plan("reporting", &[Done, Done])], false), S::Working);
         // A plan awaiting Start needs you; so does a failed or asking part even while others run.
         assert_eq!(derive_status(&[plan("proposed", &[Pending])], false), S::NeedsYou);
         assert_eq!(derive_status(&[plan("running", &[Running, Failed])], false), S::NeedsYou);

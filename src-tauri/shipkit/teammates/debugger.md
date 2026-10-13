@@ -1,6 +1,6 @@
 ---
 name: Debugger
-avatar: diamond:4:dots:search
+avatar: portrait:qa
 description: Reproduces a bug, finds the root cause, and fixes it with a regression test.
 agent: claude
 model: sonnet

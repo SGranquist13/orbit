@@ -438,25 +438,25 @@ const tm = (slug: string, name: string, avatar: string, description: string, age
   slug, name, avatar, description, agent, model, profile, repos: [], readonly: null, instructions, bundled: true, overridden: false,
 });
 const STARTERS: Teammate[] = [
-  tm("chief", "Chief", "planet:8:dots", "Takes a vague request, splits it into parts and hands each to the right teammate.", "claude", "sonnet", "shipkit:planner",
+  tm("chief", "Chief", "portrait:architect", "Takes a vague request, splits it into parts and hands each to the right teammate.", "claude", "sonnet", "shipkit:planner",
     "You are the coordinator. You never write code yourself. Split a request into the smallest set of parts your teammates can do, and write each brief so it stands alone."),
-  tm("builder", "Builder", "squircle:3:dots:code", "Implements a task end to end in its own workspace, with tests, and leaves a draft PR.", "claude", "sonnet", "shipkit:builder",
+  tm("builder", "Builder", "portrait:coder", "Implements a task end to end in its own workspace, with tests, and leaves a draft PR.", "claude", "sonnet", "shipkit:builder",
     "You implement what you are handed: read the code, make a focused change that matches the project's conventions, add or adjust tests, and run the checks.\nStop at a draft pull request. Never merge. If the request is ambiguous in a way that changes the design, ask one short question first."),
-  tm("debugger", "Debugger", "diamond:4:dots:search", "Reproduces a bug, finds the root cause, and fixes it with a regression test.", "claude", "sonnet", "shipkit:debugger",
+  tm("debugger", "Debugger", "portrait:qa", "Reproduces a bug, finds the root cause, and fixes it with a regression test.", "claude", "sonnet", "shipkit:debugger",
     "You fix reported problems at the root. Reproduce first, explain the cause with evidence, then make the smallest correct fix with a regression test.\nStop at a draft pull request. Never merge."),
-  tm("planner", "Planner", "triangle:2:dots:none:dot", "Explores the code and writes an implementation plan. Changes nothing.", "claude", "opus", "shipkit:planner",
+  tm("planner", "Planner", "portrait:planner", "Explores the code and writes an implementation plan. Changes nothing.", "claude", "opus", "shipkit:planner",
     "You explore and plan; you never change anything. Answer with a plan someone else can build from."),
-  tm("reviewer", "Reviewer", "circle:4:dots:none:lens", "Read-only review of a branch or PR by a second model, findings ranked by severity.", "codex", null, "shipkit:reviewer",
+  tm("reviewer", "Reviewer", "portrait:reviewer", "Read-only review of a branch or PR by a second model, findings ranked by severity.", "codex", null, "shipkit:reviewer",
     "You review changes adversarially and read-only. Rank findings by severity and point at the exact files and lines."),
-  tm("shipper", "Shipper", "leaf:6:dots:play", "Gets a branch green and into a draft PR: checks, rebase, CI fixes, review comments.", "claude", "sonnet", "shipkit:shipper",
+  tm("shipper", "Shipper", "portrait:devops", "Gets a branch green and into a draft PR: checks, rebase, CI fixes, review comments.", "claude", "sonnet", "shipkit:shipper",
     "You get a branch shippable with as little new code as possible. Stop at a draft pull request. Never merge."),
-  tm("ticket-writer", "Ticket writer", "squircle:1:dots:file-text", "Turns rough notes into well-formed GitHub issues after checking the code. Read-only.", "claude", "sonnet", "shipkit:ticket-writer",
+  tm("ticket-writer", "Ticket writer", "portrait:documentation", "Turns rough notes into well-formed GitHub issues after checking the code. Read-only.", "claude", "sonnet", "shipkit:ticket-writer",
     "You turn rough notes, bug reports and ideas into well-formed GitHub issues. Never edit code."),
 ];
 let customTeammates: Teammate[] = [
-  { ...tm("docs-helper", "Docs helper", "robot:1:dots:none:antenna", "Keeps the README and guides in step with the code.", "claude", "haiku", "shipkit:builder", "Update docs to match what the code now does. Keep edits small and link the code you checked."), bundled: false, repos: ["marketing-site"] },
-  { ...tm("release-notes", "Release notes", "cat:7:dots:git-branch", "Drafts release notes from merged PRs since the last tag.", "claude", "haiku", "shipkit:builder", "Summarise merged PRs by theme. Never edit code."), bundled: false },
-  { ...tm("legacy", "Old timer", "OT", "A teammate saved before shape avatars (falls back to a pick from its name).", "claude", "haiku", "shipkit:builder", "Answer briefly."), bundled: false },
+  { ...tm("docs-helper", "Docs helper", "portrait:documentation", "Keeps the README and guides in step with the code.", "claude", "haiku", "shipkit:builder", "Update docs to match what the code now does. Keep edits small and link the code you checked."), bundled: false, repos: ["marketing-site"] },
+  { ...tm("release-notes", "Release notes", "portrait:communicator", "Drafts release notes from merged PRs since the last tag.", "claude", "haiku", "shipkit:builder", "Summarise merged PRs by theme. Never edit code."), bundled: false },
+  { ...tm("legacy", "Old timer", "portrait:mentor", "Shares context and helps teammates work through unfamiliar code.", "claude", "haiku", "shipkit:builder", "Answer briefly."), bundled: false },
 ];
 const STARTER_DEFAULTS = STARTERS.map((s) => ({ ...s }));
 const overridden = new Set<string>();

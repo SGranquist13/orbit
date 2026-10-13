@@ -590,7 +590,7 @@ export interface PlanView {
   repoId: string;
   request: string;
   summary: string;
-  status: "planning" | "proposed" | "running" | "done" | "cancelled" | "failed";
+  status: "planning" | "proposed" | "running" | "reporting" | "done" | "cancelled" | "failed";
   createdAt: number;
   parts: PlanPart[];
   views: (PlanPart & { state: PartState; summary: string | null; workspaceId: string | null })[];

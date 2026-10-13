@@ -7,7 +7,7 @@ import { api, type AgentKind, type PlanView, type Teammate, type TeammateMessage
 import { defaultModelFor, modelsFor } from "../lib/settings";
 import { rememberedTeammate } from "../lib/lastTeammate";
 import { useApp } from "../stores/app";
-import { AVATAR_ACCESSORIES, AVATAR_BADGES, AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
+import { AVATAR_PORTRAITS, AVATAR_ACCESSORIES, AVATAR_BADGES, AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
 import { TeammateAvatar } from "./TeammateAvatar";
 import { BriefBlock, HandoffChips, HandoffLine, OriginLabel, PlanCard, RoutinesLine, ScheduleButton } from "./TeammateExtras";
 import { AgentIcon, Button, Kbd, TeammateDot, agentLabel, cn } from "./ui";
@@ -107,7 +107,7 @@ function TeammateRow({ t, selected }: { t: TeammateView; selected: boolean }) {
       >
         {t.status === "working" && <span className="dither-sweep bg-run opacity-30" />}
         <span className="relative shrink-0">
-          <TeammateAvatar avatar={t.avatar} name={t.name} size={34} blink={t.status === "working"} />
+          <TeammateAvatar avatar={t.avatar} name={t.name} size={40} blink={t.status === "working"} />
           <TeammateDot status={t.status} failed={failed(t)} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-bg" />
         </span>
         <span className="relative min-w-0 flex-1">
@@ -334,7 +334,7 @@ export function TeammateThread({ slug }: { slug: string }) {
   return (
     <div className="relative flex min-w-0 flex-1 flex-col bg-bg" data-teammate-thread={slug}>
       <header className="relative flex h-12 shrink-0 items-center gap-3 px-6" data-tauri-drag-region>
-        <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={28} blink={teammate.status === "working"} />
+        <TeammateAvatar avatar={teammate.avatar} name={teammate.name} size={36} blink={teammate.status === "working"} />
         <h1 className="shrink-0 text-[15px] font-semibold tracking-[-0.02em]">{teammate.name}</h1>
         <span className="min-w-0 truncate text-[12.5px] text-mute">{teammate.description}</span>
         <span className="flex-1" />
@@ -714,6 +714,17 @@ function AvatarPicker({ value, onChange }: { value: AvatarSpec; onChange: (a: Av
       <div className="flex items-start gap-4 rounded-[5px] border-[1.5px] border-line bg-bg p-3">
         <TeammateAvatar spec={value} size={72} />
         <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Role portraits">
+            {AVATAR_PORTRAITS.map((portrait) => (
+              <button key={portrait} title={portrait} aria-label={`${portrait} portrait`} aria-pressed={value.portrait === portrait} onClick={() => onChange({ ...value, portrait })} className={cn(chip(value.portrait === portrait), "size-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fg")}>
+                <TeammateAvatar spec={{ ...value, portrait }} size={32} />
+              </button>
+            ))}
+          </div>
+          <button className="text-[11px] text-mute underline underline-offset-2 hover:text-fg" aria-expanded={!value.portrait} onClick={() => onChange({ ...value, portrait: value.portrait ? undefined : AVATAR_PORTRAITS[0] })}>
+            {value.portrait ? "Customize a classic avatar" : "Use a role portrait"}
+          </button>
+          {!value.portrait && <>
           <div className="flex flex-wrap gap-1">
             {AVATAR_SHAPES.map((shape) => (
               <button key={shape} title={shape} aria-label={shape} aria-pressed={value.shape === shape} onClick={() => onChange({ ...value, shape })} className={cn(chip(value.shape === shape), "size-9")}>
@@ -762,6 +773,7 @@ function AvatarPicker({ value, onChange }: { value: AvatarSpec; onChange: (a: Av
               </button>
             ))}
           </div>
+          </>}
         </div>
       </div>
     </div>

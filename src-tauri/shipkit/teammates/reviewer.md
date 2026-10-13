@@ -1,6 +1,6 @@
 ---
 name: Reviewer
-avatar: circle:4:dots:none:lens
+avatar: portrait:reviewer
 description: Read-only review of a branch or PR by a second model, findings ranked by severity.
 agent: codex
 profile: shipkit:reviewer

@@ -127,6 +127,7 @@ const planTone: Record<PlanView["status"], { label: string; tone: string; box: s
   planning: { label: "Planning", tone: "text-run", box: "bg-run animate-pulse-dot" },
   proposed: { label: "Waiting for you", tone: "text-warn", box: "bg-warn" },
   running: { label: "In progress", tone: "text-run", box: "bg-run animate-pulse-dot" },
+  reporting: { label: "Writing report", tone: "text-run", box: "bg-run animate-pulse-dot" },
   done: { label: "Done", tone: "text-ok", box: "bg-ok" },
   cancelled: { label: "Cancelled", tone: "text-mute", box: "bg-mute/50" },
   failed: { label: "Couldn't plan", tone: "text-bad", box: "bg-bad" },

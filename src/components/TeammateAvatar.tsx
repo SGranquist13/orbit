@@ -1,7 +1,7 @@
 // The one deliberately colourful element: teammate avatars are little blob characters (see CLAUDE.md, Conventions).
 import { Bug, Check, Code, FileText, GitBranch, Lightbulb, MessageSquare, Play, Search, Shield } from "lucide-react";
 import { useId } from "react";
-import { parseAvatar, type AvatarBadge, type AvatarShape, type AvatarSpec } from "../lib/avatar";
+import { portraitUrl, parseAvatar, type AvatarBadge, type AvatarShape, type AvatarSpec } from "../lib/avatar";
 import { cn } from "../lib/cn";
 
 interface Face {
@@ -241,6 +241,13 @@ export function TeammateAvatar({
   const spec = given ?? parseAvatar(avatar ?? "", name ?? "");
   const face = FACES[spec.shape];
   const id = `av${useId().replace(/:/g, "")}`;
+  if (spec.portrait) {
+    return (
+      <span aria-hidden className={cn("relative inline-block shrink-0 overflow-hidden align-middle", className)} style={{ width: size, height: size }}>
+        <img src={portraitUrl(spec.portrait)} alt="" draggable={false} className="absolute max-w-none object-contain" style={spec.portrait === "support" ? { width: "100%", height: "100%" } : { width: "150%", height: "150%", left: "-25%", top: "-25%" }} />
+      </span>
+    );
+  }
   const c = `var(--avatar-${spec.color})`;
   const Badge = spec.badge && size >= 20 ? BADGE_ICONS[spec.badge] : null;
   return (
