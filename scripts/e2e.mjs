@@ -47,6 +47,10 @@ const turnEnds = TURN_ENDS;
 // Inbox helpers. Ctrl+I toggles, and a failed earlier step can leave the view open, so open it idempotently.
 const INBOX_JS = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
     const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
+// Ctrl+Shift+T toggles the Teammates view, so only press it when the view isn't already open.
+const ensureTeammates = async () => {
+  if (!(await js(`return !!document.querySelector('[data-teammates]')`))) await key("t", { ctrl: true, shift: true });
+};
 const ensureInbox = async () => {
   if (!(await js(`${INBOX_JS} return !!inbox`))) await key("i", { ctrl: true });
   await waitFor("inbox view", `${INBOX_JS} return !!inbox`, 5000);
@@ -576,7 +580,7 @@ await step("teammates", async () => {
   if (task.workspaceId !== ws.id || !["done", "waiting"].includes(task.status)) throw new Error(`bad task: ${JSON.stringify(task)}`);
   if (!(await invoke("teammate_memory", { slug })).includes("Memory")) throw new Error("memory file was not created on first use");
   // Open the Teammates view (Ctrl+Shift+T), pick the teammate in the list and look at its thread.
-  await key("t", { ctrl: true, shift: true });
+  await ensureTeammates();
   await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${slug}"]')`, 5000);
   await js(`document.querySelector('[data-teammates] [data-teammate="${slug}"]').click()`);
   await waitFor("thread view with the report", `const t = document.querySelector('[data-teammate-thread="${slug}"]'); return !!t && t.innerText.toLowerCase().includes('ready')`, 10_000);
@@ -619,7 +623,7 @@ await step("teammates-handoff", async () => {
   if (!after.some((m) => m.kind === "handoff" && /Handed to/.test(m.text) && m.meta === b)) throw new Error("source thread lacks the Handed to line");
   const [taskA] = await invoke("teammate_tasks", { slug: a });
   if (!taskA.handedTo.includes(b)) throw new Error(`source task does not list B: ${JSON.stringify(taskA.handedTo)}`);
-  await key("t", { ctrl: true, shift: true });
+  await ensureTeammates();
   await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${a}"]')`, 5000);
   await js(`document.querySelector('[data-teammates] [data-teammate="${a}"]').click()`);
   await waitFor("Handed to in A's thread", `const t = document.querySelector('[data-teammate-thread="${a}"]'); return !!t && t.innerText.includes('Handed to')`, 10_000);
@@ -664,7 +668,7 @@ await step("chief", async () => {
   if (!briefB || !/Earlier parts of this plan are done/.test(briefB.text)) throw new Error(`B's brief lacks A's result: ${JSON.stringify(briefB)}`);
   const combined = (await invoke("teammate_thread", { slug: "chief", limit: 50 })).find((m) => m.kind === "task_report" && m.meta === plan.id);
   if (!combined || !combined.text.trim()) throw new Error("no combined report in Chief's thread");
-  await key("t", { ctrl: true, shift: true });
+  await ensureTeammates();
   await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="chief"]')`, 5000);
   await js(`document.querySelector('[data-teammates] [data-teammate="chief"]').click()`);
   await waitFor("plan card in Chief's thread", `return !!document.querySelector('[data-plan="${plan.id}"]')`, 10_000);
