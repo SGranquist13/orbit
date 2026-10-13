@@ -11,6 +11,9 @@ Raw ideas, as they come. Unsorted, unfiltered.
 
 ## Shaping
 
+### 11. Create a workspace without a task (built, mock-verified)
+The New workspace dialog's prompt is optional: empty = **Create** (worktree + branch, agent idle, composer focused, Attach / profile available), text = **Start** as before. Optional name field (kept over the auto-namer). Backend needed no change (`create_workspace` already takes an optional prompt). Later: setup controls (attach folders) inside the dialog, a Settings default for which action is primary, cleanup of idle never-started workspaces, "not started" label in sidebar/inbox.
+
 Ideas we're actively working through: the problem, a rough sketch, open questions.
 
 ### 10. AI teammates (standalone feature)

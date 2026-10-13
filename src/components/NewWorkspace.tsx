@@ -37,6 +37,7 @@ export function NewWorkspace() {
   const [profileId, setProfileId] = useState(DEFAULT_PROFILE);
   const profile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.id === DEFAULT_PROFILE);
   const [prompt, setPrompt] = useState("");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -57,11 +58,19 @@ export function NewWorkspace() {
   const close = () => useApp.getState().setNewWorkspaceOpen(false);
 
   const create = async () => {
-    if (!repoId || !prompt.trim() || busy) return;
+    if (!repoId || busy) return;
     setBusy(true);
     localStorage.setItem("lastRepo", repoId);
     try {
-      const ws = await api.createWorkspace({ repoId, name: titleFrom(prompt), agent, model: model || null, prompt, profile: profile?.id ?? null });
+      // No prompt = set the workspace up first: the worktree exists, the agent starts with your first message.
+      const ws = await api.createWorkspace({
+        repoId,
+        name: name.trim() || titleFrom(prompt) || "New workspace",
+        agent,
+        model: model || null,
+        prompt: prompt.trim() ? prompt : null,
+        profile: profile?.id ?? null,
+      });
       useApp.getState().upsertWorkspace(ws);
       useApp.getState().select(ws.id);
       close();
@@ -83,15 +92,24 @@ export function NewWorkspace() {
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <span className="text-[14px] font-semibold tracking-[-0.01em]">New workspace</span>
-          <span className="text-[12px] text-mute">— fresh worktree + branch, agent starts immediately</span>
+          <span className="text-[12px] text-mute">
+            {prompt.trim() ? "— fresh worktree + branch, agent starts immediately" : "— fresh worktree + branch; add a task now or later"}
+          </span>
         </div>
+
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Name (optional)"
+          className="block w-full border-b border-line bg-transparent px-4 py-2 text-[13px] font-medium placeholder:text-mute focus:outline-none"
+        />
 
         <textarea
           ref={ref}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={6}
-          placeholder="Describe the task…"
+          placeholder="Describe the task, or leave empty to set the workspace up first…"
           className="block w-full resize-none bg-transparent px-4 py-3 text-[15px] font-medium leading-relaxed placeholder:text-mute focus:outline-none"
         />
 
@@ -182,9 +200,9 @@ export function NewWorkspace() {
             <Kbd>Ctrl</Kbd>
             <Kbd>Enter</Kbd>
           </span>
-          <Button variant="primary" onClick={() => void create()} disabled={!repoId || !prompt.trim() || busy}>
+          <Button variant="primary" onClick={() => void create()} disabled={!repoId || busy}>
             {busy && <LoaderCircle className="size-3.5 animate-spin" />}
-            Start
+            {prompt.trim() ? "Start" : "Create"}
           </Button>
         </div>
       </div>

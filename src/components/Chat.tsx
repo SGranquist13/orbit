@@ -318,7 +318,10 @@ function Transcript({ blocks, live, running, loading }: { blocks: Block[]; live:
     <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[880px] space-y-5 px-6 py-8">
         {!loading && blocks.length === 0 && (
-          <p className="label pt-24 text-center text-mute">Give the agent a task to get started</p>
+          <div className="space-y-1 pt-24 text-center">
+            <p className="label text-mute">Give the agent a task to get started</p>
+            <p className="text-[12px] text-mute">Attach folders or switch profile first if you need to; nothing runs until you send.</p>
+          </div>
         )}
         {blocks.map((b, i) => (
           <BlockView key={b.key} block={b} active={running && i === lastTools && i === blocks.length - 1} />
