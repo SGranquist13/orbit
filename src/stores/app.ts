@@ -270,8 +270,7 @@ export const useApp = create<AppState>((set, get) => ({
     const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?\n\nThe branch ${ws.branch} is kept.`, "Archive");
     if (!ok) return;
     try {
-      await archiveWithWorktree(id, ws.name);
-      get().removeWorkspace(id);
+      if (await archiveWithWorktree(id, ws.name)) get().removeWorkspace(id);
     } catch (e) {
       get().setError(String(e));
     }

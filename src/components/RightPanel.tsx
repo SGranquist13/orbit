@@ -41,8 +41,7 @@ export function RightPanel({ ws }: { ws: Workspace }) {
     const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?\n\nThe branch ${ws.branch} is kept.`, "Archive");
     if (!ok) return;
     try {
-      await archiveWithWorktree(ws.id, ws.name);
-      useApp.getState().removeWorkspace(ws.id);
+      if (await archiveWithWorktree(ws.id, ws.name)) useApp.getState().removeWorkspace(ws.id);
     } catch (e) {
       useApp.getState().setError(String(e));
     }

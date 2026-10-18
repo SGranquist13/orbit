@@ -322,8 +322,7 @@ function WorkspaceMenu({ ws, x, y, onRename, onClose }: { ws: Workspace; x: numb
 The branch ${ws.branch} is kept.`, "Archive");
           if (!ok) return;
           try {
-            await archiveWithWorktree(ws.id, ws.name);
-            useApp.getState().removeWorkspace(ws.id);
+            if (await archiveWithWorktree(ws.id, ws.name)) useApp.getState().removeWorkspace(ws.id);
           } catch (e) {
             fail(e);
           }
