@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TURN_ENDS, createHarness, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
+import { TURN_ENDS, createHarness, killLeftovers, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
 // The maintainer's sandbox is the default only for the maintainer's own gh login; everyone else must
 // bring their own private repo.
@@ -60,6 +60,7 @@ const closePr = (number, branch) => {
 };
 
 // ── Scenario setup ────────────────────────────────────────────
+killLeftovers(scratch);
 fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(scratch, { recursive: true });
 execFileSync("gh", ["repo", "clone", SANDBOX, repo, "--", "-q"], { stdio: "ignore" });
@@ -214,6 +215,79 @@ await h.step("issues-start-and-plan", async () => {
   if (plan.length < 200) throw new Error(`plan too thin: ${plan.slice(0, 200)}`);
 
   for (const n of [nStart, nPlan]) gh(["issue", "close", String(n), "--reason", "not planned"]);
+});
+
+await h.step("new-ticket-dialog", async () => {
+  // Palette > New ticket: notes go to a read-only Ticket writer workspace that runs /shipkit:write-ticket.
+  const marker = `ticket-dialog-${stamp}`;
+  const before = new Set((await h.invoke("list_workspaces")).map((w) => w.id));
+  const model = (await h.invoke("get_settings")).defaultModelClaude;
+  await h.invoke("update_settings", { patch: { defaultAgent: "claude", defaultModelClaude: "haiku" } });
+  try {
+    await h.key("k", { ctrl: true });
+    await h.waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+    await h.type("New ticket");
+    await h.waitFor("New ticket item", `return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes('New ticket'))`, 5000);
+    await h.key("Enter");
+    await h.waitFor("ticket dialog", `return !!document.querySelector('textarea[placeholder^="Describe the bug"]')`, 8000);
+    await h.js(`document.querySelector('textarea[placeholder^="Describe the bug"]').focus()`);
+    await h.type(`Add a dark mode toggle to the settings page. Include the tag ${marker} at the end of the issue body.`);
+    await h.js(`[...document.querySelectorAll('button')].find((b) => b.innerText.trim() === 'Write ticket').click()`);
+    const ws = await h.until("ticket writer workspace", async () => (await h.invoke("list_workspaces")).find((w) => !before.has(w.id)), 60_000, 1000);
+    if (ws.profile !== "shipkit:ticket-writer") throw new Error(`workspace profile ${ws.profile}`);
+    await h.waitFor("dialog closed", `return !document.querySelector('textarea[placeholder^="Describe the bug"]')`, 15_000);
+    await waitIdle(ws.id);
+    const issue = await h.until("issue filed on GitHub", async () => gh(["issue", "list", "--state", "open", "--search", `${marker} in:body`, "--json", "number,title"])[0], 90_000);
+    console.log(`      filed #${issue.number}: ${issue.title}`);
+    gh(["issue", "close", String(issue.number), "--reason", "not planned"]);
+  } finally {
+    await h.invoke("update_settings", { patch: { defaultModelClaude: model } });
+  }
+});
+
+await h.step("issue-chip", async () => {
+  // A workspace linked to an issue shows #n in its header; the chip's command resolves the issue URL.
+  const n = Number(gh(["issue", "create", "--title", `Chip check (${stamp})`, "--body", "Throwaway issue for the e2e."]).split("/").pop());
+  try {
+    const repoId = (await h.invoke("list_repos"))[0].id;
+    const ws = await h.invoke("create_workspace", { repoId, name: `chip ws ${stamp}`, agent: "claude", model: "haiku", prompt: null, issueNumber: n, profile: null });
+    await h.waitFor("sidebar row", `return [...document.querySelectorAll('aside li button')].some((b) => b.innerText.includes(${JSON.stringify(ws.name)}))`, 10_000);
+    await h.js(`[...document.querySelectorAll('aside li button')].find((b) => b.innerText.includes(${JSON.stringify(ws.name)})).click()`);
+    await h.waitFor("#n chip in the header", `return [...document.querySelectorAll('header button[title="Open the linked issue on GitHub"]')].some((b) => b.innerText.includes('#${n}'))`, 10_000);
+    const url = await h.invoke("issue_url", { workspaceId: ws.id });
+    if (!url.includes(`github.com/${SANDBOX}/issues/${n}`)) throw new Error(`issue_url returned ${url}`);
+    await h.shot("gh-06-issue-chip");
+  } finally {
+    gh(["issue", "close", String(n), "--reason", "not planned"]);
+  }
+});
+
+await h.step("address-comments", async () => {
+  const ws = await ui.newWorkspace({ model: "haiku", prompt: `Create a file notes/review-${stamp}.txt containing the single line: hi. Do not commit.` });
+  await ui.waitTurn(0);
+  await ui.clickChip("ship");
+  await ui.waitTurn(1, 300_000);
+  const pr = await h.until("PR opened", () => prOf(ws.branch), 60_000);
+  try {
+    const file = `notes/review-${stamp}.txt`;
+    const sha = gh(["pr", "view", ws.branch, "--json", "headRefOid", "-q", ".headRefOid"]);
+    gh(["api", `repos/${SANDBOX}/pulls/${pr.number}/comments`, "-f", "body=Please change the word hi to hello in this file.", "-f", `commit_id=${sha}`, "-f", `path=${file}`, "-F", "line=1", "-f", "side=RIGHT"]);
+    const commits = () => gh(["pr", "view", ws.branch, "--json", "commits"]).commits.length;
+    const before = commits();
+    const seq = (await h.invoke("workspace_summary", { id: ws.id })).lastTurnSeq;
+    await ui.openShip();
+    await h.js(`[...(${shipPanel}).querySelectorAll('button')].find(b => b.title === 'Refresh')?.click()`);
+    await h.waitFor("Address comments button", `const b = ${panelButton("Address comments")}; return !!b && !b.disabled`, 60_000);
+    await h.js(`(${panelButton("Address comments")}).click()`);
+    await h.waitFor("skill in transcript", `return [...document.querySelectorAll('[data-user-message]')].some((e) => e.innerText.includes('address-comments'))`, 15_000);
+    await waitIdle(ws.id, seq);
+    await h.until("a new commit on the PR", async () => commits() > before, 90_000, 3000);
+    const content = gh(["api", `repos/${SANDBOX}/contents/${file}?ref=${ws.branch}`, "-q", ".content"]);
+    const text = Buffer.from(content.replace(/\s/g, ""), "base64").toString("utf8");
+    if (!/hello/i.test(text)) throw new Error(`the comment was not addressed; file reads: ${JSON.stringify(text)}`);
+  } finally {
+    closePr(pr.number, ws.branch);
+  }
 });
 
 await h.step("preflight-flags-consumer", async () => {

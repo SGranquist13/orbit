@@ -32,6 +32,33 @@ export function assertOutsideGit(dir) {
   if (top) throw new Error(`e2e scratch dir ${dir} is inside the git work tree ${top}; pass a scratch path outside any repo (default: the OS temp dir)`);
 }
 
+/**
+ * Kills leftovers of an earlier run on the same scratch dir (a crashed run leaves the app and its WebView2
+ * processes holding files there, so clearing the dir fails with EPERM). WebView2 processes are found by
+ * their `--user-data-dir` (which lives in the scratch dir); the orbit.exe that owns them is their parent.
+ */
+export function killLeftovers(scratch) {
+  if (process.platform !== "win32") return;
+  const script = `
+    $s = $env:ORBIT_E2E_SCRATCH
+    $procs = Get-CimInstance Win32_Process
+    $web = @($procs | Where-Object { $_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -and $_.CommandLine.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    $ids = @($web | ForEach-Object { $_.ProcessId })
+    foreach ($w in $web) { $p = $procs | Where-Object { $_.ProcessId -eq $w.ParentProcessId -and $_.Name -eq 'orbit.exe' }; if ($p) { $ids += $p.ProcessId } }
+    $ids | Sort-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 800`;
+  try {
+    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { env: { ...process.env, ORBIT_E2E_SCRATCH: scratch }, stdio: "ignore", timeout: 30_000 });
+  } catch {}
+}
+
+/**
+ * Page errors that fail the step they happen in (React key / render-loop warnings and the like). Known-harmless
+ * ones can be listed in HARMLESS_PAGE_ERRORS; none have shown up so far.
+ */
+const FATAL_PAGE_ERROR = /Warning: |same key|Maximum update depth|Cannot update a component/;
+const HARMLESS_PAGE_ERRORS = [];
+
 export function createHarness({ scratch, port = 9333, only }) {
   const exe = path.join(root, "src-tauri", "target", "debug", "orbit.exe");
   const home = path.join(scratch, "home");
@@ -74,6 +101,7 @@ export function createHarness({ scratch, port = 9333, only }) {
   async function quit() {
     app?.kill();
     await sleep(1500);
+    killLeftovers(scratch);
   }
 
   // ── CDP ─────────────────────────────────────────────────────
@@ -174,8 +202,11 @@ export function createHarness({ scratch, port = 9333, only }) {
   async function step(name, fn, opts = {}) {
     if (only && only !== name && !opts.always) return;
     const t0 = Date.now();
+    const errorsBefore = pageErrors.length;
     try {
       await fn();
+      const bad = pageErrors.slice(errorsBefore).map(String).filter((e) => FATAL_PAGE_ERROR.test(e) && !HARMLESS_PAGE_ERRORS.some((h) => h.test(e)));
+      if (bad.length) throw new Error(`page error during the step: ${bad[0].split(/\r?\n/)[0].slice(0, 300)}`);
       results.push({ name, ok: true, ms: Date.now() - t0 });
       console.log(`  ✓ ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     } catch (e) {

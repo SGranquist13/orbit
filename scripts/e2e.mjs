@@ -16,7 +16,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { TURN_ENDS, createHarness, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
+import { TURN_ENDS, createHarness, killLeftovers, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
 // `node scripts/e2e.mjs [scratch-dir] [step]`; a lone argument without path characters is a step name.
 const args = process.argv.slice(2);
@@ -63,6 +63,7 @@ const focusInboxRow = async (name) => {
 };
 
 // ── Scenario ──────────────────────────────────────────────────
+killLeftovers(scratch);
 fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(home, { recursive: true });
 fs.mkdirSync(repo, { recursive: true });
@@ -1273,6 +1274,30 @@ await step("chief-edit-cancel", async () => {
     for (const slug of [a, b]) await invoke("delete_teammate", { slug });
     await js(`location.reload()`);
     await sleep(1500);
+  }
+});
+
+await step("teammate-memory-append", async () => {
+  // The teammate is told to remember a code word; its context carries the memory file's path and the
+  // instruction to append to it, so the word must land in the file on disk after its report.
+  const word = `plum-${Date.now().toString(36)}`;
+  const t = await invoke("save_teammate", {
+    input: { name: "E2E Memo", avatar: "", description: "Throwaway teammate that keeps notes.", agent: "claude", model: "haiku", profile: null, repos: [], readonly: null, instructions: "Answer in one word. The only file you may edit is your own memory file." },
+  });
+  try {
+    await invoke("teammate_send", {
+      slug: t.slug,
+      text: `Remember that the code word is ${word}; append it to your memory file (the path is in your context). Then reply with exactly the word: saved. That is the whole task.`,
+      repoId: null,
+      newTask: null,
+    });
+    const report = await until("teammate report", async () => (await invoke("teammate_thread", { slug: t.slug, limit: 50 })).find((m) => m.kind === "task_report" || m.kind === "error") ?? null, 180_000, 2000);
+    if (report.kind !== "task_report") throw new Error(`teammate failed: ${report.text}`);
+    const file = path.join(h.home, "teammates", `${t.slug}.memory.md`);
+    const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    if (!text.includes(word)) throw new Error(`memory file lacks the code word ${word}: ${JSON.stringify(text.slice(0, 300))}`);
+  } finally {
+    await invoke("delete_teammate", { slug: t.slug });
   }
 });
 
