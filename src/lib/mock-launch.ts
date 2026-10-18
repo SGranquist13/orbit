@@ -231,7 +231,7 @@ export function launchMerge(id: string) { if (PRS[id]) PRS[id] = { ...PRS[id], s
 function script(text: string, id: string): Script {
   if (/shipkit:ship/.test(text) && !PRS[id]) return {
     tools: [
-      ["Bash", { command: "git push -u origin HEAD" }, "branch steven/invite-link-expiry set up to track origin"],
+      ["Bash", { command: "git push -u origin HEAD" }, "branch you/invite-link-expiry set up to track origin"],
       ["Bash", { command: "gh pr create --draft --fill" }, `https://github.com/acme/relay/pull/${HERO_PR}`],
     ],
     reply: `Opened draft PR #${HERO_PR}: fix(invites): links last seven days. CI is running.`,
