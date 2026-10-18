@@ -79,6 +79,11 @@ await git("init", "-q", "-b", "main");
 await git("add", "-A");
 await git("-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qm", "init");
 
+// Pack installs only accept https:// or git@ URLs; git itself rewrites this fake host to the local pack source (packs steps).
+process.env.GIT_CONFIG_COUNT = "1";
+process.env.GIT_CONFIG_KEY_0 = `url.${path.join(scratch, "packsrc").split("\\").join("/")}/.insteadOf`;
+process.env.GIT_CONFIG_VALUE_0 = "https://orbit-e2e.test/";
+
 console.log(`Real-app e2e — scratch: ${scratch}`);
 await launch();
 await cdp("Runtime.enable");
@@ -830,6 +835,445 @@ await step("codex-steer", async () => {
   const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
   if (!msg.trim()) throw new Error("no reply after the steer");
   console.log(`      (codex reply ends: ${JSON.stringify(msg.trim().slice(-40))})`);
+});
+
+// ── Batch 2: packs, skills, attachments, routines, trunk gates, undo, teammates, Chief ──────
+const PACK_URL = "https://orbit-e2e.test/e2e-pack"; // rewritten to the local source repo by GIT_CONFIG (see the top of this file)
+const packSrc = path.join(scratch, "packsrc", "e2e-pack");
+const makePackSource = () => {
+  fs.rmSync(packSrc, { recursive: true, force: true });
+  fs.mkdirSync(path.join(packSrc, ".claude-plugin"), { recursive: true });
+  fs.mkdirSync(path.join(packSrc, "commands"), { recursive: true });
+  fs.writeFileSync(path.join(packSrc, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "e2epack", version: "0.0.1", description: "Throwaway pack for the e2e" }, null, 2) + "\n");
+  fs.writeFileSync(path.join(packSrc, "commands", "hello.md"), "---\ndescription: Say hello, nothing else.\n---\n\nReply with exactly the word: hello. Do not use tools or edit files.\n");
+  gitIn(packSrc, "init", "-q", "-b", "main");
+  gitIn(packSrc, "add", "-A");
+  gitCommit(packSrc, "init pack");
+};
+const reloadUi = async () => {
+  await js(`location.reload()`);
+  await sleep(1500);
+  await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
+};
+const hasSkill = async (id) => (await invoke("list_skills")).some((s) => s.id === id);
+const removePackQuietly = async () => {
+  await invoke("remove_pack", { name: "e2e-pack" }).catch(() => {});
+  await invoke("set_pack_enabled", { name: "e2e-pack", enabled: true }).catch(() => {});
+};
+/** Installs the throwaway pack (through the git URL rewrite), reloads the UI so its skill store is fresh, runs fn, then removes the pack. */
+const withPack = async (fn) => {
+  await removePackQuietly();
+  makePackSource();
+  await invoke("install_pack", { url: PACK_URL });
+  await reloadUi();
+  try {
+    return await fn();
+  } finally {
+    await removePackQuietly();
+    await h.autoConfirm(false);
+  }
+};
+const openPacksDialog = async () => {
+  await key("k", { ctrl: true });
+  await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+  await type("Manage skill packs");
+  await key("Enter");
+  await waitFor("packs dialog", `return document.body.innerText.includes('Skill packs')`, 5000);
+};
+const closePacksDialog = async () => {
+  await js(`document.querySelector('.fixed.inset-0')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  await waitFor("packs dialog closed", `return !document.body.innerText.includes('Install a pack from git')`, 5000);
+};
+const packRow = `[...document.querySelectorAll('section div.rounded-\\\\[4px\\\\]')].find((d) => d.innerText.includes('e2e-pack') && d.querySelector('[role=switch]'))`;
+const setComposer = async (text) => {
+  await js(`const t = document.querySelector('textarea[placeholder*="Claude"], textarea[placeholder*="Codex"]'); t.focus(); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true }))`);
+};
+const autocompleteHas = (id) => js(`return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes(${JSON.stringify("/" + id)}))`);
+const paletteRun = async (text, itemText) => {
+  await key("k", { ctrl: true });
+  await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+  await type(text);
+  await waitFor("palette item", `return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes(${JSON.stringify(itemText)}))`, 5000);
+  await key("Enter");
+};
+const throwaway = (name) =>
+  invoke("save_teammate", {
+    input: { name, avatar: "", description: "Throwaway teammate that replies with the one word it is told to. Never edits files.", agent: "claude", model: "haiku", profile: null, repos: [], instructions: "Answer in one word. Never edit files." },
+  });
+const RUN_DONE = (r) => r && r.status !== "running";
+const lastRun = async (routineId) => (await invoke("routine_runs", { routineId, limit: 1 }))[0];
+
+await step("packs-install-lifecycle", async () => {
+  // Install only accepts https:// or git@, so the URL below is rewritten to a local repo by git's own insteadOf.
+  await removePackQuietly();
+  makePackSource();
+  const ws = await mkWs("pack ws");
+  await waitFor("sidebar row", `${DOM} return !!sidebarRow("pack ws")`, 10_000);
+  await selectWsInSidebar("pack ws");
+  await h.autoConfirm(true);
+  try {
+    // Install through the Skill packs dialog.
+    await openPacksDialog();
+    await js(`document.querySelector('input[placeholder^="https://github.com"]').focus()`);
+    await type(PACK_URL);
+    await js(`[...document.querySelectorAll('button')].find((b) => b.innerText.trim() === 'Add').click()`);
+    await waitFor("pack listed with its command", `return !!(${packRow}) && /\\/e2epack:/.test((${packRow}).innerText) && document.body.innerText.includes('/e2epack:hello')`, 30_000);
+    if (!(await hasSkill("e2epack:hello"))) throw new Error("skill not listed by list_skills");
+    const pack = (await invoke("list_packs")).find((p) => p.name === "e2e-pack");
+    if (!pack || pack.plugin !== "e2epack" || pack.commandCount !== 1 || !pack.enabled) throw new Error(`bad pack: ${JSON.stringify(pack)}`);
+    await shot("22-pack-installed");
+    await closePacksDialog();
+    await setComposer("/e2epack");
+    await waitFor("autocomplete offers the pack's command", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+
+    // Disable: the skill leaves the list and the autocomplete.
+    await setComposer("");
+    await openPacksDialog();
+    await js(`(${packRow}).querySelector('[role=switch]').click()`);
+    await until("pack disabled", async () => (await invoke("list_packs")).find((p) => p.name === "e2e-pack")?.enabled === false, 10_000, 300);
+    if (await hasSkill("e2epack:hello")) throw new Error("a disabled pack still lists its skill");
+    await closePacksDialog();
+    await setComposer("/e2epack");
+    await sleep(500);
+    if (await autocompleteHas("e2epack:hello")) throw new Error("autocomplete still offers a disabled pack's command");
+
+    // Enable again.
+    await setComposer("");
+    await openPacksDialog();
+    await js(`(${packRow}).querySelector('[role=switch]').click()`);
+    await until("pack enabled", async () => (await hasSkill("e2epack:hello")), 10_000, 300);
+    await closePacksDialog();
+    await setComposer("/e2epack");
+    await waitFor("autocomplete is back", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+    await setComposer("");
+
+    // Update pulls a new command from the source repo.
+    fs.writeFileSync(path.join(packSrc, "commands", "bye.md"), "---\ndescription: Say bye.\n---\n\nReply with exactly the word: bye.\n");
+    gitIn(packSrc, "add", "-A");
+    gitCommit(packSrc, "add bye");
+    await openPacksDialog();
+    await js(`(${packRow}).querySelector('button[title^="Update"]').click()`);
+    await until("update pulled the new command", async () => hasSkill("e2epack:bye"), 20_000, 500);
+    await waitFor("new command in the dialog", `return document.body.innerText.includes('/e2epack:bye')`, 5000);
+
+    // Remove deletes the folder and the skills.
+    await js(`(${packRow}).querySelector('button[title="Remove pack"]').click()`);
+    await until("pack removed", async () => !(await invoke("list_packs")).some((p) => p.name === "e2e-pack"), 10_000, 300);
+    if (fs.existsSync(path.join(h.home, "packs", "e2e-pack"))) throw new Error("pack folder still on disk");
+    if (await hasSkill("e2epack:hello")) throw new Error("removed pack still lists its skill");
+    await closePacksDialog();
+  } finally {
+    await removePackQuietly();
+    await h.autoConfirm(false);
+  }
+});
+
+await step("pins-and-palette-skill", async () => {
+  await withPack(async () => {
+    await mkWs("pins ws");
+    await waitFor("sidebar row", `${DOM} return !!sidebarRow("pins ws")`, 10_000);
+    await selectWsInSidebar("pins ws");
+    const chip = `return [...document.querySelectorAll('button')].some((b) => b.innerText.trim() === 'HELLO')`;
+    const pinButton = async (title) => {
+      await openPacksDialog();
+      await js(`document.querySelector('section input[placeholder^="Search"]').focus()`);
+      await type("e2epack:hello");
+      await waitFor("skill row", `return [...document.querySelectorAll('li.group')].some((l) => l.innerText.includes('/e2epack:hello'))`, 5000);
+      await js(`[...document.querySelectorAll('li.group')].find((l) => l.innerText.includes('/e2epack:hello')).querySelector('button[title=${JSON.stringify(title)}]').click()`);
+      await sleep(300);
+      await closePacksDialog();
+    };
+    if (await js(chip)) throw new Error("the skill is pinned before the test pins it");
+    await pinButton("Pin to composer");
+    await waitFor("chip appears", chip, 5000);
+    if (!(await invoke("get_pins")).includes("e2epack:hello")) throw new Error("pin not stored");
+    await shot("23-pinned-chip");
+    await pinButton("Unpin from composer");
+    await waitFor("chip disappears", `return !(await (async () => { ${chip} })())`, 5000);
+    if ((await invoke("get_pins")).includes("e2epack:hello")) throw new Error("unpin not stored");
+
+    // Run it from the palette (no preview there: it sends at once).
+    await paletteRun("/e2epack:hello", "/e2epack:hello");
+    await waitFor("skill in transcript", `return [...document.querySelectorAll('[data-user-message]')].some((e) => e.innerText.includes('/e2epack:hello'))`, 15_000);
+    await waitFor("turn ended", `${turnEnds} >= 1`, 120_000);
+    const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+    if (!/hello/i.test(msg)) throw new Error(`skill answered: ${msg.slice(0, 120)}`);
+  });
+});
+
+await step("codex-inlined-skill", async () => {
+  await withPack(async () => {
+    const ws = await mkWs("codex skill ws", { agent: "codex", model: null });
+    await waitFor("sidebar row", `${DOM} return !!sidebarRow("codex skill ws")`, 10_000);
+    await selectWsInSidebar("codex skill ws");
+    await paletteRun("/e2epack:hello", "/e2epack:hello");
+    await waitFor("skill in transcript", `return [...document.querySelectorAll('[data-user-message]')].some((e) => e.innerText.includes('/e2epack:hello'))`, 15_000);
+    await waitFor("codex turn ended", `${turnEnds} >= 1`, 180_000);
+    const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+    // Codex can't load foreign skills, so Orbit inlined the body: it answered with the word the command asked for.
+    if (!/hello/i.test(msg)) throw new Error(`codex answered: ${msg.slice(0, 120)}`);
+    await settled(ws.id, 60_000);
+  });
+});
+
+await step("always-attach", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const norm = (p) => p.split("\\").join("/").replace(/^\/\/\?\//, "").toLowerCase();
+  await invoke("set_related_default", { repoId, path: consumer, enabled: true });
+  try {
+    if (!(await invoke("get_related_defaults", { repoId })).some((p) => norm(p).endsWith("/consumer"))) throw new Error("default not stored");
+    const ws = await mkWs("attach defaults");
+    const atts = await invoke("list_attachments", { workspaceId: ws.id });
+    if (!atts.some((a) => norm(a.path).endsWith("/consumer"))) throw new Error(`new workspace has no attached folder: ${JSON.stringify(atts)}`);
+    await waitFor("sidebar row", `${DOM} return !!sidebarRow("attach defaults")`, 10_000);
+    await selectWsInSidebar("attach defaults");
+    await waitFor("attachment shown", `return document.body.innerText.toLowerCase().includes('consumer')`, 10_000);
+  } finally {
+    await invoke("set_related_default", { repoId, path: consumer, enabled: false });
+  }
+  const plain = await mkWs("attach none");
+  if ((await invoke("list_attachments", { workspaceId: plain.id })).length) throw new Error("a workspace created after disabling still got the folder");
+});
+
+await step("routine-scheduler-tick", async () => {
+  // A one-off ~30-90 s out; the 30 s tick picks it up and runs it without any "Run now".
+  const repoId = (await invoke("list_repos"))[0].id;
+  const t = new Date(Math.ceil((Date.now() + 30_000) / 60_000) * 60_000);
+  const p2 = (n) => String(n).padStart(2, "0");
+  const at = `${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}T${p2(t.getHours())}:${p2(t.getMinutes())}`;
+  const routine = await invoke("save_routine", {
+    input: { repoId, name: "e2e tick", schedule: { kind: "once", at }, action: { kind: "prompt", text: "Reply with exactly one word: tick" }, agent: "claude", model: "haiku", mode: "fresh", enabled: true },
+  });
+  try {
+    if (!routine.nextRunAt) throw new Error(`no next run: ${JSON.stringify(routine)}`);
+    const run = await until("scheduled run finished", async () => {
+      const r = await lastRun(routine.id);
+      return RUN_DONE(r) ? r : null;
+    }, 200_000, 3000);
+    if (!["done", "quiet"].includes(run.status)) throw new Error(`scheduled run ended as ${run.status}: ${run.summary}`);
+    // The first row may still flip done -> quiet, but the run happened by itself and the one-off switched itself off.
+    const after = (await invoke("list_routines")).find((r) => r.id === routine.id);
+    if (after?.enabled) throw new Error("a once routine should switch itself off after running");
+  } finally {
+    await invoke("delete_routine", { id: routine.id });
+  }
+});
+
+await step("routine-standing-workspace", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const routine = await invoke("save_routine", {
+    input: { repoId, name: "e2e standing", schedule: { kind: "daily", time: "03:00" }, action: { kind: "prompt", text: "Reply with exactly one word: stand" }, agent: "claude", model: "haiku", mode: "standing", enabled: true },
+  });
+  try {
+    await invoke("run_routine_now", { id: routine.id });
+    const first = await until("first run finished", async () => {
+      const r = await lastRun(routine.id);
+      return RUN_DONE(r) ? r : null;
+    }, 180_000, 2000);
+    if (!first.workspaceId) throw new Error(`first run has no workspace: ${JSON.stringify(first)}`);
+    await sleep(2000); // let the quiet check settle
+    await invoke("run_routine_now", { id: routine.id });
+    const second = await until("second run finished", async () => {
+      const [r] = await invoke("routine_runs", { routineId: routine.id, limit: 1 });
+      return r && r.id !== first.id && RUN_DONE(r) ? r : null;
+    }, 180_000, 2000);
+    if (second.workspaceId !== first.workspaceId) throw new Error(`standing routine used two workspaces: ${first.workspaceId} then ${second.workspaceId}`);
+    const live = (await invoke("list_workspaces")).filter((w) => w.routineId === routine.id);
+    if (live.length !== 1 || live[0].id !== first.workspaceId) throw new Error(`expected one standing workspace, got ${JSON.stringify(live.map((w) => w.name))}`);
+  } finally {
+    await invoke("delete_routine", { id: routine.id });
+  }
+});
+
+await step("routine-owned-by-teammate", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const t = await throwaway("E2E Owner");
+  const routine = await invoke("save_routine", {
+    input: {
+      repoId, name: "e2e owned", schedule: { kind: "daily", time: "03:00" }, agent: "claude", model: "haiku", mode: "fresh", enabled: true, teammate: t.slug,
+      action: { kind: "prompt", text: "Reply with exactly the word: ready. That is the whole task and it is complete once you reply; nothing is needed from anyone. Do not edit files." },
+    },
+  });
+  try {
+    await invoke("run_routine_now", { id: routine.id });
+    const report = await until("owner's report", async () => (await invoke("teammate_thread", { slug: t.slug, limit: 50 })).find((m) => m.kind === "task_report" || m.kind === "error") ?? null, 180_000, 2000);
+    if (report.kind !== "task_report") throw new Error(`owned run failed: ${report.text}`);
+    const [task] = await invoke("teammate_tasks", { slug: t.slug });
+    if (task.originKind !== "routine" || task.originRef !== "e2e owned") throw new Error(`task is not marked as scheduled: ${JSON.stringify(task)}`);
+    const run = await lastRun(routine.id);
+    if (run.workspaceId !== task.workspaceId) throw new Error("the routine run and the teammate task use different workspaces");
+    await ensureTeammates();
+    await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${t.slug}"]')`, 5000);
+    await js(`document.querySelector('[data-teammates] [data-teammate="${t.slug}"]').click()`);
+    await waitFor("Scheduled label in the thread", `const th = document.querySelector('[data-teammate-thread="${t.slug}"]'); return !!th && /Scheduled/.test(th.innerText) && /ready/i.test(th.innerText)`, 10_000);
+    await shot("24-owned-routine");
+  } finally {
+    await invoke("delete_routine", { id: routine.id });
+    await invoke("delete_teammate", { slug: t.slug });
+    await js(`location.reload()`);
+    await sleep(1500);
+  }
+});
+
+await step("trunk-warn-and-ship-anyway", async () => {
+  // Warn mode: a failing check does not stop Ship, but flags the workspace and the inbox offers Ship anyway.
+  const repoId = (await invoke("list_repos"))[0].id;
+  // One real (cheap) turn: the inbox only lists workspaces that have had activity.
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Reply with the single word warn. Do not use tools. Do not edit files." });
+  await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
+  await until("turn settled", async () => (await wsStatus(ws.id)) !== "running", 30_000, 500);
+  await invoke("set_check_command", { repoId, cmd: "exit 1" });
+  try {
+    await withSettings({ checksMode: "warn" }, async () => {
+      const res = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: false });
+      if (!res.ok || res.checks?.ok !== false) throw new Error(`warn mode should proceed with a failed check: ${JSON.stringify(res)}`);
+      if (!(await invoke("list_workspaces")).find((w) => w.id === ws.id).checksFailed) throw new Error("checksFailed not set");
+      const wsKey = JSON.stringify(ws.name.slice(0, 20));
+      await ensureInbox();
+      await waitFor("inbox row with Ship anyway", `${INBOX_JS} const li = rows().find((li) => li.innerText.includes(${wsKey})); return !!li && /Ship anyway/.test(li.innerText)`, 15_000);
+      await shot("25-ship-anyway");
+      // Shipping anyway (the gate only: no remote, so no ship turn) clears the flag and the row.
+      const anyway = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: true });
+      if (!anyway.ok) throw new Error(`skip-checks did not proceed: ${JSON.stringify(anyway)}`);
+      await waitFor("flag cleared", `const w = (await window.__TAURI_INTERNALS__.invoke("list_workspaces")).find((w) => w.id === ${JSON.stringify(ws.id)}); return !w.checksFailed`, 10_000);
+      await waitFor("row has no Ship anyway", `${INBOX_JS} const li = rows().find((li) => li.innerText.includes(${wsKey})); return !li || !/Ship anyway/.test(li.innerText)`, 10_000);
+      await key("i", { ctrl: true });
+    });
+  } finally {
+    await invoke("set_check_command", { repoId, cmd: null });
+  }
+});
+
+await step("checks-autodetect", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const ws = await mkWs("autodetect checks");
+  if ((await invoke("get_check_command", { repoId })).override) throw new Error("a check override is set; this step needs none");
+  const pkgPath = path.join(ws.path, "package.json");
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+  await withSettings({ installBeforeChecks: false, checksMode: "block" }, async () => {
+    pkg.scripts = { test: `node -e "process.exit(0)"` };
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+    const ok = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: false });
+    if (!ok.ok || !ok.checks?.ok || !/npm run test/.test(ok.checks.command ?? "")) throw new Error(`detected check did not run and pass: ${JSON.stringify(ok.checks)}`);
+    // The same detection blocks when the script fails.
+    pkg.scripts = { test: `node -e "process.exit(1)"` };
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+    const bad = await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: false });
+    if (bad.ok || bad.checks?.ok !== false) throw new Error(`a failing detected check did not block: ${JSON.stringify(bad.checks)}`);
+    await invoke("prepare_ship", { workspaceId: ws.id, skipChecks: true }); // clears the flag
+  });
+});
+
+await step("undo-last-turn", async () => {
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Create a file UNDO_TEST.md containing the word hello. Don't commit it." });
+  await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
+  await h.until("save-point commit", async () => gitIn(ws.path, "log", "-1", "--format=%s").startsWith("wip:") && fs.existsSync(path.join(ws.path, "UNDO_TEST.md")), 30_000, 500);
+  const head = gitIn(ws.path, "rev-parse", "HEAD");
+  await h.autoConfirm(true);
+  await paletteRun("Undo last turn", "Undo last turn");
+  await until("wip commit dropped", async () => gitIn(ws.path, "rev-parse", "HEAD") !== head && !fs.existsSync(path.join(ws.path, "UNDO_TEST.md")), 20_000, 500);
+  if (gitIn(ws.path, "log", "-1", "--format=%s").startsWith("wip:")) throw new Error("a wip commit is still on top");
+  if (gitIn(ws.path, "status", "--porcelain")) throw new Error("worktree left dirty after undo");
+  await h.autoConfirm(false);
+});
+
+await step("teammate-crud-and-memory", async () => {
+  const t = await invoke("save_teammate", { input: { name: "E2E Crud", avatar: "", description: "first", agent: "claude", model: "haiku", profile: null, repos: [], readonly: null, instructions: "Answer in one word." } });
+  const file = path.join(h.home, "teammates", `${t.slug}.md`);
+  try {
+    if (t.slug !== "e2e-crud" || !fs.existsSync(file)) throw new Error(`custom teammate not stored: ${t.slug}`);
+    // Edit.
+    const edited = await invoke("save_teammate", { input: { slug: t.slug, name: "E2E Crud", avatar: "", description: "second", agent: "claude", model: "haiku", profile: null, repos: [], readonly: null, instructions: "Answer in two words." } });
+    if (edited.description !== "second" || !fs.readFileSync(file, "utf8").includes("Answer in two words.")) throw new Error(`edit not saved: ${JSON.stringify(edited)}`);
+
+    // Override a starter, then reset it to its default.
+    const starters = await invoke("list_teammates");
+    const starter = starters.find((x) => x.bundled && x.slug === "builder") ?? starters.find((x) => x.bundled);
+    if (!starter) throw new Error("no starter teammates");
+    const original = starter.description;
+    const over = await invoke("save_teammate", { input: { slug: starter.slug, name: starter.name, avatar: starter.avatar, description: "edited by the e2e", agent: starter.agent, model: starter.model, profile: starter.profile, repos: starter.repos, readonly: starter.readonly ?? null, instructions: starter.instructions } });
+    if (!over.overridden || over.description !== "edited by the e2e") throw new Error(`starter override not applied: ${JSON.stringify(over)}`);
+    await invoke("delete_teammate", { slug: starter.slug });
+    const reset = (await invoke("list_teammates")).find((x) => x.slug === starter.slug);
+    if (reset.overridden || reset.description !== original) throw new Error(`starter was not reset to its default: ${JSON.stringify(reset)}`);
+
+    // Memory tab in the editor writes the notes file on disk.
+    await ensureTeammates();
+    await waitFor("teammate row", `return !!document.querySelector('[data-teammates] [data-teammate="${t.slug}"]')`, 8000);
+    await js(`document.querySelector('[data-teammates] [data-teammate="${t.slug}"]').click()`);
+    await waitFor("thread header", `return !!document.querySelector('[data-teammate-thread="${t.slug}"]')`, 5000);
+    await js(`[...document.querySelectorAll('[data-teammate-thread="${t.slug}"] header button')].find((b) => b.innerText.trim() === 'Edit').click()`);
+    await waitFor("editor", `return !!document.querySelector('[data-teammate-editor]')`, 5000);
+    await js(`[...document.querySelectorAll('[data-teammate-editor] button')].find((b) => b.innerText.trim() === 'Memory').click()`);
+    await waitFor("memory textarea enabled", `const t = document.querySelector('[data-teammate-editor] textarea'); return !!t && !t.disabled`, 5000);
+    await js(`document.querySelector('[data-teammate-editor] textarea').focus()`);
+    await type("- always say PLUM-9\n");
+    await js(`[...document.querySelectorAll('[data-teammate-editor] button')].find((b) => b.innerText.trim() === 'Save memory').click()`);
+    const memFile = path.join(h.home, "teammates", `${t.slug}.memory.md`);
+    await until("memory file written", async () => fs.existsSync(memFile) && fs.readFileSync(memFile, "utf8").includes("PLUM-9"), 8000, 300);
+    if (!(await invoke("teammate_memory", { slug: t.slug })).includes("PLUM-9")) throw new Error("teammate_memory does not read the saved notes");
+    await shot("26-teammate-memory");
+    await js(`[...document.querySelectorAll('[data-teammate-editor] button')].find((b) => b.innerText.trim() === 'Cancel').click()`);
+  } finally {
+    await invoke("delete_teammate", { slug: t.slug });
+  }
+  if (fs.existsSync(file)) throw new Error("deleted teammate's file is still on disk");
+  if ((await invoke("list_teammates")).some((x) => x.slug === t.slug)) throw new Error("deleted teammate still listed");
+  await js(`location.reload()`);
+  await sleep(1500);
+});
+
+await step("chief-edit-cancel", async () => {
+  const [a, b] = await makePair("E2E Edit");
+  await invoke("update_settings", { patch: { suggestionModel: "haiku" } });
+  const sent = await invoke("teammate_send", { slug: "chief", text: `Have ${a} reply "ready" and then ${b} reply "set". Each teammate only replies with that word.`, repoId: null, newTask: null });
+  if (sent.workspaceId !== null) throw new Error("Chief should not open a workspace");
+  try {
+    const plan = await until("Chief's plan", async () => {
+      const p = (await invoke("teammate_plans", { slug: "chief" })).at(-1);
+      return p && p.status !== "planning" ? p : null;
+    }, 150_000, 2000);
+    if (plan.status !== "proposed" || !plan.parts.length) throw new Error(`Chief could not plan: ${JSON.stringify(plan).slice(0, 300)}`);
+    // Retarget: both parts to B, with a new title on the first.
+    await invoke("chief_plan_edit", {
+      planId: plan.id,
+      plan: {
+        summary: "edited summary",
+        parts: [
+          { teammate: b, title: "Retargeted", brief: "Reply with exactly the word: ready.", dependsOn: [] },
+          { teammate: b, title: "Second", brief: "Reply with exactly the word: set.", dependsOn: [0] },
+        ],
+      },
+    });
+    const edited = (await invoke("teammate_plans", { slug: "chief" })).find((p) => p.id === plan.id);
+    if (edited.summary !== "edited summary" || edited.parts[0].teammate !== b || edited.parts[0].title !== "Retargeted" || edited.status !== "proposed") throw new Error(`edit not stored: ${JSON.stringify(edited).slice(0, 300)}`);
+    // An unknown teammate is refused (validation shared with the model's reply).
+    const bad = await invoke("chief_plan_edit", { planId: plan.id, plan: { summary: "x", parts: [{ teammate: "no-such-person", title: "t", brief: "b", dependsOn: [] }] } }).then(() => null, (e) => String(e));
+    if (!bad) throw new Error("a plan with only unknown teammates should be rejected");
+
+    await ensureTeammates();
+    await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="chief"]')`, 5000);
+    await js(`document.querySelector('[data-teammates] [data-teammate="chief"]').click()`);
+    await waitFor("plan card shows the edit", `const c = document.querySelector('[data-plan="${plan.id}"]'); return !!c && c.innerText.includes('Retargeted')`, 10_000);
+
+    // Cancel before Start: nothing runs, and the plan can no longer be started.
+    await invoke("chief_plan_cancel", { planId: plan.id });
+    const cancelled = (await invoke("teammate_plans", { slug: "chief" })).find((p) => p.id === plan.id);
+    if (cancelled.status !== "cancelled") throw new Error(`plan status ${cancelled.status}`);
+    const start = await invoke("chief_plan_start", { planId: plan.id }).then(() => null, (e) => String(e));
+    if (!start) throw new Error("a cancelled plan could be started");
+    await sleep(1500);
+    for (const slug of [a, b]) {
+      if ((await invoke("teammate_tasks", { slug })).length) throw new Error(`teammate ${slug} got a task from a cancelled plan`);
+    }
+    if ((await invoke("list_workspaces")).some((w) => w.teammate === a || w.teammate === b)) throw new Error("a workspace was created by a cancelled plan");
+    await waitFor("card shows cancelled", `const c = document.querySelector('[data-plan="${plan.id}"]'); return !!c && /cancel/i.test(c.innerText)`, 10_000);
+    await shot("27-chief-cancelled");
+  } finally {
+    for (const slug of [a, b]) await invoke("delete_teammate", { slug });
+    await js(`location.reload()`);
+    await sleep(1500);
+  }
 });
 
 await step("resume-after-restart", async () => {
