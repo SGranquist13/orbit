@@ -30,8 +30,9 @@ export function Teammates() {
   const selected = useApp((s) => s.selectedTeammate);
   const [query, setQuery] = useState("");
 
-  // Starters are offered in the New teammate dialog; one only shows here once you've created it from there.
-  const teammates = useMemo(() => all.filter((t) => !t.bundled || t.overridden || t.slug === selected), [all, selected]);
+  // Starters are offered in the New teammate dialog; one only shows here once you've created it from there
+  // or talked to it (e.g. Chief from the palette), so its thread stays reachable.
+  const teammates = useMemo(() => all.filter((t) => !t.bundled || t.overridden || !!t.lastMessage || t.slug === selected), [all, selected]);
 
   // Land on the remembered teammate (or the first) when the view opens without a valid selection.
   useEffect(() => {

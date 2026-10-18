@@ -166,7 +166,7 @@ await step("slash-autocomplete-and-skill", async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, '');
     t.dispatchEvent(new Event('input', { bubbles: true }));`);
   const before = await js(turnEnds);
-  await js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'REBASE').click()`);
+  await ui.clickChip("rebase");
   await waitFor("skill chip in transcript", `return [...document.querySelectorAll('[data-user-message]')].some(e => e.innerText.includes('/shipkit:rebase'))`, 10_000);
   await waitFor("skill turn completed", `${turnEnds} > ${before}`, 180_000);
   await shot("05-skill");
@@ -212,7 +212,7 @@ await step("palette-and-theme", async () => {
 });
 
 await step("packs-dialog", async () => {
-  await js(`[...document.querySelectorAll('button')].find(b => b.title === 'Skill packs & pins')?.click()`);
+  await js(`[...document.querySelectorAll('button')].find(b => b.title === 'Add or manage skill shortcuts')?.click()`);
   await waitFor("packs dialog", `return document.body.innerText.includes('Skill packs') && document.body.innerText.includes('shipkit')`, 5000);
   await shot("09-packs");
   await key("Escape");
@@ -410,6 +410,9 @@ await step("routines", async () => {
     return !live.some((w) => !known.has(w.id) && w.routineId === routine.id);
   }, 30_000, 1000);
   await key("e", { ctrl: true, shift: true });
+  // Diagnostic for a full-suite-only failure (2026-10-18): record focus + header if the view didn't open.
+  const diag = await js(`const a = document.activeElement; return (a?.tagName ?? '') + '#' + (a?.getAttribute('aria-label') ?? a?.className ?? '').slice(0, 60) + ' | h1=' + [...document.querySelectorAll('h1')].map(h => h.innerText).join(',')`);
+  console.log(`      routines key diag: ${diag}`);
   await waitFor("routines view lists the routine", `return document.body.innerText.includes('Routines') && document.body.innerText.includes('Reply with exactly one word')`, 10_000);
   await shot("11-routines");
   await invoke("delete_routine", { id: routine.id });
