@@ -169,7 +169,8 @@ async fn claude_call(home: &std::path::Path, model: &str, system: &str, prompt: 
     args.push(prompt.to_string());
     let mut cmd = agent::process::command("claude", &args, home)?;
     cmd.stdin(std::process::Stdio::null());
-    let out = tokio::time::timeout(Duration::from_secs(45), cmd.output())
+    let child = agent::process::spawn(&mut cmd)?;
+    let out = tokio::time::timeout(Duration::from_secs(45), child.wait_with_output())
         .await
         .map_err(|_| anyhow!("claude timed out"))??;
     parse_claude(&out.stdout)

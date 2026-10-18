@@ -557,7 +557,8 @@ async fn run_find(ws: &Workspace, base: String, kind: Scope, model: String, max:
     .map(|s| s.to_string())
     .collect();
     let mut cmd = crate::agent::process::command("claude", &args, &wt).map_err(err)?;
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(err)?;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = crate::agent::process::spawn(&mut cmd).map_err(err)?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(prompt.as_bytes()).await.map_err(err)?;
     }

@@ -181,7 +181,7 @@ struct Ran {
 
 /// Runs `cmd` through the platform shell, killing its process tree after `timeout`.
 fn run_shell(worktree: &Path, cmd: &str, timeout: Duration) -> Ran {
-    let mut child = match shell(worktree, cmd).spawn() {
+    let mut child = match crate::agent::process::spawn_std(&mut shell(worktree, cmd)) {
         Ok(c) => c,
         Err(e) => return Ran { ok: false, output: format!("could not start `{cmd}`: {e}"), timed_out: false },
     };

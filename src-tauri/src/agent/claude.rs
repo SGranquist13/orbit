@@ -247,7 +247,7 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
     for (k, v) in local_env(&cfg) {
         cmd.env(k, v);
     }
-    let mut child = cmd.spawn()?;
+    let mut child = process::spawn(&mut cmd)?;
     let mut stdin = child.stdin.take().expect("piped stdin");
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");

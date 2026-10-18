@@ -16,7 +16,8 @@ pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let out = match cmd.output() {
+    cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let out = match crate::agent::process::spawn_std(&mut cmd).and_then(|child| child.wait_with_output()) {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(anyhow!(not_installed(program))),
         Err(e) => return Err(anyhow::Error::new(e).context(format!("{program} {}", args.join(" ")))),

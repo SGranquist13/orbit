@@ -225,7 +225,7 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
             cmd.env("CODEX_OSS_BASE_URL", format!("{}/v1", url.trim_end_matches('/')));
         }
     }
-    let mut child = cmd.spawn()?;
+    let mut child = process::spawn(&mut cmd)?;
     let stdin = child.stdin.take().expect("piped stdin");
     let mut stdout: Lines<BufReader<ChildStdout>> = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
     let stderr = child.stderr.take().expect("piped stderr");

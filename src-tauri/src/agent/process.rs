@@ -136,7 +136,7 @@ fn probe_version(path: &Path) -> Option<String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn_std(&mut cmd).ok()?;
     fn drain(r: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
         std::thread::spawn(move || {
             let mut buf = vec![];
@@ -246,6 +246,20 @@ pub fn command(bin: &str, args: &[String], cwd: &Path) -> anyhow::Result<Command
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     Ok(cmd)
+}
+
+/// Spawns a child and ties its process tree to Orbit's lifetime on Windows.
+pub fn spawn(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    let child = cmd.spawn()?;
+    super::job::track(&child);
+    Ok(child)
+}
+
+/// Synchronous counterpart used by git/gh, version probes and check commands.
+pub fn spawn_std(cmd: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    let child = cmd.spawn()?;
+    super::job::track_std(&child);
+    Ok(child)
 }
 
 /// When the IDE itself is launched from inside a Claude Code session, that host's

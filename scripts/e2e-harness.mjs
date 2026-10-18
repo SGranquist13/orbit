@@ -33,8 +33,8 @@ export function assertOutsideGit(dir) {
 }
 
 /**
- * Kills leftovers of an earlier run on the same scratch dir (a crashed run leaves the app and its WebView2
- * processes holding files there, so clearing the dir fails with EPERM). WebView2 processes are found by
+ * Kills leftovers of an earlier run on the same scratch dir (a crashed run leaves the app, WebView2 and
+ * agent processes holding files there, so clearing the dir fails with EPERM). WebView2 processes are found by
  * their `--user-data-dir` (which lives in the scratch dir); the orbit.exe that owns them is their parent.
  */
 export function killLeftovers(scratch) {
@@ -44,6 +44,7 @@ export function killLeftovers(scratch) {
     $procs = Get-CimInstance Win32_Process
     $web = @($procs | Where-Object { $_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -and $_.CommandLine.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
     $ids = @($web | ForEach-Object { $_.ProcessId })
+    $ids += @($procs | Where-Object { $_.Name -in @('orbit.exe', 'claude.exe', 'codex.exe', 'node.exe') -and $_.CommandLine -and $_.CommandLine.IndexOf($s, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { $_.ProcessId })
     foreach ($w in $web) { $p = $procs | Where-Object { $_.ProcessId -eq $w.ParentProcessId -and $_.Name -eq 'orbit.exe' }; if ($p) { $ids += $p.ProcessId } }
     $ids | Sort-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 800`;

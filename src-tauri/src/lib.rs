@@ -1297,6 +1297,7 @@ fn startup_dialog(app: &tauri::App, kind: tauri_plugin_dialog::MessageDialogKind
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    agent::job::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
