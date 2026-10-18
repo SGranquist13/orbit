@@ -1,16 +1,17 @@
 # Orbit 0.1.0 release audit
 
 Run 2026-10-17 → 2026-10-18. Target: public, open-source **v0.1.0** on GitHub (Windows 10/11).
-Everything is on local `main`. **Nothing has been pushed.**
+Pushed to the private repo `SGranquist13/orbit`; nothing is public yet.
 
-## Verdict (2026-10-18, afternoon)
+## Verdict (2026-10-18, evening)
 
-**Ready to publish once your manual check passes.**
-- Both real-app suites pass on the final tree.
-- All code findings are fixed, plus three more bugs found today by the new tests.
-- Your decisions (logo, identifier, CLAUDE.md) are applied.
+**Everything is done except your manual check.** Then "go public" = make the repo public + publish the draft release.
 
-What's left for you: the 20-minute manual check, a README screenshot, the logo-licence choice (below), and creating the GitHub repo.
+- Code: private repo [SGranquist13/orbit](https://github.com/SGranquist13/orbit), `main` pushed.
+- CI on GitHub: ✅ UI (tsc + build), ✅ Rust (cargo test + clippy on a clean Windows runner, which also proves a fresh-clone build), ✅ licences (cargo-deny).
+- Release: **draft** `v0.1.0` with `Orbit_0.1.0_x64-setup.exe` attached; the tag is created on publish.
+- Public-safety scan: no secrets in any commit, no personal email (all commits use the GitHub noreply address), test fixtures neutralised, `CLAUDE.local.md` and logs gitignored. Older commits still contain a few local paths with the Windows username (no secrets); left as is because rewriting history isn't worth it.
+- Dependabot: one medium advisory in `glib` (a Linux-only GTK dependency of Tauri, not built into the Windows app); merge Dependabot's PR whenever convenient.
 
 ## Results on the final tree
 
@@ -20,23 +21,17 @@ What's left for you: the 20-minute manual check, a README screenshot, the logo-l
 | `cargo test` | ✅ 178 pass, 0 fail, 8 ignored (opt-in live); 168 before the audit |
 | `bun run check:guards` (clippy) | ✅ pass, **0 warnings** (13 before) |
 | `bun run build` | ✅ main chunk **381 kB** (738 kB before) |
-| `bun run e2e` (real app, Claude haiku + Codex) | ✅ **46/46** (23 before today). Steps now fail on React page errors |
-| `bun run e2e:github` (real PRs/CI/issues in the sandbox) | ✅ **10/10** (7 before today); the sandbox is left with no open issues or PRs |
+| `bun run e2e` (real app, Claude haiku + Codex) | ✅ **46/46** (23 before). Steps now fail on React page errors |
+| `bun run e2e:github` (real PRs/CI/issues in the sandbox) | ✅ **10/10** (7 before); the sandbox is left with no open issues or PRs |
 | Forced-kill test | ✅ an agent mid-turn, Orbit killed with `taskkill /F`: 0 agent processes survive |
-| `bun run app:build` | ✅ `src-tauri/target/release/bundle/nsis/Orbit_0.1.0_x64-setup.exe` (unsigned) |
-| CI workflow (incl. new cargo-deny licence job) | ⚠ written, **never run** (no remote yet) |
+| GitHub Actions CI | ✅ ui, rust, licences |
+| `bun run app:build` | ✅ `Orbit_0.1.0_x64-setup.exe` (5.85 MiB, unsigned), attached to the draft release |
 
-## Decisions
-
-Done (2026-10-18):
-- **R3 logo:** you own it. The README credits the artwork to you.
-- **R12 identifier:** changed to `io.github.sgranquist13.orbit`. Your own Orbit's small UI preferences (theme, panel state) reset once; `~/.orbit` is untouched.
-- **R9 CLAUDE.md:** personal and machine notes moved to a gitignored `CLAUDE.local.md`.
-
-Still yours:
-1. **Logo licence:** the repo is MIT, so as things stand the logo is MIT too and anyone may reuse it. Options: keep that, or add a line such as "The Orbit name and logo are not covered by the MIT licence".
-2. **Publish (R4):** create the public repo `SGranquist13/orbit`, push, let CI go green once, then publish a release with the installer attached.
-3. **Screenshot:** add `docs/screenshot.png` (the README references it). `bun run dev` then `?seed=launch` gives a nice-looking fleet.
+## Decisions (all made)
+- **R3 logo:** yours, credited in the README, MIT like the rest of the repo.
+- **R12 identifier:** `io.github.sgranquist13.orbit`.
+- **R9 CLAUDE.md:** personal notes moved to a gitignored `CLAUDE.local.md`; a "Working with Codex" guide was added.
+- **R4 publishing:** private repo + draft release now; public after your manual check.
 
 ## Manual checks (~20 min, real app or installed build)
 
@@ -105,10 +100,9 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 
 | ID | Sev | Item | Why open |
 |---|---|---|---|
-| R4 | major | Publishing | Your step (above) |
 | R10 | major | Mobile bridge depends on the unpublished `ide_mobile` repo | Labelled "not yet released" in the app; publish `ide_mobile` or copy `docs/protocol.md` later |
 | R13b | ✅ done | Content-Security-Policy, **verified by both full suites (46/46, 10/10)** | CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost`. Inline styles support React style props. Remote markdown images are blocked; UI images are bundled. Local-model HTTP runs in Rust (`llm.rs`), not the webview. `devCsp` adds `http://localhost:1420` to script/style/connect sources and `ws://localhost:1420` to connect sources, plus development-only inline scripts for Vite's React refresh preamble. App/e2e verification remains pending. |
-| R16 | minor | Done, pending first CI run: Cargo licence allow list and CI gate; pending first CI verification | `src-tauri/deny.toml` and the `licenses` job run `cargo deny check licenses` with `EmbarkStudios/cargo-deny-action@v2`. Only MIT, Apache-2.0, BSD-3-Clause, ISC, Unicode-3.0, Zlib, MPL-2.0 and CDLA-Permissive-2.0 are allowed, using MIT/Apache alternatives where available; GPL/AGPL/LGPL are not allowed. The list covers locally cached lockfile crate metadata; uncached platform dependencies still need CI verification. `cargo deny` was unavailable locally and was not installed globally. |
+| R16 | ✅ done | Passing in CI: Cargo licence allow list and CI gate; pending first CI verification | `src-tauri/deny.toml` and the `licenses` job run `cargo deny check licenses` with `EmbarkStudios/cargo-deny-action@v2`. Only MIT, Apache-2.0, BSD-3-Clause, ISC, Unicode-3.0, Zlib, MPL-2.0 and CDLA-Permissive-2.0 are allowed, using MIT/Apache alternatives where available; GPL/AGPL/LGPL are not allowed. The list covers locally cached lockfile crate metadata; uncached platform dependencies still need CI verification. `cargo deny` was unavailable locally and was not installed globally. |
 | R22 | polish | Check that "Orbit" doesn't clash with a well-known dev tool before you announce | Quick search |
 | T1 | ✅ done | The harness now fails a step on React page errors and kills leftover app and agent processes | — |
 | T2 | minor | 23 more features are now proven in the real app (Settings, Compact/New session, archive and restore, cleanup, pack install, Codex steer, mid-turn queue, scheduler tick, standing and owned routines, teammate CRUD and memory, New ticket, issue chip, Address comments). Still unverified: OS notifications, native dialogs, phone push, linked PRs across repos | Manual check covers most of these |
