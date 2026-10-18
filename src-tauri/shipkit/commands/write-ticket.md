@@ -23,6 +23,6 @@ $ARGUMENTS
      - [ ] <…>
      ```
 3. Pick labels only from existing ones (`gh label list`): typically bug/enhancement plus an area.
-4. Create it: `gh issue create --title "…" --body-file <tmpfile> [--label …]`.
+4. Use the Write tool to save the formatted body to a new, uniquely named file (e.g. `ticket-<timestamp>.md`) in the scratch folder given in your workspace context (`~/.orbit/tmp`). Then run the single-line command `gh issue create --title "…" --body-file "<absolute path to that file>" [--label …]`. Never pipe, use heredocs, or pass a multi-line `--body`. If you cannot write to the scratch folder (e.g. in a read-only sandbox), fall back to a single-line `gh issue create --title "…" --body "…" [--label …]` with plain text and no newlines in the body.
 
 Finish with one line: the issue URL.

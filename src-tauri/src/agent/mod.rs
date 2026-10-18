@@ -92,7 +92,7 @@ pub struct SessionConfig {
     pub add_dirs: Vec<PathBuf>,
     /// Workspace context appended to the agent's system prompt.
     pub instructions: Option<String>,
-    /// Read-only role: the agent may not edit files (Claude file tools denied, Codex sandboxed).
+    /// Read-only role: Claude may edit only scratch files; Codex uses a read-only sandbox.
     pub readonly: bool,
     /// Claude permission mode for non-readonly sessions (`bypassPermissions` | `acceptEdits`).
     pub permission_mode: String,

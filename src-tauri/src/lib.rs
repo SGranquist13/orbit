@@ -262,7 +262,10 @@ fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], pr
         s.push_str(&format!("\n## Your role: {}\n{}\n", p.name, p.instructions));
     }
     if readonly {
-        s.push_str("You are in a read-only role: do not create, edit, or delete files, and do not commit or push.\n");
+        s.push_str("You are in a read-only role: do not create, edit, or delete files outside the scratch folder, and do not commit or push.\n");
+        if let Ok(scratch) = agent::claude::scratch_dir() {
+            s.push_str(&format!("Scratch folder for temporary files (the only place you can write): {}\n", scratch.display()));
+        }
     }
     if let Some(t) = teammate {
         s.push_str(t);

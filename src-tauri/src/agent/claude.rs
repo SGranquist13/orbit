@@ -8,16 +8,24 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-/// File-editing tools denied in read-only roles (comma-separated, so the variadic flag can't swallow later args).
-const READONLY_DENY: &str = "Edit,Write,MultiEdit,NotebookEdit";
-
 /// Read-only roles run in the default permission mode, where anything not on this list is denied
 /// (there is no one to approve prompts in -p mode). That also blocks Bash writes like `echo > f`,
-/// which a tool denylist alone can't. GitHub issue commands stay allowed for the Ticket writer.
-const READONLY_ALLOW: &str = "Read,Grep,Glob,LS,WebSearch,WebFetch,TodoWrite,Task,\
+/// which a tool denylist alone can't. Edit(path) covers all file-editing tools, including Write;
+/// allow scratch files only under the real home's ~/.orbit/tmp, independent of ORBIT_HOME.
+/// A blanket Edit/Write/MultiEdit deny would override that scoped allow. Keep NotebookEdit denied.
+/// GitHub issue commands stay allowed for the Ticket writer. Lists are comma-separated so the
+/// variadic flags can't swallow later args.
+const READONLY_DENY: &str = "NotebookEdit";
+const READONLY_ALLOW: &str = "Read,Grep,Glob,LS,WebSearch,WebFetch,TodoWrite,Task,Edit(~/.orbit/tmp/**),\
 Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git branch:*),Bash(git blame:*),\
 Bash(ls:*),Bash(rg:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),\
 Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue create:*),Bash(gh label list:*)";
+
+/// Must match the fixed home-relative permission rule, even when ORBIT_HOME is customized.
+pub fn scratch_dir() -> anyhow::Result<std::path::PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not find your home folder for Claude scratch files"))?;
+    Ok(home.join(".orbit").join("tmp"))
+}
 
 pub fn args(cfg: &SessionConfig) -> Vec<String> {
     let mut a: Vec<String> = [
@@ -243,6 +251,11 @@ fn tool_result_text(c: &Value) -> String {
 }
 
 pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceiver<Command>) -> anyhow::Result<()> {
+    if cfg.readonly {
+        let scratch = scratch_dir()?;
+        std::fs::create_dir_all(&scratch)
+            .map_err(|e| anyhow::anyhow!("could not create Claude scratch folder {}: {e}", scratch.display()))?;
+    }
     let mut cmd = process::command("claude", &args(&cfg), &cfg.cwd)?;
     for (k, v) in local_env(&cfg) {
         cmd.env(k, v);
@@ -511,10 +524,10 @@ mod tests {
         assert!(args(&cfg).join(" ").contains("--permission-mode acceptEdits"));
         let cfg = SessionConfig { readonly: true, ..cfg };
         let a = args(&cfg).join(" ");
-        // Read-only: no bypass, an explicit allowlist (so Bash writes are denied), edit tools denied.
+        // Read-only: default mode enforces the allowlist, with only scoped scratch writes.
         assert!(a.contains("--permission-mode default") && !a.contains("bypassPermissions"));
         assert!(args(&cfg).iter().any(|x| x == READONLY_ALLOW), "allowlist must be one argv entry");
-        assert!(a.contains("--disallowedTools Edit,Write,MultiEdit,NotebookEdit --append-system-prompt"));
+        assert!(a.contains("--disallowedTools NotebookEdit --append-system-prompt"));
         assert!(a.contains("--model opus"));
         assert!(a.contains("--resume abc"));
         assert!(a.contains("--plugin-dir /packs/ecc"));
@@ -527,5 +540,16 @@ mod tests {
         let env = local_env(&cfg);
         assert!(env.contains(&("ANTHROPIC_BASE_URL", "http://localhost:11434".to_string())));
         assert!(env.contains(&("ANTHROPIC_AUTH_TOKEN", "ollama".to_string())));
+    }
+
+    #[test]
+    fn readonly_file_permissions_are_scoped_to_scratch() {
+        let allow: Vec<_> = READONLY_ALLOW.split(',').collect();
+        assert!(allow.contains(&"Edit(~/.orbit/tmp/**)"));
+        for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"] {
+            assert!(!allow.contains(&tool), "must not allow unrestricted {tool}");
+        }
+        assert_eq!(READONLY_DENY, "NotebookEdit", "blanket edit denies override the scoped allow");
+        assert!(allow.contains(&"Bash(gh issue create:*)"));
     }
 }
