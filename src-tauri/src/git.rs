@@ -153,8 +153,41 @@ pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
         let _ = run(repo, &["worktree", "prune"]);
         return Ok(());
     }
-    run(repo, &["worktree", "remove", "--force", &path.to_string_lossy()])?;
-    Ok(())
+    for attempt in 0..5 {
+        let error = match run(repo, &["worktree", "remove", "--force", &path.to_string_lossy()]) {
+            Ok(_) => return Ok(()),
+            Err(error) => error,
+        };
+        if !path.exists() {
+            let _ = run(repo, &["worktree", "prune"]);
+            return Ok(());
+        }
+        // Git can remove the metadata and files before Windows releases the agent's cwd handle,
+        // leaving an empty, unregistered folder behind.
+        if error.to_string().contains("not a working tree") || !path.join(".git").exists() {
+            let _ = run(repo, &["worktree", "prune"]);
+            for cleanup_attempt in 0..5 {
+                // Only an already-emptied folder: never recursively delete something git didn't clear.
+                let result = std::fs::remove_dir(path);
+                if !path.exists() {
+                    return Ok(());
+                }
+                if let Err(error) = result {
+                    if cleanup_attempt == 4 {
+                        return Err(error.into());
+                    }
+                }
+                if cleanup_attempt < 4 {
+                    std::thread::sleep(std::time::Duration::from_millis(150 << cleanup_attempt));
+                }
+            }
+        }
+        if attempt == 4 {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150 << attempt));
+    }
+    unreachable!()
 }
 
 /// Up to `limit` paths with uncommitted or untracked changes (empty when clean or unreadable).
@@ -349,6 +382,16 @@ mod tests {
         std::fs::remove_dir_all(&wt).unwrap();
         remove_worktree(&d, &wt).unwrap();
         assert!(!run(&d, &["worktree", "list"]).unwrap().contains("orbit-wt-"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn remove_worktree_removes_unregistered_empty_folder() {
+        let d = tmp_repo("rm-unregistered");
+        let wt = d.join("empty");
+        std::fs::create_dir(&wt).unwrap();
+        remove_worktree(&d, &wt).unwrap();
+        assert!(!wt.exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 
