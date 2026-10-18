@@ -1,7 +1,8 @@
 @echo off
-rem Runs cargo in src-tauri with a complete MSVC x64 toolchain (VS 2026 here lacks x64 libs).
+rem Runs cargo in src-tauri with a complete MSVC x64 toolchain.
 rem   scripts\cargo.cmd test      scripts\cargo.cmd build
-if "%VCVARS%"=="" set "VCVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-call "%VCVARS%" >nul 2>&1
+rem Toolchain lookup is in vcvars.cmd: cl.exe already on PATH, then %VCVARS% (path to vcvars64.bat),
+rem then vswhere (VS 2022 preferred), then the default VS 2022 Community path.
+call "%~dp0vcvars.cmd"
 cd /d "%~dp0..\src-tauri"
 cargo %*
