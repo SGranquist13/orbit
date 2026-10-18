@@ -56,6 +56,8 @@ const SHORTCUTS: { group: string; items: [string[], string][] }[] = [
       [["Ctrl", "N"], "New workspace"],
       [["Ctrl", "I"], "Inbox"],
       [["Ctrl", "Shift", "G"], "Issues"],
+      [["Ctrl", "Shift", "E"], "Routines"],
+      [["Ctrl", "Shift", "T"], "Teammates"],
       [["Ctrl", ","], "Settings"],
       [["Ctrl", "1-9"], "Jump to the nth workspace"],
       [["Ctrl", "B"], "Toggle sidebar"],

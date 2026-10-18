@@ -188,7 +188,7 @@ export function NewWorkspace() {
               <optgroup label="Local (Ollama) · Experimental">
                 {localModels.map((m) => (
                   <option key={m} value={`local:${m}`}>
-                    Local: {m}
+                    Local: {m} (experimental)
                   </option>
                 ))}
               </optgroup>

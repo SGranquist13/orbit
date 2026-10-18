@@ -618,9 +618,11 @@ export interface TeammateInput {
   instructions: string;
 }
 
+// Commands without a wrapper here (get_setting, set_setting, get_teammate, stop_session, workspace_summary,
+// workspace_usage) are still registered in Rust: the e2e scripts call workspace_summary via raw invoke and the
+// mobile bridge calls the others directly.
 export const api = {
   listTeammates: () => invoke<TeammateView[]>("list_teammates"),
-  getTeammate: (slug: string) => invoke<TeammateView>("get_teammate", { slug }),
   saveTeammate: (input: TeammateInput) => invoke<TeammateView>("save_teammate", { input }),
   /** Deletes a custom teammate, or resets an overridden starter one to its default. */
   deleteTeammate: (slug: string) => invoke<void>("delete_teammate", { slug }),
@@ -669,20 +671,16 @@ export const api = {
   sendMessage: (id: string, text: string) => invoke<void>("send_message", { id, text }),
   interrupt: (id: string) => invoke<void>("interrupt", { id }),
   renameWorkspace: (id: string, name: string) => invoke<void>("rename_workspace", { id, name }),
-  stopSession: (id: string) => invoke<void>("stop_session", { id }),
   /** Summarise the conversation to free context (`/compact`). */
   compactSession: (id: string) => invoke<void>("compact_session", { id }),
   /** Fresh agent session in the same worktree; the old context is dropped. */
   newSession: (id: string) => invoke<void>("new_session", { id }),
-  workspaceUsage: (id: string) => invoke<WorkspaceUsage>("workspace_usage", { id }),
   allWorkspaceUsage: () => invoke<WorkspaceUsage[]>("all_workspace_usage"),
   usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
   archiveWorkspace: (id: string, removeWorktree: boolean, force = false) =>
     invoke<void>("archive_workspace", { id, removeWorktree, force }),
-  getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
-  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
   runSkill: (id: string, skillId: string, args: string) => invoke<void>("run_skill", { id, skillId, args }),
   getPins: () => invoke<string[]>("get_pins"),
   setPins: (pins: string[]) => invoke<void>("set_pins", { pins }),
@@ -722,7 +720,6 @@ export const api = {
   setRelatedDefault: (repoId: string, path: string, enabled: boolean) =>
     invoke<void>("set_related_default", { repoId, path, enabled }),
   workspaceSummaries: () => invoke<Summary[]>("workspace_summaries"),
-  workspaceSummary: (id: string) => invoke<Summary>("workspace_summary", { id }),
   markSeen: (id: string) => invoke<number>("mark_seen", { id }),
   dismissWorkspace: (id: string) => invoke<number>("dismiss_workspace", { id }),
   /** Hide a workspace from the inbox until `until` (ms epoch); 0 clears the snooze. */

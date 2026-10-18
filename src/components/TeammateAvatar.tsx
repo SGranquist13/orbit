@@ -3,6 +3,7 @@ import { Bug, Check, Code, FileText, GitBranch, Lightbulb, MessageSquare, Play, 
 import { useId } from "react";
 import { portraitUrl, parseAvatar, type AvatarBadge, type AvatarShape, type AvatarSpec } from "../lib/avatar";
 import { cn } from "../lib/cn";
+import { useApp } from "../stores/app";
 
 interface Face {
   /** Body drawn with the given paint (a gradient url); `behind` is drawn first (planet ring). */
@@ -280,5 +281,17 @@ export function TeammateAvatar({
         </g>
       )}
     </svg>
+  );
+}
+
+/** "<avatar> Teammate name" on workspaces a teammate created. */
+export function TeammateLabel({ slug, className }: { slug: string; className?: string }) {
+  const t = useApp((s) => s.teammates.find((x) => x.slug === slug));
+  if (!t) return null;
+  return (
+    <span className={cn("flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-mute", className)} title={`Created by ${t.name}`}>
+      <TeammateAvatar avatar={t.avatar} name={t.name} size={16} />
+      {t.name}
+    </span>
   );
 }

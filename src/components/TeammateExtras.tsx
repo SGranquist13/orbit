@@ -5,7 +5,7 @@ import { useState } from "react";
 import { api, type PartState, type PlanView, type Schedule, type Teammate, type TeammateTask, type TeammateView } from "../lib/ipc";
 import { defaultSchedule, describeShort } from "../lib/routines";
 import { useApp } from "../stores/app";
-import { SchedulePreview, WhenControl } from "./Routines";
+import { SchedulePreview, WhenControl } from "./ScheduleControls";
 import { TeammateAvatar } from "./TeammateAvatar";
 import { Button, cn } from "./ui";
 

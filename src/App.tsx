@@ -1,21 +1,30 @@
 import { FolderPlus, Plus, X } from "lucide-react";
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { Chat } from "./components/Chat";
-import { Inbox } from "./components/Inbox";
-import { Issues, NewTicket } from "./components/Issues";
 import { NewWorkspace } from "./components/NewWorkspace";
-import { Packs } from "./components/Packs";
-import { Routines } from "./components/Routines";
 import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
-import { SimplifyPanel } from "./components/SimplifyPanel";
-import { Settings } from "./components/Settings";
-import { TeammateEditor, Teammates } from "./components/Teammates";
 import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
 import { useTheme } from "./lib/theme";
 import { useApp } from "./stores/app";
+
+// Heavy views load on first use so the main chunk stays small.
+const Inbox = lazy(() => import("./components/Inbox").then((m) => ({ default: m.Inbox })));
+const Issues = lazy(() => import("./components/Issues").then((m) => ({ default: m.Issues })));
+const NewTicket = lazy(() => import("./components/Issues").then((m) => ({ default: m.NewTicket })));
+const Packs = lazy(() => import("./components/Packs").then((m) => ({ default: m.Packs })));
+const Settings = lazy(() => import("./components/Settings").then((m) => ({ default: m.Settings })));
+const Routines = lazy(() => import("./components/Routines").then((m) => ({ default: m.Routines })));
+const Teammates = lazy(() => import("./components/Teammates").then((m) => ({ default: m.Teammates })));
+const TeammateEditor = lazy(() => import("./components/Teammates").then((m) => ({ default: m.TeammateEditor })));
+const SimplifyPanel = lazy(() => import("./components/SimplifyPanel").then((m) => ({ default: m.SimplifyPanel })));
+
+/** Quiet placeholder while a lazy view loads. */
+function Lazy({ children, fallback }: { children: React.ReactNode; fallback?: React.ReactNode }) {
+  return <Suspense fallback={fallback === undefined ? <main className="flex-1 bg-bg" /> : fallback}>{children}</Suspense>;
+}
 
 export default function App() {
   const ws = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId));
@@ -38,24 +47,30 @@ export default function App() {
       if (!(e.ctrlKey || e.metaKey)) return;
       const s = useApp.getState();
       const key = e.key.toLowerCase();
-      if (key === "l" && e.shiftKey) {
-        e.preventDefault();
-        useTheme.getState().toggle();
-      } else if (key === "k") {
+      if (e.altKey) return;
+      if (e.shiftKey) {
+        // Shifted bindings are matched explicitly; anything else (notably Ctrl+Shift+I, which
+        // WebView2 reserves for DevTools in dev builds) does nothing here.
+        if (key === "l") {
+          e.preventDefault();
+          useTheme.getState().toggle();
+        } else if (key === "g") {
+          e.preventDefault();
+          s.setView(s.view === "issues" ? "workspace" : "issues");
+        } else if (key === "e") {
+          // Routines. Not Ctrl+Shift+R (reload) or Ctrl+Shift+J (DevTools console) in WebView2.
+          e.preventDefault();
+          s.setView(s.view === "routines" ? "workspace" : "routines");
+        } else if (key === "t") {
+          // Teammates view. "Ask a teammate…" stays in the palette.
+          e.preventDefault();
+          s.setView(s.view === "teammate" ? "workspace" : "teammate");
+        }
+        return;
+      }
+      if (key === "k") {
         e.preventDefault();
         s.setPaletteOpen(!s.paletteOpen);
-      } else if (key === "g" && e.shiftKey) {
-        // Not Ctrl+Shift+I: WebView2 reserves it for DevTools in dev builds.
-        e.preventDefault();
-        s.setView(s.view === "issues" ? "workspace" : "issues");
-      } else if (key === "e" && e.shiftKey) {
-        // Routines. Not Ctrl+Shift+R (reload) or Ctrl+Shift+J (DevTools console) in WebView2.
-        e.preventDefault();
-        s.setView(s.view === "routines" ? "workspace" : "routines");
-      } else if (key === "t" && e.shiftKey) {
-        // Teammates view. "Ask a teammate…" stays in the palette.
-        e.preventDefault();
-        s.setView(s.view === "teammate" ? "workspace" : "teammate");
       } else if (e.key === ",") {
         e.preventDefault();
         if (s.view === "settings") s.closeSettings();
@@ -93,28 +108,32 @@ export default function App() {
     <div className="flex h-full">
       {!focusMode && <Sidebar />}
       {view === "settings" ? (
-        <Settings />
+        <Lazy><Settings /></Lazy>
       ) : view === "inbox" ? (
-        <Inbox />
+        <Lazy><Inbox /></Lazy>
       ) : view === "issues" ? (
-        <Issues />
+        <Lazy><Issues /></Lazy>
       ) : view === "routines" ? (
-        <Routines />
+        <Lazy><Routines /></Lazy>
       ) : view === "teammate" ? (
-        <Teammates />
+        <Lazy><Teammates /></Lazy>
       ) : ws ? (
         <>
           <Chat key={ws.id} ws={ws} />
-          {simplifyOpen && !focusMode ? <SimplifyPanel key={`simplify-${ws.id}`} ws={ws} /> : shipOpen && !focusMode && <RightPanel ws={ws} />}
+          {simplifyOpen && !focusMode ? <Lazy fallback={null}><SimplifyPanel key={`simplify-${ws.id}`} ws={ws} /></Lazy> : shipOpen && !focusMode && <RightPanel ws={ws} />}
         </>
       ) : (
         <Empty />
       )}
       {newOpen && <NewWorkspace />}
-      {teammateEditor && <TeammateEditor key={teammateEditor} slug={teammateEditor} />}
+      {teammateEditor && (
+        <Suspense fallback={null}>
+          <TeammateEditor key={teammateEditor} slug={teammateEditor} />
+        </Suspense>
+      )}
       {paletteOpen && <Palette />}
-      {packsOpen && <Packs />}
-      {ticketOpen && <NewTicket />}
+      {packsOpen && <Lazy fallback={null}><Packs /></Lazy>}
+      {ticketOpen && <Lazy fallback={null}><NewTicket /></Lazy>}
       <ErrorToast />
     </div>
   );

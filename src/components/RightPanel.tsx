@@ -108,6 +108,7 @@ export function RightPanel({ ws }: { ws: Workspace }) {
 
 function ShipSection({ ws }: { ws: Workspace }) {
   const pr = useApp((s) => s.prs[ws.id]);
+  const shipping = useApp((s) => !!s.shipping[ws.id]);
   const running = ws.status === "running";
   const run = (skill: string) => void useApp.getState().runSkill(ws.id, skill);
 
@@ -130,17 +131,17 @@ function ShipSection({ ws }: { ws: Workspace }) {
     return (
       <div className="space-y-2.5 px-4 py-4">
         <p className="text-[12px] text-mute">No pull request for this branch yet.</p>
-        <Button variant="primary" className="w-full justify-center" disabled={running} onClick={() => void useApp.getState().ship(ws.id)}>
-          <Rocket className="size-3.5" /> Ship: commit, push, draft PR
+        <Button variant="primary" className="w-full justify-center" disabled={running || shipping} onClick={() => void useApp.getState().ship(ws.id)}>
+          {shipping ? <LoaderCircle className="size-3.5 animate-spin" /> : <Rocket className="size-3.5" />} {shipping ? "Running checks…" : "Ship: commit, push, draft PR"}
         </Button>
       </div>
     );
   }
 
-  return <PrCard ws={ws} pr={pr} running={running} run={run} />;
+  return <PrCard ws={ws} pr={pr} running={running} shipping={shipping} run={run} />;
 }
 
-function PrCard({ ws, pr, running, run }: { ws: Workspace; pr: PrStatus; running: boolean; run: (skill: string) => void }) {
+function PrCard({ ws, pr, running, shipping, run }: { ws: Workspace; pr: PrStatus; running: boolean; shipping: boolean; run: (skill: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const open = pr.state === "OPEN";
   const { passed, failed, pending, failing } = pr.checks;
@@ -209,7 +210,7 @@ function PrCard({ ws, pr, running, run }: { ws: Workspace; pr: PrStatus; running
           {failed > 0 && <Action icon={<X className="size-3.5" />} label="Fix CI" disabled={running} onClick={() => run("shipkit:fix-ci")} />}
           {conflicting && <Action label="Rebase" disabled={running} onClick={() => run("shipkit:rebase")} />}
           <Action label="Address comments" disabled={running} onClick={() => run("shipkit:address-comments")} />
-          <Action icon={<Rocket className="size-3.5" />} label="Push updates" disabled={running} onClick={() => void useApp.getState().ship(ws.id)} />
+          <Action icon={<Rocket className="size-3.5" />} label={shipping ? "Running checks…" : "Push updates"} busy={shipping} disabled={running || shipping} onClick={() => void useApp.getState().ship(ws.id)} />
           {pr.isDraft && (
             <Action
               label="Ready for review"

@@ -7,7 +7,7 @@ import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
 import { api, type Repo, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
-import { TeammateLabel } from "./Teammates";
+import { TeammateLabel } from "./TeammateAvatar";
 import { AgentIcon, DiffStat, Kbd, OrbitMark, StatusDot, ThemeToggle, cn } from "./ui";
 
 export async function pickRepo() {
