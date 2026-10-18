@@ -87,7 +87,7 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 ### Release / open source (R)
 - **R1:** MIT LICENSE; licence, author and repository metadata in package.json and Cargo.toml (`authors` was the scaffold's `"you"`).
 - **R2:** README.md, CHANGELOG.md (0.1.0), `.github/workflows/ci.yml` (tsc + vite build on ubuntu; cargo test + clippy on windows).
-- **R5 / R13:** NSIS-only bundle with publisher, copyright, descriptions and category. CSP still `null` (see Open).
+- **R5 / R13:** NSIS-only bundle with publisher, copyright, descriptions and category. CSP configured (see R13b for verification status).
 - **R6:** `scripts/vcvars.cmd` finds the MSVC toolchain itself: `cl.exe` already on PATH, then `VCVARS`, then vswhere (VS 2022 preferred), then the old path.
 - **R7 / R18 / R20:** README covers the prerequisites, the SmartScreen warning, Security, and that e2e is maintainer-only.
 - **R8:** `e2e:github` uses your sandbox only when `gh` is logged in as you; anyone else must set `ORBIT_GH_SANDBOX`.
@@ -96,14 +96,14 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 - **R19:** `.gitignore` covers `.e2e-run-*.log` and `.claude/*.lock`.
 - **Secrets scan: clean** across the working tree and all history; the commit email is the GitHub noreply address.
 
-## Open (not fixed, by choice)
+## Open / pending verification
 
 | ID | Sev | Item | Why open |
 |---|---|---|---|
 | R3, R4, R9, R12 | blocker/major | Logo rights, publishing, CLAUDE.md, identifier | Your decisions (above) |
 | R10 | major | Mobile bridge depends on the unpublished `ide_mobile` repo | Labelled "not yet released" in the app; publish `ide_mobile` or copy `docs/protocol.md` later |
-| R13b | minor | No Content-Security-Policy (`csp: null`) | Needs a careful policy plus a full e2e run; B7 already closed the main secret-exposure path. Good first post-release hardening |
-| R16 | minor | Cargo licence scan covered only locally cached crates | Add `cargo deny check licenses` to CI |
+| R13b | minor | Fixed: restrictive Content-Security-Policy; pending real-app verification | CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost`. Inline styles support React style props. Remote markdown images are blocked; UI images are bundled. Local-model HTTP runs in Rust (`llm.rs`), not the webview. `devCsp` adds `http://localhost:1420` to script/style/connect sources and `ws://localhost:1420` to connect sources, plus development-only inline scripts for Vite's React refresh preamble. App/e2e verification remains pending. |
+| R16 | minor | Fixed: Cargo licence allow list and CI gate; pending first CI verification | `src-tauri/deny.toml` and the `licenses` job run `cargo deny check licenses` with `EmbarkStudios/cargo-deny-action@v2`. Only MIT, Apache-2.0, BSD-3-Clause, ISC, Unicode-3.0, Zlib, MPL-2.0 and CDLA-Permissive-2.0 are allowed, using MIT/Apache alternatives where available; GPL/AGPL/LGPL are not allowed. The list covers locally cached lockfile crate metadata; uncached platform dependencies still need CI verification. `cargo deny` was unavailable locally and was not installed globally. |
 | R22 | polish | Check that "Orbit" doesn't clash with a well-known dev tool before you announce | Quick search |
 | T1 | minor | e2e logs React errors but doesn't fail on them; E1 slipped through the main suite this way | Make the harness fail on "same key" and similar page errors |
 | T2 | minor | About 45 🟢 features are still unverified in the real app (Settings round-trips, Compact / New session, archive restore, cleanup, pack install, Codex steer, owned routines, scheduler tick, New ticket, Address comments) | Writing those e2e steps was dropped tonight to conserve usage; FEATURES.md lists each |

@@ -1,0 +1,15 @@
+# Run from src-tauri: cargo deny check licenses
+# Only explicitly allowed SPDX licenses pass; GPL/AGPL/LGPL are not allowed.
+# Prefer MIT/Apache-2.0 for dependencies offering multiple license choices.
+# This covers cached Cargo.lock dependencies; CI checks the full platform tree.
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
