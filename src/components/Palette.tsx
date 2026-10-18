@@ -141,7 +141,7 @@ export function Palette() {
                   className={item}
                   value="Undo last turn (drop its save point)"
                   onSelect={run(() => {
-                    void confirmAction("Undo the last turn? Its save-point commit and any edits since are discarded.", "Undo").then(
+                    void confirmAction("Undo the last turn? Its save-point commit and any uncommitted edits since are discarded.", "Undo").then(
                       (ok) => void (ok && useApp.getState().undoLastTurn(selectedId)),
                     );
                   })}

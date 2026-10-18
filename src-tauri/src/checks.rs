@@ -235,7 +235,7 @@ fn run_shell(worktree: &Path, cmd: &str, timeout: Duration) -> Ran {
 
 fn duration_label(d: Duration) -> String {
     let s = d.as_secs();
-    if s >= 60 && s % 60 == 0 { format!("{} min", s / 60) } else { format!("{s} s") }
+    if s >= 60 && s.is_multiple_of(60) { format!("{} min", s / 60) } else { format!("{s} s") }
 }
 
 /// Runs `cmd` in `worktree` (without a console window): installs JS dependencies first when the

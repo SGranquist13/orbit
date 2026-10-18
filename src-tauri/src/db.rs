@@ -494,10 +494,10 @@ impl Db {
     }
 
     pub fn workspace(&self, id: &str) -> anyhow::Result<Workspace> {
-        Ok(self
+        self
             .conn
             .query_row("SELECT * FROM workspaces WHERE id = ?1", [id], workspace_from_row)
-            .with_context(|| format!("workspace {id} not found"))?)
+            .with_context(|| format!("workspace {id} not found"))
     }
 
     pub fn set_status(&self, id: &str, status: &str) -> anyhow::Result<Workspace> {
@@ -695,10 +695,10 @@ impl Db {
     }
 
     pub fn attachment(&self, id: &str) -> anyhow::Result<Attachment> {
-        Ok(self
+        self
             .conn
             .query_row("SELECT * FROM attachments WHERE id = ?1", [id], attachment_from_row)
-            .with_context(|| format!("attachment {id} not found"))?)
+            .with_context(|| format!("attachment {id} not found"))
     }
 
     /// Idempotent per (workspace, path): attaching the same folder twice returns the first row.
@@ -930,10 +930,10 @@ impl Db {
     }
 
     pub fn routine(&self, id: &str) -> anyhow::Result<Routine> {
-        Ok(self
+        self
             .conn
             .query_row(&format!("{ROUTINE_SELECT} WHERE routines.id = ?1"), [id], routine_from_row)
-            .with_context(|| format!("routine {id} not found"))?)
+            .with_context(|| format!("routine {id} not found"))
     }
 
     pub fn set_routine_next(&self, id: &str, next: Option<i64>, enabled: bool) -> anyhow::Result<()> {

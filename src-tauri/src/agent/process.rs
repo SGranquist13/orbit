@@ -197,7 +197,7 @@ pub fn fallback_dirs(bin: &str, home: Option<&Path>) -> Vec<PathBuf> {
             .filter(|e| e.path().join("codex.exe").is_file())
             .map(|e| (e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), e.path()))
             .collect();
-        builds.sort_by(|a, b| b.0.cmp(&a.0));
+        builds.sort_by_key(|b| std::cmp::Reverse(b.0));
         dirs.extend(builds.into_iter().map(|b| b.1));
         dirs.push(home.join(".codex").join(".sandbox-bin"));
         let ext = home.join(".vscode").join("extensions");

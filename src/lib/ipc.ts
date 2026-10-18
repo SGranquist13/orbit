@@ -679,8 +679,8 @@ export const api = {
   usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
-  archiveWorkspace: (id: string, removeWorktree: boolean) =>
-    invoke<void>("archive_workspace", { id, removeWorktree }),
+  archiveWorkspace: (id: string, removeWorktree: boolean, force = false) =>
+    invoke<void>("archive_workspace", { id, removeWorktree, force }),
   getSetting: (key: string) => invoke<string | null>("get_setting", { key }),
   setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
   runSkill: (id: string, skillId: string, args: string) => invoke<void>("run_skill", { id, skillId, args }),

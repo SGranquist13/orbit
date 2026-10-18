@@ -383,7 +383,7 @@ pub async fn sync_repo(app: &AppHandle, state: &AppState, repo_id: &str, priorit
     let (rp, base) = (PathBuf::from(&repo.path), repo.base_branch.clone());
     let _ = tauri::async_runtime::spawn_blocking(move || git::run(&rp, &["fetch", "origin", &base, "--quiet"])).await;
     let mut list: Vec<Workspace> = state.db().workspaces().unwrap_or_default();
-    list.retain(|w| w.repo_id == repo_id && only.map_or(true, |o| o == w.id));
+    list.retain(|w| w.repo_id == repo_id && only.is_none_or(|o| o == w.id));
     list.sort_by_key(|w| priority.iter().position(|p| *p == w.id).unwrap_or(usize::MAX));
     for w in list {
         let (st, id, base, mode) = (state.clone(), w.id.clone(), repo.base_branch.clone(), mode.clone());
@@ -473,7 +473,7 @@ async fn archive_merged(state: &AppState, ws: &Workspace, repo: &crate::db::Repo
     if !safe {
         return false;
     }
-    let taken = state.sessions.lock().unwrap().remove(&ws.id);
+    let taken = state.sessions_lock().remove(&ws.id);
     if let Some(h) = taken {
         h.send(Command::Shutdown);
     }

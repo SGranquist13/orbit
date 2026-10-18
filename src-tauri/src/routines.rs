@@ -819,6 +819,7 @@ fn finish_run_with(app: &AppHandle, state: &AppState, run: RoutineRun, ws_id: &s
 
 /// Asks the summary model (`llm::Task::RoutineSummary`) for the run's summary and whether there was
 /// nothing to do. Any failure leaves the fallback summary in place.
+#[allow(clippy::too_many_arguments)]
 async fn refine_summary(app: &AppHandle, state: &AppState, run_id: &str, ws_id: &str, name: &str, digest: &[String], files: Option<&[String]>, already_quiet: bool) {
     let prompt = summary_prompt(name, digest, files.unwrap_or(&[]));
     let schema = summary_schema();
@@ -827,16 +828,16 @@ async fn refine_summary(app: &AppHandle, state: &AppState, run_id: &str, ws_id: 
     let Some((summary, nothing_to_do)) = parse_summary(&reply) else { return };
     let _ = state.db().set_run_summary(run_id, &summary);
     // Only a probe that saw the worktree can vouch for "no file changes".
-    if !already_quiet && files.is_some_and(|f| is_quiet_by_model(Mode::Fresh, "done", f.len(), nothing_to_do)) {
-        if state.db().set_run_status_if(run_id, "done", "quiet").unwrap_or(false) {
-            archive_quiet(app, state, ws_id).await;
-        }
+    if !already_quiet && files.is_some_and(|f| is_quiet_by_model(Mode::Fresh, "done", f.len(), nothing_to_do))
+        && state.db().set_run_status_if(run_id, "done", "quiet").unwrap_or(false)
+    {
+        archive_quiet(app, state, ws_id).await;
     }
     changed(app);
 }
 
 async fn archive_quiet(app: &AppHandle, state: &AppState, ws_id: &str) {
-    if archive_inner(state, ws_id, true).await.is_ok() {
+    if archive_inner(state, ws_id, true, false).await.is_ok() {
         let _ = app.emit("workspace-archived", ws_id);
     }
     changed(app);
