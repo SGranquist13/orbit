@@ -542,6 +542,296 @@ await step("simplify", async () => {
   await invoke("update_settings", { patch: { simplifyModel: "sonnet", simplifyMaxCandidates: 12 } });
 });
 
+// ── Settings, data and sessions ───────────────────────────────
+/** Creates a workspace through the backend without a prompt (no agent turn), for steps that only need a worktree. */
+const mkWs = async (name, extra = {}) =>
+  invoke("create_workspace", { repoId: (await invoke("list_repos"))[0].id, name, agent: "claude", model: "haiku", prompt: null, issueNumber: null, profile: null, ...extra });
+const gitIn = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
+const gitCommit = (cwd, msg) => gitIn(cwd, "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "commit", "-qm", msg);
+const wsStatus = async (id) => (await invoke("list_workspaces")).find((w) => w.id === id)?.status;
+const SETTINGS_OPEN = `return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Settings')`;
+const openSettingsView = async () => {
+  if (!(await js(SETTINGS_OPEN))) {
+    await js(`document.activeElement?.blur()`);
+    await key(",", { ctrl: true });
+  }
+  await waitFor("settings view", SETTINGS_OPEN, 8000);
+};
+const closeSettingsView = async () => {
+  if (await js(SETTINGS_OPEN)) await js(`[...document.querySelectorAll('header button')].find((b) => /^Close/.test(b.innerText.trim()))?.click()`);
+  await waitFor("settings closed", `return ![...document.querySelectorAll('h1')].some((h) => h.innerText === 'Settings')`, 5000);
+};
+/** Runs fn with a settings patch applied, then puts the previous values back. */
+const withSettings = async (patch, fn) => {
+  const before = await invoke("get_settings");
+  await invoke("update_settings", { patch });
+  try {
+    return await fn();
+  } finally {
+    await invoke("update_settings", { patch: Object.fromEntries(Object.keys(patch).map((k) => [k, before[k]])) });
+  }
+};
+const selectWsInSidebar = async (name) => {
+  await js(`${DOM} sidebarRow(${JSON.stringify(name)})?.click()`);
+  await waitFor("workspace selected", `return document.querySelector('header h1')?.innerText === ${JSON.stringify(name)}`, 10_000);
+};
+
+await step("settings-branch-prefix", async () => {
+  // The prefix from Settings > General names the branch of the next workspace (no agent turn needed).
+  await withSettings({ branchPrefix: "e2e-pre/" }, async () => {
+    const ws = await mkWs("prefix check");
+    if (!ws.branch.startsWith("e2e-pre/")) throw new Error(`branch ${ws.branch} does not start with the configured prefix`);
+    if (gitIn(ws.path, "rev-parse", "--abbrev-ref", "HEAD") !== ws.branch) throw new Error("worktree is not on the prefixed branch");
+  });
+  const plain = await mkWs("prefix restored");
+  if (plain.branch.startsWith("e2e-pre/")) throw new Error(`prefix was not restored: ${plain.branch}`);
+});
+
+await step("settings-accept-edits", async () => {
+  // Accept edits allows file edits but denies shell commands. (A bare `echo > file` is auto-approved by the
+  // Claude CLI in this mode as a "file edit", so the denied command is a node one-liner.)
+  await withSettings({ claudePermissionMode: "acceptEdits" }, async () => {
+    const ws = await newWorkspace({
+      agent: "claude",
+      model: "haiku",
+      prompt:
+        "Two things. 1) Use the Bash tool to run exactly: node -e \"require('fs').writeFileSync('DENIED.txt','x')\" . If that tool call is refused, do not try any other way to create that file. 2) Use the Write tool to create ALLOWED.txt containing the word ok. Then reply with one short sentence.",
+    });
+    await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
+    if (fs.existsSync(path.join(ws.path, "DENIED.txt"))) throw new Error("Bash wrote DENIED.txt even though the mode is Accept edits");
+    if (!fs.existsSync(path.join(ws.path, "ALLOWED.txt"))) throw new Error("the Write tool was blocked too: Accept edits should allow file edits");
+    await until("workspace idle", async () => (await wsStatus(ws.id)) !== "running", 20_000, 500);
+  });
+  if ((await invoke("get_settings")).claudePermissionMode !== "bypassPermissions") throw new Error("permission mode not restored");
+});
+
+await step("context-meter-and-compact", async () => {
+  // Created without a prompt: the workspace name is part of the agent's context, so it must not contain the word.
+  const ws = await mkWs("memory test");
+  await waitFor("sidebar row", `${DOM} return !!sidebarRow("memory test")`, 10_000);
+  await selectWsInSidebar("memory test");
+  await composerSend("Remember the secret word PINEAPPLE-7. Do not use tools. Reply with just: noted");
+  await waitFor("first turn completed", `${turnEnds} >= 1`, 120_000);
+  const meter = `return document.querySelector('[data-context-meter]')?.innerText ?? ''`;
+  await waitFor("context meter shown", meter, 15_000);
+  const pct = async () => Number((await js(meter)).match(/(\d+)%/)?.[1] ?? -1);
+  const used = async () => (await invoke("workspace_usage", { id: ws.id })).contextTokens;
+  const before = await used();
+  if (!(await pct()) || !(before > 0)) throw new Error(`context meter reads ${await js(meter)} (contextTokens ${before})`);
+  await shot("17-context-meter");
+
+  // Compact: the popover button sends /compact; the turn ends and the context shrinks or at least gets re-measured.
+  await js(`document.querySelector('[data-context-meter]').click()`);
+  await waitFor("context popover", `return !!document.querySelector('[data-context-popover]')`, 5000);
+  const endsBefore = await js(turnEnds);
+  await js(`document.querySelector('[data-compact]').click()`);
+  await waitFor("/compact in transcript", `return [...document.querySelectorAll('[data-user-message]')].some(e => e.innerText.includes('/compact'))`, 15_000);
+  await waitFor("compact turn ended", `${turnEnds} > ${endsBefore}`, 120_000);
+  await until("workspace idle after compact", async () => (await wsStatus(ws.id)) !== "running", 30_000, 500);
+  const after = await used();
+  console.log(`      context tokens: ${before} -> ${after}`);
+  if (after === before) throw new Error(`compact did not change the context size (${before})`);
+
+  // New session: divider, and the agent no longer knows the word.
+  await js(`document.querySelector('[data-context-meter]')?.click()`);
+  await waitFor("context popover", `return !!document.querySelector('[data-context-popover]')`, 5000);
+  await js(`document.querySelector('[data-new-session]').click()`);
+  await waitFor("session divider", `return document.body.innerText.includes('New session, context cleared')`, 10_000);
+  const ends = await js(turnEnds); // the divider adds a rule of its own, so count after it appears
+  await composerSend("What was the secret word I told you earlier? Do not use tools. If you do not know, reply with exactly: UNKNOWN");
+  await waitFor("post-reset turn ended", `${turnEnds} > ${ends}`, 120_000);
+  const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+  if (/pineapple/i.test(msg)) throw new Error(`the agent still remembers the word after New session: ${msg.slice(0, 120)}`);
+});
+
+await step("archive-and-restore", async () => {
+  const ws = await mkWs("archive me");
+  await waitFor("sidebar row", `${DOM} return !!sidebarRow("archive me")`, 10_000);
+  await selectWsInSidebar("archive me");
+  await h.autoConfirm(true);
+  // UI path: palette > Archive workspace (confirm is auto-accepted).
+  await key("k", { ctrl: true });
+  await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+  await type("Archive workspace");
+  await waitFor("archive item", `return [...document.querySelectorAll('[cmdk-item]')].some(i => i.innerText.includes('Archive workspace'))`, 5000);
+  await key("Enter");
+  await until("workspace archived", async () => !(await invoke("list_workspaces")).some((w) => w.id === ws.id), 15_000, 500);
+  await waitFor("gone from sidebar", `${DOM} return !sidebarRow("archive me")`, 5000);
+  if (fs.existsSync(ws.path)) throw new Error("worktree still on disk after archive");
+  if (!gitIn(repo, "branch", "--list", ws.branch)) throw new Error("branch was not kept");
+
+  // Settings > Data lists it and Restore brings it back with a worktree.
+  await openSettingsView();
+  await waitFor("listed under Archived workspaces", `return document.body.innerText.includes('archive me') && /archived workspaces/i.test(document.body.innerText)`, 10_000);
+  await js(`document.querySelector('[data-section="data"]')?.scrollIntoView()`);
+  await shot("18-archived-list");
+  await js(`const row = [...document.querySelectorAll('div')].filter((d) => d.className.includes('border-b') && d.innerText.includes('archive me') && d.querySelector('button')).at(-1); [...row.querySelectorAll('button')].find((b) => /Restore/.test(b.innerText)).click()`);
+  await until("restored", async () => (await invoke("list_workspaces")).some((w) => w.id === ws.id), 20_000, 500);
+  if (!fs.existsSync(ws.path)) throw new Error("worktree not recreated on restore");
+  if (gitIn(ws.path, "rev-parse", "--abbrev-ref", "HEAD") !== ws.branch) throw new Error("restored worktree is on the wrong branch");
+  await closeSettingsView();
+
+  // A dirty worktree is refused without force (and nothing is touched), and archived with it.
+  fs.writeFileSync(path.join(ws.path, "UNSAVED.txt"), "precious\n");
+  const refused = await invoke("archive_workspace", { id: ws.id, removeWorktree: true }).then(() => null, (e) => String(e));
+  if (!refused?.includes("Uncommitted changes:") || !refused.includes("UNSAVED.txt")) throw new Error(`dirty archive was not refused properly: ${refused}`);
+  if (!fs.existsSync(path.join(ws.path, "UNSAVED.txt")) || !(await invoke("list_workspaces")).some((w) => w.id === ws.id)) throw new Error("a refused archive still changed something");
+  await invoke("archive_workspace", { id: ws.id, removeWorktree: true, force: true });
+  if ((await invoke("list_workspaces")).some((w) => w.id === ws.id) || fs.existsSync(ws.path)) throw new Error("forced archive did not archive");
+  await h.autoConfirm(false);
+});
+
+await step("cleanup-merged-dry-run", async () => {
+  const ws = await mkWs("merged work");
+  fs.writeFileSync(path.join(ws.path, "MERGED.md"), "merged\n");
+  gitIn(ws.path, "add", "-A");
+  gitCommit(ws.path, "feat: merged work");
+  const unmerged = await mkWs("unmerged work");
+  fs.writeFileSync(path.join(unmerged.path, "UNMERGED.md"), "not yet\n");
+  gitIn(unmerged.path, "add", "-A");
+  gitCommit(unmerged.path, "feat: unmerged work");
+  gitIn(repo, "-c", "user.name=e2e", "-c", "user.email=e2e@example.com", "merge", "--no-ff", "-qm", "merge merged work", ws.branch);
+
+  const dry = await invoke("cleanup_merged_worktrees", { dryRun: true });
+  const mine = dry.find((c) => c.workspaceId === ws.id);
+  if (!mine || mine.branch !== ws.branch || !/Merged into main/.test(mine.reason)) throw new Error(`dry run does not list the merged workspace: ${JSON.stringify(dry)}`);
+  if (dry.some((c) => c.workspaceId === unmerged.id)) throw new Error("dry run lists an unmerged workspace");
+  if (!fs.existsSync(ws.path)) throw new Error("dry run removed the worktree");
+
+  // UI path: Settings > Data > Scan lists it, Clean up (auto-confirmed) archives and removes the worktree.
+  await h.autoConfirm(true);
+  await openSettingsView();
+  await js(`[...document.querySelectorAll('button')].find((b) => b.innerText.trim() === 'Scan').click()`);
+  await waitFor("scan result lists the workspace", `return document.body.innerText.includes('merged work') && [...document.querySelectorAll('button')].some((b) => /^Clean up \\d/.test(b.innerText.trim()))`, 20_000);
+  await shot("19-cleanup-scan");
+  await js(`[...document.querySelectorAll('button')].find((b) => /^Clean up \\d/.test(b.innerText.trim())).click()`);
+  await until("merged workspace archived", async () => !(await invoke("list_workspaces")).some((w) => w.id === ws.id), 30_000, 500);
+  if (fs.existsSync(ws.path)) throw new Error("cleanup left the worktree on disk");
+  if (!gitIn(repo, "branch", "--list", ws.branch)) throw new Error("cleanup deleted the branch");
+  if (!(await invoke("list_workspaces")).some((w) => w.id === unmerged.id) || !fs.existsSync(unmerged.path)) throw new Error("cleanup touched the unmerged workspace");
+  await closeSettingsView();
+  await h.autoConfirm(false);
+});
+
+await step("environment-diagnostics", async () => {
+  const info = await invoke("environment_info");
+  if (!info.claude.ok || !info.claude.path || !info.claude.version) throw new Error(`claude not verified: ${JSON.stringify(info.claude)}`);
+  if (!info.codex.path || !info.codex.version) throw new Error(`codex not verified: ${JSON.stringify(info.codex)}`);
+  await openSettingsView();
+  await js(`document.querySelector('[data-section="agents"]')?.scrollIntoView()`);
+  const rows = `const rows = [...document.querySelectorAll('div.border-b')].filter((d) => /^(Claude Code|Codex)\\n/.test(d.innerText.trim()));`;
+  await waitFor("diagnostic rows with paths", `${rows} return rows.length === 2 && rows.every((r) => /\\.(exe|cmd)|[\\\\/]/.test(r.innerText))`, 30_000).catch(async (e) => {
+    throw new Error(`${e.message}; rows: ${await js(`${rows} return JSON.stringify(rows.map((r) => r.innerText))`)}`);
+  });
+  const txt = await js(`${rows} return rows.map((r) => r.innerText.replace(/\\s+/g, ' ')).join(' | ')`);
+  if (!/Claude Code v\d/.test(txt) || !/Codex v\d/.test(txt)) throw new Error(`diagnostics rows read: ${txt}`);
+  if (txt.includes("Not found") || txt.includes("Not verified")) throw new Error(`diagnostics rows read: ${txt}`);
+  await shot("20-diagnostics");
+  await closeSettingsView();
+});
+
+await step("usage-report", async () => {
+  let report = await invoke("usage_report", { sinceMs: null });
+  if (!report.totals.turns) {
+    await newWorkspace({ agent: "claude", model: "haiku", prompt: "Reply with the single word ok. Do not use tools." });
+    await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
+    report = await invoke("usage_report", { sinceMs: null });
+  }
+  if (!report.totals.turns || !(report.totals.outputTokens > 0)) throw new Error(`usage report is empty: ${JSON.stringify(report.totals)}`);
+  await openSettingsView();
+  await js(`document.querySelector('[data-section="usage"]')?.scrollIntoView()`);
+  await waitFor("usage section", `return !!document.querySelector('[data-usage-section]')`, 10_000);
+  await js(`[...document.querySelectorAll('[data-usage-section] [role=tab]')].find((t) => t.innerText.trim() === 'All').click()`);
+  const stat = (label) => js(`return document.querySelector('[data-usage-section]').innerText.match(new RegExp(${JSON.stringify(label)} + '\\\\s+(\\\\S+)', 'i'))?.[1] ?? ''`);
+  await until("non-zero totals shown", async () => {
+    const [tokens, turns] = [await stat("Tokens"), await stat("Turns")];
+    return tokens && tokens !== "0" && Number(turns) > 0;
+  }, 10_000, 500);
+  await shot("21-usage");
+  await closeSettingsView();
+});
+
+await step("ui-shortcuts", async () => {
+  while ((await invoke("list_workspaces")).length < 2) await mkWs(`shortcut ws ${Date.now() % 1000}`);
+  await waitFor("sidebar rows", `return document.querySelectorAll('aside li button').length >= 2`, 10_000);
+  const rowNames = await js(`return [...document.querySelectorAll('aside li button')].map((b) => b.innerText)`);
+  const sw = `(() => { const a = [...document.querySelectorAll('aside')].find((a) => a.getBoundingClientRect().left < 5); return a ? Math.round(a.getBoundingClientRect().width) : 0; })()`;
+  const sidebarW = `return ${sw}`;
+  const h1 = `return document.querySelector('header h1')?.innerText ?? ''`;
+  await js(`document.activeElement?.blur()`);
+  if (await js(`return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`)) await key("i", { ctrl: true });
+
+  // Ctrl+1 selects the first workspace in sidebar order (go to the last one first).
+  await js(`[...document.querySelectorAll('aside li button')].at(-1).click()`);
+  await sleep(300);
+  const lastName = await js(h1);
+  await key("1", { ctrl: true });
+  await waitFor("first workspace selected", `return ${JSON.stringify(rowNames[0])}.includes(document.querySelector('header h1')?.innerText ?? '@@')`, 5000);
+  if (rowNames.length > 1 && rowNames[0].includes(lastName)) throw new Error("test needs two distinct workspaces");
+
+  // Palette offers Archive workspace while one is selected.
+  await key("k", { ctrl: true });
+  await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
+  await type("Archive workspace");
+  await waitFor("Archive workspace item", `return [...document.querySelectorAll('[cmdk-item]')].some(i => i.innerText.includes('Archive workspace'))`, 5000);
+  await key("Escape");
+  await waitFor("palette closed", `return !document.querySelector('[cmdk-input]')`, 5000);
+
+  // Focus mode (Ctrl+\) hides the sidebar; again restores it.
+  const full = await js(sidebarW);
+  if (full < 150) throw new Error(`expected an expanded sidebar, width ${full}`);
+  await key("\\", { ctrl: true });
+  await waitFor("sidebar hidden in focus mode", `return ${sw} === 0`, 5000).catch(async () => {
+    throw new Error(`focus mode left a sidebar of width ${await js(sidebarW)}`);
+  });
+  await key("\\", { ctrl: true });
+  await waitFor("sidebar back", `return ${sw} >= 150`, 5000);
+
+  // Ctrl+B collapses the sidebar to a rail and back.
+  await key("b", { ctrl: true });
+  await waitFor("sidebar rail", `return ${sw} > 0 && ${sw} < 80`, 5000).catch(async () => {
+    throw new Error(`Ctrl+B left sidebar width ${await js(sidebarW)}`);
+  });
+  await key("b", { ctrl: true });
+  await waitFor("sidebar expanded again", `return ${sw} >= 150`, 5000);
+
+  // Ctrl+Shift+I is WebView2's DevTools shortcut, so it must not open the Inbox.
+  await key("i", { ctrl: true, shift: true });
+  await sleep(500);
+  if (await js(`return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`)) throw new Error("Ctrl+Shift+I opened the Inbox");
+  await key("i", { ctrl: true });
+  await waitFor("Ctrl+I still opens the Inbox", `return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`, 5000);
+  await key("i", { ctrl: true });
+});
+
+/** Waits until the workspace's status is idle (a turn or queued message may still be running). */
+const settled = (id, ms = 180_000) => until("workspace not running", async () => (await wsStatus(id)) !== "running", ms, 1000);
+
+await step("claude-midturn-queue", async () => {
+  // The first message keeps the agent busy for ~8 s inside a tool call; the second arrives while it runs.
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: `Use the Bash tool to run exactly: node -e "setTimeout(()=>{},8000)" and then reply with the single word: first` });
+  await until("turn running", async () => (await wsStatus(ws.id)) === "running", 30_000, 200);
+  await composerSend("Then reply with exactly the word: finished");
+  if ((await wsStatus(ws.id)) !== "running") throw new Error("the first turn ended before the second message was sent; not a mid-turn test");
+  await waitFor("both user messages shown", `${DOM} const u = userBlocks(); return u.some(t => t.includes('setTimeout')) && u.some(t => t.includes('exactly the word: finished'))`, 15_000);
+  await waitFor("the second message is answered", `return /finished/i.test([...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? '')`, 180_000);
+  await settled(ws.id, 60_000);
+  const blocks = await js(`return [...document.querySelectorAll('[data-user-message], .prose-chat')].map((e) => e.hasAttribute('data-user-message') ? 'U' : 'A').join('')`);
+  if (!/U.*U.*A/.test(blocks)) throw new Error(`transcript order unexpected: ${blocks}`);
+});
+
+await step("codex-steer", async () => {
+  const ws = await newWorkspace({ agent: "codex", prompt: "Count from 1 to 40, one number per line. Do not run any commands." });
+  await waitFor("codex turn running", `return !!document.querySelector('.streaming-caret') || !!document.querySelector('.dither-march') || !!document.querySelector('header .dither-sweep')`, 60_000);
+  await composerSend("Also end your reply with the word: steered");
+  if ((await wsStatus(ws.id)) !== "running") throw new Error("the turn ended before the steer was sent; not a mid-turn test");
+  await waitFor("steer message shown", `${DOM} return userBlocks().some(t => t.includes('end your reply with the word: steered'))`, 15_000);
+  await settled(ws.id, 180_000);
+  const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+  if (!msg.trim()) throw new Error("no reply after the steer");
+  console.log(`      (codex reply ends: ${JSON.stringify(msg.trim().slice(-40))})`);
+});
+
 await step("resume-after-restart", async () => {
   await quit();
   await launch();
