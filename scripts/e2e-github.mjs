@@ -109,7 +109,9 @@ await h.step("ready-and-merge", async () => {
   await h.waitFor("merge enabled", `const b = ${panelButton("Squash & merge")}; return b && !b.disabled`, 60_000);
   await h.js(`(${panelButton("Squash & merge")}).click()`);
   await h.until("PR merged", async () => prOf(shipWs.branch).state === "MERGED", 60_000);
-  await h.waitFor("panel shows Merged", `return /Merged/.test((${shipPanel})?.innerText ?? '')`, 30_000);
+  // With "archive after merge" on (the default) the workspace is archived and its panel closes; otherwise the panel says Merged.
+  await h.until("panel shows Merged or workspace archived", async () =>
+    !(await h.invoke("list_workspaces")).some((w) => w.id === shipWs.id) || (await h.js(`return /Merged/.test((${shipPanel})?.innerText ?? '')`)), 30_000, 1000);
   await h.shot("gh-02-merged");
 });
 
