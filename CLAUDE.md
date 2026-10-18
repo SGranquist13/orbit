@@ -35,7 +35,7 @@ Claude orchestrates; Codex (through the Claude Code `codex` plugin) is a second 
   - `gpt-6.1-sol`, effort `medium`: default for fixes and features (`low` for small, fully specified fixes).
   - `gpt-6-luna`: mechanical edits only (renames, text, config).
   - `gpt-6-astra`: only for a genuinely hard bug. It is the default in `~/.codex/config.toml`, so leaving out `--model` silently uses it.
-- **Codex cannot commit** (its sandbox can't write `.git/index.lock`): it leaves changes uncommitted; the orchestrator reviews the diff, commits with a `Co-Authored-By: Codex <noreply@openai.com>` trailer, and runs the e2e.
+- **Codex cannot commit** (its sandbox can't write `.git/index.lock`): it leaves changes uncommitted; the orchestrator reviews the diff, commits it (no co-author trailers: commits carry only the maintainer's name), and runs the e2e.
 - **Don't run Codex and another writer on the same files.** Use an isolated worktree for parallel work, and never junction `node_modules` from a worktree to the main checkout (force-removing that worktree deletes the real `node_modules`; repair with `bun install --force`).
 - Good fits: well-specified bugs with a repro, Rust/TS fixes with unit tests, config/CI. Keep design calls, UI taste and e2e diagnosis with Claude.
 
