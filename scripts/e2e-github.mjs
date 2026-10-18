@@ -1,7 +1,7 @@
 // GitHub end-to-end test of the REAL app: Ship → draft PR → checks → ready → merge, Fix CI from the
 // inbox, write-ticket, and preflight across an attached project. Opt-in: it creates real PRs and
-// issues in a throwaway private sandbox repo (default SGranquist13/orbit-e2e-sandbox, override with
-// ORBIT_GH_SANDBOX). The sandbox's CI fails whenever a file named FAIL exists.
+// issues in a throwaway private sandbox repo (set ORBIT_GH_SANDBOX; the maintainer default applies only
+// to the maintainer's gh login). The sandbox's CI fails whenever a file named FAIL exists.
 //
 //   1. `bun run dev` running, debug build present (see scripts/e2e.mjs)
 //   2. node scripts/e2e-github.mjs <scratch-dir> [step]
@@ -10,7 +10,29 @@ import fs from "node:fs";
 import path from "node:path";
 import { TURN_ENDS, createHarness, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
-const SANDBOX = process.env.ORBIT_GH_SANDBOX ?? "SGranquist13/orbit-e2e-sandbox";
+// The maintainer's sandbox is the default only for the maintainer's own gh login; everyone else must
+// bring their own private repo.
+const MAINTAINER_SANDBOX = "SGranquist13/orbit-e2e-sandbox";
+const ghLogin = () => {
+  try {
+    return execFileSync("gh", ["api", "user", "-q", ".login"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+};
+const SANDBOX = process.env.ORBIT_GH_SANDBOX || (ghLogin() === "SGranquist13" ? MAINTAINER_SANDBOX : "");
+if (!SANDBOX) {
+  console.error(`ORBIT_GH_SANDBOX is not set.
+
+e2e:github creates and closes real PRs and issues, so it needs a throwaway PRIVATE repo you own:
+  1. gh repo create <you>/orbit-e2e-sandbox --private --add-readme
+  2. Add a GitHub Actions workflow with one job named "check" that fails whenever a file named
+     FAIL exists in the repo (e.g. \`test ! -e FAIL\`) and passes otherwise.
+  3. ORBIT_GH_SANDBOX=<you>/orbit-e2e-sandbox bun run e2e:github
+
+Requires gh to be logged in with the repo scope.`);
+  process.exit(1);
+}
 const scratch = resolveScratch(process.argv[2], "orbit-e2e-github"); // must be outside any git repo
 const only = process.argv[3];
 const repo = path.join(scratch, "repo");
