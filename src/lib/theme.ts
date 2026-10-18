@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isTauri } from "./env";
 
 export type ThemeMode = "system" | "dark" | "light";
 
@@ -27,7 +28,7 @@ function apply(mode: ThemeMode) {
   const resolved = resolve(mode);
   document.documentElement.dataset.theme = resolved;
   // Match the native title bar (no-op outside Tauri).
-  if ("isTauri" in window) {
+  if (isTauri()) {
     import("@tauri-apps/api/window")
       .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(resolved))
       .catch(() => {});

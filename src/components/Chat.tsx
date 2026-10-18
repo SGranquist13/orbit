@@ -26,16 +26,16 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+
+const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
 import { activeProfile, api, type Attachment, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
-import { SchedulePreview, WhenControl } from "./Routines";
-import { TeammateLabel } from "./Teammates";
+import { SchedulePreview, WhenControl } from "./ScheduleControls";
+import { TeammateLabel } from "./TeammateAvatar";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -86,7 +86,7 @@ export function Chat({ ws }: { ws: Workspace }) {
       <div className="border-t-[1.5px] border-line" />
       <RelatedPopover ws={ws} />
 
-      <Transcript blocks={blocks} live={live} running={running} loading={!events} />
+      <Transcript blocks={blocks} live={live} running={running} loading={!events} wsId={ws.id} />
       <Composer ws={ws} running={running} />
     </div>
   );
@@ -296,7 +296,8 @@ function PrHint({ pr }: { pr: PrStatus }) {
   );
 }
 
-function Transcript({ blocks, live, running, loading }: { blocks: Block[]; live: string; running: boolean; loading: boolean }) {
+function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[]; live: string; running: boolean; loading: boolean; wsId: string }) {
+  const loadError = useApp((s) => s.transcriptErrors[wsId]);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -317,6 +318,12 @@ function Transcript({ blocks, live, running, loading }: { blocks: Block[]; live:
   return (
     <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[880px] space-y-5 px-6 py-8">
+        {loading && loadError && (
+          <div className="flex items-start gap-3 rounded-[4px] border-[1.5px] border-bad px-3.5 py-2.5">
+            <p className="selectable flex-1 whitespace-pre-wrap text-[12px] font-medium text-bad">Couldn't load this conversation: {loadError}</p>
+            <Button onClick={() => void useApp.getState().loadTranscript(wsId)}>Retry</Button>
+          </div>
+        )}
         {!loading && blocks.length === 0 && (
           <div className="space-y-1 pt-24 text-center">
             <p className="label text-mute">Give the agent a task to get started</p>
@@ -358,7 +365,9 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
     case "assistant":
       return (
         <div className="prose-chat text-fg">
-          <Markdown remarkPlugins={[remarkGfm]}>{block.text}</Markdown>
+          <Suspense fallback={<span className="whitespace-pre-wrap">{block.text}</span>}>
+            <MarkdownText text={block.text} />
+          </Suspense>
         </div>
       );
     case "tools":
@@ -782,7 +791,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
       void send();
     } else if (e.key === "Escape" && running) {
       e.preventDefault();
-      void api.interrupt(ws.id);
+      void useApp.getState().interrupt(ws.id);
     }
   };
 
@@ -858,7 +867,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
           />
           {running && !text.trim() ? (
             <button
-              onClick={() => void api.interrupt(ws.id)}
+              onClick={() => void useApp.getState().interrupt(ws.id)}
               title="Interrupt (Esc)"
               className="grid size-8 place-items-center rounded-[4px] border-[1.5px] border-line-strong text-fg hover:bg-fg hover:text-bg"
             >

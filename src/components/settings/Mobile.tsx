@@ -54,12 +54,19 @@ export function Mobile() {
   const [devices, setDevices] = useState<RemoteDevice[]>([]);
   const [pairing, setPairing] = useState<RemotePairing | null>(null);
   const [pairingBusy, setPairingBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const enabled = s?.remoteEnabled;
   const port = s?.remotePort;
 
   const refresh = useCallback(() => {
-    api.remoteStatus().then(setStatus).catch(() => {});
-    api.remoteDevices().then(setDevices).catch(() => {});
+    api
+      .remoteStatus()
+      .then((st) => (setStatus(st), setLoadError(null)))
+      .catch((e) => setLoadError(String(e)));
+    api
+      .remoteDevices()
+      .then(setDevices)
+      .catch((e) => setLoadError(String(e)));
   }, []);
   useEffect(() => {
     refresh();
@@ -106,8 +113,10 @@ export function Mobile() {
   };
 
   if (!s) return null;
-  const tone = status?.error ? "bad" : status?.running ? "ok" : "warn";
-  const statusText = !status
+  const tone = loadError || status?.error ? "bad" : status?.running ? "ok" : "warn";
+  const statusText = loadError
+    ? `Couldn't reach the phone bridge: ${loadError}`
+    : !status
     ? "Checking…"
     : status.error
       ? status.error
@@ -117,6 +126,7 @@ export function Mobile() {
 
   return (
     <>
+      <p className="pb-2 text-[12px] text-mute">Experimental: the companion iPhone app isn't publicly released yet.</p>
       <Row
         label="Allow phone connections"
         field="remoteEnabled"
@@ -161,7 +171,8 @@ export function Mobile() {
       </Row>
       {pairing && <PairingPanel pairing={pairing} onRefresh={() => void showPairing()} onClose={() => setPairing(null)} />}
       <div className="border-b border-line">
-        {devices.length === 0 && <p className="py-2.5 text-[12px] text-mute">No phones paired yet.</p>}
+        {devices.length === 0 && !loadError && <p className="py-2.5 text-[12px] text-mute">No phones paired yet.</p>}
+        {devices.length === 0 && loadError && <p className="selectable py-2.5 text-[12px] text-bad">Couldn't load paired phones: {loadError}</p>}
         {devices.map((d) => (
           <div key={d.id} className="flex items-center gap-3 border-b border-line py-2 text-[12px] last:border-b-0">
             <span className="min-w-0 flex-1">

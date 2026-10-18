@@ -22,6 +22,7 @@ import {
   type Workspace,
   type WorkspaceUsage,
 } from "../lib/ipc";
+import { confirmAction } from "../lib/confirm";
 import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
 
@@ -92,9 +93,21 @@ interface AppState {
   /** Chat only: hides the sidebar and Ship panel. Not persisted. */
   focusMode: boolean;
   error: string | null;
+  /** Transcript load failures per workspace (shown with a Retry in the chat). */
+  transcriptErrors: Record<string, string>;
+  /** Workspaces whose ship gate (checks + ship turn) is in flight. */
+  shipping: Record<string, boolean>;
+  /** Set when the settings could not be loaded; the Settings page shows it instead of defaults. */
+  settingsError: string | null;
 
   init: () => Promise<void>;
   select: (id: string | null) => void;
+  loadTranscript: (id: string) => Promise<void>;
+  loadSettings: () => Promise<void>;
+  /** Interrupt the running agent; failures go to the error toast. */
+  interrupt: (id: string) => Promise<void>;
+  /** Confirm, then archive a workspace and delete its worktree (the branch is kept). */
+  archiveWorkspace: (id: string) => Promise<void>;
   setView: (view: View) => void;
   refreshTeammates: () => Promise<void>;
   /** Opens a teammate's thread and focuses its composer. */
@@ -216,11 +229,57 @@ export const useApp = create<AppState>((set, get) => ({
   sidebarCollapsed: readFlag("sidebarCollapsed"),
   focusMode: false,
   error: null,
+  transcriptErrors: {},
+  shipping: {},
+  settingsError: null,
+
+  loadSettings: async () => {
+    try {
+      set({ settings: await api.getSettings(), settingsError: null });
+    } catch (e) {
+      set({ settingsError: String(e) });
+    }
+  },
+
+  loadTranscript: async (id) => {
+    set((s) => {
+      const { [id]: _drop, ...rest } = s.transcriptErrors;
+      return { transcriptErrors: rest };
+    });
+    try {
+      const evs = await api.loadEvents(id);
+      set((s) => ({ transcripts: { ...s.transcripts, [id]: evs } }));
+    } catch (e) {
+      set((s) => ({ transcriptErrors: { ...s.transcriptErrors, [id]: String(e) } }));
+    }
+  },
+
+  interrupt: async (id) => {
+    try {
+      await api.interrupt(id);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  archiveWorkspace: async (id) => {
+    const ws = get().workspaces.find((w) => w.id === id);
+    if (!ws) return;
+    const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?\n\nThe branch ${ws.branch} is kept.`, "Archive");
+    if (!ok) return;
+    try {
+      await api.archiveWorkspace(id, true);
+      get().removeWorkspace(id);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
 
   init: async () => {
     if (initialized) return;
-    initialized = true;
+    // Only marked done after the first load succeeds, so a failed startup can retry.
     const [repos, workspaces, sums] = await Promise.all([api.listRepos(), api.listWorkspaces(), api.workspaceSummaries()]);
+    initialized = true;
     set({ repos, workspaces, summaries: Object.fromEntries(sums.map((x) => [x.workspaceId, x])) });
     api
       .allWorkspaceUsage()
@@ -236,7 +295,7 @@ export const useApp = create<AppState>((set, get) => ({
     await events.onSimplify(onSimplify);
     for (const ws of workspaces) void get().refreshChanges(ws.id);
     void get().loadSkills();
-    api.getSettings().then((settings) => set({ settings })).catch(() => {});
+    void get().loadSettings();
     const last = localStorage.getItem("selectedWorkspace");
     if (last && workspaces.some((w) => w.id === last)) get().select(last);
   },
@@ -247,7 +306,7 @@ export const useApp = create<AppState>((set, get) => ({
     void markSeen(id);
     localStorage.setItem("selectedWorkspace", id);
     if (!get().transcripts[id]) {
-      api.loadEvents(id).then((evs) => set((s) => ({ transcripts: { ...s.transcripts, [id]: evs } })));
+      void get().loadTranscript(id);
     }
     void get().refreshChanges(id);
     void get().refreshPr(id);
@@ -452,6 +511,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   ship: async (workspaceId, anyway = false) => {
+    if (get().shipping[workspaceId]) return;
+    set((s) => ({ shipping: { ...s.shipping, [workspaceId]: true } }));
     try {
       const res = await api.prepareShip(workspaceId, anyway);
       if (!res.ok) {
@@ -462,6 +523,8 @@ export const useApp = create<AppState>((set, get) => ({
       await api.runSkill(workspaceId, "shipkit:ship", res.notes ?? "");
     } catch (e) {
       get().setError(String(e));
+    } finally {
+      set((s) => ({ shipping: { ...s.shipping, [workspaceId]: false } }));
     }
   },
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../stores/app";
-import { Kbd, cn } from "./ui";
+import { Button, Kbd, cn } from "./ui";
 import { Agents } from "./settings/Agents";
 import { Section } from "./settings/controls";
 import { Data } from "./settings/Data";
@@ -30,6 +30,7 @@ export function Settings() {
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(SECTIONS[0].id);
   const settingsLoaded = useApp((s) => s.settings !== null);
+  const settingsError = useApp((s) => s.settingsError);
 
   // Highlight the last section whose top has passed the upper part of the viewport.
   const onScroll = () => {
@@ -95,7 +96,13 @@ export function Settings() {
         </nav>
         <div ref={scroller} onScroll={onScroll} className="min-w-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-[720px] px-8 pb-24 pt-6">
-            {!settingsLoaded && <p className="py-6 text-[12px] text-mute">Loading settings…</p>}
+            {!settingsLoaded && !settingsError && <p className="py-6 text-[12px] text-mute">Loading settings…</p>}
+            {!settingsLoaded && settingsError && (
+              <div className="flex items-start gap-3 py-6">
+                <p className="selectable flex-1 whitespace-pre-wrap text-[12px] font-medium text-bad">Couldn't load settings: {settingsError}</p>
+                <Button onClick={() => void useApp.getState().loadSettings()}>Retry</Button>
+              </div>
+            )}
             {SECTIONS.map((s) => (
               <Section key={s.id} id={s.id} title={s.title} description={s.description}>
                 {s.body}

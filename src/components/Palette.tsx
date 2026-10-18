@@ -1,9 +1,10 @@
 import { Command } from "cmdk";
 import { useState } from "react";
-import { AlarmClock, CalendarClock, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { AlarmClock, Archive, CalendarClock, Check, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Square, SunMoon, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, activeProfile } from "../lib/ipc";
+import { useTheme } from "../lib/theme";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
 import { pickRepo } from "./Sidebar";
@@ -16,13 +17,25 @@ export function Palette() {
   const skills = useApp((s) => s.skills);
   const profiles = useApp((s) => s.profiles);
   const teammates = useApp((s) => s.teammates);
-  // "Ask a teammate" narrows the palette to teammates; the scope can come from the store (Ctrl Shift T) or the entry.
+  // "Ask a teammate" narrows the palette to teammates; the scope can come from the store (openPalette("teammates")) or the entry.
   const [scope, setScope] = useState(useApp.getState().paletteScope);
   const [search, setSearch] = useState("");
   const selectedId = useApp((s) => s.selectedId);
   const selected = workspaces.find((w) => w.id === selectedId);
+  const pr = useApp((s) => (selectedId ? s.prs[selectedId] : undefined));
   const currentProfile = selected && activeProfile(profiles, selected);
   const close = () => useApp.getState().setPaletteOpen(false);
+  const openSettingsAt = (section: string) => {
+    useApp.getState().openSettings();
+    // Settings mounts (lazily) on a later frame; then bring the section into view.
+    window.setTimeout(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ block: "start" }), 250);
+  };
+  const prAct = (fn: () => Promise<unknown>) =>
+    void fn()
+      .catch((e) => useApp.getState().setError(String(e)))
+      .finally(() => selectedId && void useApp.getState().refreshPr(selectedId));
+  const openPr = pr && pr.state === "OPEN" ? pr : null;
+  const canMerge = !!openPr && !openPr.isDraft && openPr.mergeable !== "CONFLICTING" && openPr.checks.failed === 0 && openPr.checks.pending === 0;
   const run = (fn: () => void) => () => {
     close();
     fn();
@@ -77,6 +90,9 @@ export function Palette() {
             </Command.Item>
             <Command.Item className={item} value="New teammate" onSelect={run(() => useApp.getState().setTeammateEditor("new"))}>
               <Plus className="size-3.5" /> New teammate
+            </Command.Item>
+            <Command.Item className={item} value="Open teammates" onSelect={run(() => useApp.getState().setView("teammate"))}>
+              <Users className="size-3.5" /> Open teammates
             </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setView("inbox"))}>
               <Inbox className="size-3.5" /> Open inbox
@@ -179,6 +195,60 @@ export function Palette() {
                 >
                   <Shrink className="size-3.5" /> Simplify changes
                 </Command.Item>
+                {selected?.status === "running" && (
+                  <Command.Item className={item} value="Stop agent (interrupt the running turn)" onSelect={run(() => void useApp.getState().interrupt(selectedId))}>
+                    <Square className="size-3.5" /> Stop agent
+                  </Command.Item>
+                )}
+                {(pr === null || openPr) && (
+                  <Command.Item className={item} value="Ship: commit, push, draft PR" onSelect={run(() => void useApp.getState().ship(selectedId))}>
+                    <Rocket className="size-3.5" /> {pr === null ? "Ship: commit, push, draft PR" : "Ship: push updates"}
+                  </Command.Item>
+                )}
+                {openPr && openPr.checks.failed > 0 && (
+                  <Command.Item className={item} value="Fix CI (fix failing checks)" onSelect={run(() => void useApp.getState().runSkill(selectedId, "shipkit:fix-ci"))}>
+                    <Rocket className="size-3.5" /> Fix CI
+                  </Command.Item>
+                )}
+                {openPr && openPr.mergeable === "CONFLICTING" && (
+                  <Command.Item className={item} value="Rebase (resolve conflicts with base)" onSelect={run(() => void useApp.getState().runSkill(selectedId, "shipkit:rebase"))}>
+                    <GitBranch className="size-3.5" /> Rebase
+                  </Command.Item>
+                )}
+                {openPr && (
+                  <Command.Item className={item} value="Address comments (PR review comments)" onSelect={run(() => void useApp.getState().runSkill(selectedId, "shipkit:address-comments"))}>
+                    <Rocket className="size-3.5" /> Address comments
+                  </Command.Item>
+                )}
+                {openPr?.isDraft && (
+                  <Command.Item className={item} value="Mark PR ready for review" onSelect={run(() => prAct(() => api.markPrReady(selectedId, openPr.number)))}>
+                    <Check className="size-3.5" /> Mark PR ready for review
+                  </Command.Item>
+                )}
+                {openPr && canMerge && (
+                  <Command.Item
+                    className={item}
+                    value="Squash and merge PR"
+                    onSelect={run(() => {
+                      void confirmAction(`Squash-merge #${openPr.number} into the base branch?`, "Merge").then((ok) => {
+                        if (!ok) return;
+                        prAct(async () => {
+                          const out = await api.mergePr(selectedId, openPr.number);
+                          if (out?.archived) useApp.getState().removeWorkspace(selectedId);
+                        });
+                      });
+                    })}
+                  >
+                    <GitMerge className="size-3.5" /> Squash & merge PR
+                  </Command.Item>
+                )}
+                <Command.Item
+                  className={item}
+                  value="Archive workspace (delete its worktree)"
+                  onSelect={run(() => void useApp.getState().archiveWorkspace(selectedId))}
+                >
+                  <Archive className="size-3.5" /> Archive workspace…
+                </Command.Item>
                 <Command.Item
                   className={item}
                   value="New session (clear context)"
@@ -211,6 +281,15 @@ export function Palette() {
               })}
             >
               <Cpu className="size-3.5" /> Local models
+            </Command.Item>
+            <Command.Item className={item} value="Archived workspaces (restore)" onSelect={run(() => openSettingsAt("data"))}>
+              <History className="size-3.5" /> Archived workspaces
+            </Command.Item>
+            <Command.Item className={item} value="Clean up merged worktrees" onSelect={run(() => openSettingsAt("data"))}>
+              <Trash2 className="size-3.5" /> Clean up merged worktrees
+            </Command.Item>
+            <Command.Item className={item} value="Toggle theme (dark / light)" onSelect={run(() => useTheme.getState().toggle())}>
+              <SunMoon className="size-3.5" /> Toggle theme
             </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
               <Package className="size-3.5" /> Manage skill packs

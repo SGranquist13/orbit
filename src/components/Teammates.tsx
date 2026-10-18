@@ -128,18 +128,6 @@ function TeammateRow({ t, selected }: { t: TeammateView; selected: boolean }) {
   );
 }
 
-/** "<avatar> Teammate name" on workspaces a teammate created. */
-export function TeammateLabel({ slug, className }: { slug: string; className?: string }) {
-  const t = useApp((s) => s.teammates.find((x) => x.slug === slug));
-  if (!t) return null;
-  return (
-    <span className={cn("flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-mute", className)} title={`Created by ${t.name}`}>
-      <TeammateAvatar avatar={t.avatar} name={t.name} size={16} />
-      {t.name}
-    </span>
-  );
-}
-
 // ---------------------------------------------------------------- thread
 
 const OPEN: TeammateTaskStatus[] = ["running", "waiting"];
