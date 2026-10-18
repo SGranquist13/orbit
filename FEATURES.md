@@ -140,7 +140,7 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Black-hole brand mark (sidebar logo + app icon) from `src/assets/orbit.png` | P1 | 🟢 | Icon set generated; check it in the taskbar after a build |
 | Start page: black hole with a planet orbiting (passes behind the horizon) | P2 | 🟢 | Verified in mock UI; respects reduced motion |
 | Native confirm dialogs (archive, merge, remove pack) | P2 | 🟢 | |
-| Product name: **Orbit** | P1 | ✅ | Crate, binary, window, identifier `dev.steven.orbit`, data dir `~/.orbit` (auto-migrates `~/.agentic-ide`) |
+| Product name: **Orbit** | P1 | ✅ | Crate, binary, window, identifier `io.github.sgranquist13.orbit` (was `dev.steven.orbit` until 2026-10-18), data dir `~/.orbit` (auto-migrates `~/.agentic-ide`) |
 | Focus layout: Ship panel hidden until you click **Ship** in the header (Ctrl+.), never opens on its own; header hint shows PR # + checks dot or changed-file count | P1 | ✅ | e2e opens/closes it; verified in mock UI |
 | Narrower, quieter sidebar (216px); collapses to an icon rail (Ctrl+B) | P1 | 🟡 | Slim sidebar seen in the real app; collapse-to-rail only checked in mock |
 | Wider chat column (880px) and bigger composer | P1 | ✅ | Seen in real-app e2e screenshots |

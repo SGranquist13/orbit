@@ -88,3 +88,5 @@ The end-to-end suites (`bun run e2e`, `bun run e2e:github`) drive the real app w
 ## Licence
 
 [MIT](LICENSE). Bundled fonts and dependency licences are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See [CHANGELOG.md](CHANGELOG.md) for release notes and [CONTRIBUTING.md](CONTRIBUTING.md) if you want to help.
+
+The Orbit name and black-hole artwork (`src/assets/orbit.png` and the app icons made from it) are by SGranquist13.

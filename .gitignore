@@ -33,3 +33,5 @@ dist-ssr
 # misc local artefacts
 .e2e-run-*.log
 .claude/*.lock
+
+CLAUDE.local.md
