@@ -27,6 +27,9 @@ bun run check:guards          # clippy, including the db-lock reentrancy lint
 
 The e2e suites (`bun run e2e`, `bun run e2e:github`) use real agents and cost model usage; they are maintainer-only. If you change a user-facing feature, describe how you checked it.
 
+## Using AI coding agents
+Orbit is built with Claude Code orchestrating and Codex taking well-specified fixes. [CLAUDE.md](CLAUDE.md) is the project brief both read (architecture, known traps, conventions), and its "Working with Codex" section explains how to hand work to Codex. Agents' changes go through the same checks and e2e as yours.
+
 ## Commits
 
 Use conventional commit messages (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `ci:`), one logical change per commit.

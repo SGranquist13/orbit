@@ -4,7 +4,6 @@ Run a fleet of coding agents in parallel git worktrees and ship.
 
 Orbit is a desktop IDE for people who work with Claude Code and Codex all day. Each task gets its own git worktree and branch, so many agents can work at once without stepping on each other or on your checkout. An inbox tells you which sessions need you, and when a task is done you take it from diff to pull request, CI and merge without leaving the app. It is built around shipping rather than editing: the agents write the code, Orbit keeps the fleet organised.
 
-<!-- TODO: add docs/screenshot.png before the release -->
 ![Orbit](docs/screenshot.png)
 
 **Status:** v0.1.0 · Windows 10/11 · unsigned installer. See [FEATURES.md](FEATURES.md) for what is proven in the real app and what is only built.

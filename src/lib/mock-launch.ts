@@ -4,6 +4,11 @@
 import type { AgentEvent, FileChange, Issue, Related, PrStatus, Repo, StoredEvent, Summary, Workspace } from "./ipc";
 
 export const LAUNCH = typeof location !== "undefined" && new URLSearchParams(location.search).get("seed") === "launch";
+// `&ws=<id>` opens that workspace (for screenshots); the store restores the last selected one on init.
+if (LAUNCH) {
+  const ws = new URLSearchParams(location.search).get("ws");
+  if (ws) localStorage.setItem("selectedWorkspace", ws);
+}
 
 type Emit = (workspaceId: string, event: AgentEvent) => void;
 type Ws = (id: string, repoId: string, name: string, agent: "claude" | "codex", status: Workspace["status"]) => Workspace;

@@ -2,7 +2,7 @@
 
 Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Code + Codex) in parallel git worktrees, focused on shipping: skills, PRs, tickets. Plan/roadmap: see "Milestones" below.
 
-## Start here (status as of 2026-10-12)
+## Start here (status as of 2026-10-18)
 - **What's built and how well it's proven: [FEATURES.md](FEATURES.md)**. Read its "Real vs mock" ledger first. ✅ = proven in the real app by e2e; 🟢 = built, only verified in the mock UI / unit tests. Everything built on 2026-10-09 (Settings page, usage/context meter, Compact / New session, archive restore, worktree cleanup) is 🟢 and **still needs its first real-app e2e run**; the ledger lists the steps to add.
 - **Mobile companion (merged 2026-10-09):** `src-tauri/src/remote/` lets the iPhone app in `../ide_mobile` pair (QR), mirror workspaces live, send and stop. Verified by hand on a real iPhone (no `scripts/e2e.mjs` step yet). The wire contract is `../ide_mobile/docs/protocol.md`; change it there first, then both sides, then run `npm run interop` in `ide_mobile` (drives this repo's real bridge server with the app's own client). Runbook: `../ide_mobile/docs/dev-workflow.md`.
 - **Ideas under discussion: [PLANNING.md](PLANNING.md)** (#1–#9 are built; #10 AI teammates phase 1 is built (phase 2: Chief, hand-offs, teammate routines); new ideas go to its Inbox).
@@ -27,6 +27,17 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - **Read-only must be enforced, not prompted.** Claude read-only = `--permission-mode default` + allowlist (a denylist alone lets `echo > file` through Bash). New sessions after a profile switch need the `role_notices` hand-over note or the resumed agent keeps its old role.
 - **Merge resolution:** parallel agents in worktrees conflict mostly on `mock.ts`, `Palette.tsx` imports, and placeholder files; both sides are usually wanted (union).
 - Shell scripting from bash: apostrophes and backticks inside `node -e '…'` break quoting. Write a temp .cjs script instead.
+
+## Working with Codex (second coding agent)
+Claude orchestrates; Codex (through the Claude Code `codex` plugin) is a second pair of hands for fixes and features, on its own subscription, so it saves Claude usage.
+- **Setup:** `npm install -g @openai/codex`, `codex login`, then `/codex:setup` in Claude Code (must report ready). The plugin needs `codex` on PATH; Orbit itself finds Codex elsewhere (see Known traps), so the app working does not mean the plugin will.
+- **Hand off** with the `codex:codex-rescue` agent (or `/codex:rescue`): a self-contained brief naming files, the bug/feature, constraints from this file, and how to verify (`scripts\cargo.cmd test`, `bun run check:guards`, `bunx tsc --noEmit`). Ask for `--write` and always an explicit model:
+  - `gpt-6.1-sol`, effort `medium`: default for fixes and features (`low` for small, fully specified fixes).
+  - `gpt-6-luna`: mechanical edits only (renames, text, config).
+  - `gpt-6-astra`: only for a genuinely hard bug. It is the default in `~/.codex/config.toml`, so leaving out `--model` silently uses it.
+- **Codex cannot commit** (its sandbox can't write `.git/index.lock`): it leaves changes uncommitted; the orchestrator reviews the diff, commits with a `Co-Authored-By: Codex <noreply@openai.com>` trailer, and runs the e2e.
+- **Don't run Codex and another writer on the same files.** Use an isolated worktree for parallel work, and never junction `node_modules` from a worktree to the main checkout (force-removing that worktree deletes the real `node_modules`; repair with `bun install --force`).
+- Good fits: well-specified bugs with a repro, Rust/TS fixes with unit tests, config/CI. Keep design calls, UI taste and e2e diagnosis with Claude.
 
 ## Stack
 - **Tauri 2** — Rust core in `src-tauri/`, React 19 + TypeScript + Tailwind v4 UI in `src/`.

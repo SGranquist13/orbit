@@ -240,6 +240,7 @@ function NavItem({
   return (
     <button
       onClick={onClick}
+      title={kbd ? `${label} (${kbd})` : undefined}
       className={cn(
         "flex h-7 w-full items-center gap-2.5 rounded-[4px] px-2 text-[12.5px] font-medium transition-colors",
         active ? "bg-raised text-fg" : "text-dim hover:bg-hover hover:text-fg",
@@ -250,7 +251,8 @@ function NavItem({
       {!!count && (
         <span className="rounded-[3px] bg-fg px-1.5 text-[10px] font-semibold leading-4 tabular-nums text-bg">{count}</span>
       )}
-      {kbd && <Kbd>{kbd}</Kbd>}
+      {/* With a count badge there is no room for the shortcut too; it moves to the tooltip. */}
+      {kbd && !count && <Kbd>{kbd}</Kbd>}
     </button>
   );
 }
