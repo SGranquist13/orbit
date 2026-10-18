@@ -2,6 +2,14 @@
   "name": "orbit",
   "private": true,
   "version": "0.1.0",
+  "description": "Run a fleet of coding agents (Claude Code, Codex) in parallel git worktrees and ship.",
+  "license": "MIT",
+  "author": "SGranquist13",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SGranquist13/orbit.git"
+  },
+  "homepage": "https://github.com/SGranquist13/orbit",
   "type": "module",
   "scripts": {
     "dev": "vite",
