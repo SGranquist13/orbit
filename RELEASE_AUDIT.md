@@ -1,40 +1,42 @@
 # Orbit 0.1.0 release audit
 
-Run 2026-10-17 → 2026-10-18 (overnight). Target: public, open-source **v0.1.0** on GitHub (Windows 10/11).
+Run 2026-10-17 → 2026-10-18. Target: public, open-source **v0.1.0** on GitHub (Windows 10/11).
 Everything is on local `main`. **Nothing has been pushed.**
 
-## Verdict
+## Verdict (2026-10-18, afternoon)
 
-**Ready to release after your morning review and the four decisions below.**
-- Both real-app suites pass on the fixed tree.
-- All code findings are fixed.
-- Release docs, licence and CI config are in place.
-- The installer builds.
+**Ready to publish once your manual check passes.**
+- Both real-app suites pass on the final tree.
+- All code findings are fixed, plus three more bugs found today by the new tests.
+- Your decisions (logo, identifier, CLAUDE.md) are applied.
 
-What's left is your judgement (logo rights, identifier, publishing), a 20-minute manual check, and a screenshot for the README.
+What's left for you: the 20-minute manual check, a README screenshot, the logo-licence choice (below), and creating the GitHub repo.
 
 ## Results on the final tree
 
 | Check | Result |
 |---|---|
 | `bunx tsc --noEmit` | ✅ pass |
-| `cargo test` | ✅ 175 pass, 0 fail, 8 ignored (opt-in live); was 168 before the audit |
-| `bun run check:guards` (clippy) | ✅ pass, **0 warnings** (was 13) |
-| `bun run build` | ✅ main chunk **381 kB** (was 738 kB); views lazy-loaded; mock not in production bundle |
-| `bun run e2e` (real app, Claude haiku + Codex) | ✅ **23/23** (run 3), no React errors in the page log |
-| `bun run e2e:github` (real PRs/CI/issues in the sandbox) | ✅ **7/7** (run 5); first full run since 2026-10-09 |
-| `bun run app:build` | ✅ `src-tauri/target/release/bundle/nsis/Orbit_0.1.0_x64-setup.exe` (5.85 MiB, unsigned) |
-| CI workflow (`.github/workflows/ci.yml`) | ⚠ written, **never run** (no remote yet) |
-| Fresh-clone build | ⚠ not done (dropped to conserve usage; the CI workflow does this on first push) |
+| `cargo test` | ✅ 178 pass, 0 fail, 8 ignored (opt-in live); 168 before the audit |
+| `bun run check:guards` (clippy) | ✅ pass, **0 warnings** (13 before) |
+| `bun run build` | ✅ main chunk **381 kB** (738 kB before) |
+| `bun run e2e` (real app, Claude haiku + Codex) | ✅ **46/46** (23 before today). Steps now fail on React page errors |
+| `bun run e2e:github` (real PRs/CI/issues in the sandbox) | ✅ **10/10** (7 before today); the sandbox is left with no open issues or PRs |
+| Forced-kill test | ✅ an agent mid-turn, Orbit killed with `taskkill /F`: 0 agent processes survive |
+| `bun run app:build` | ✅ `src-tauri/target/release/bundle/nsis/Orbit_0.1.0_x64-setup.exe` (unsigned) |
+| CI workflow (incl. new cargo-deny licence job) | ⚠ written, **never run** (no remote yet) |
 
-## Decisions for you (morning)
+## Decisions
 
-1. **Logo (R3, blocker):** confirm you own `src/assets/orbit.png`, the source of every app icon. If it's AI-generated or stock, check its terms or replace it.
-2. **Bundle identifier (R12):** `dev.steven.orbit` is personal. It **can't change after release** without orphaning users' WebView2 data. Suggest `io.github.sgranquist13.orbit`. I left it alone.
-3. **CLAUDE.md (R9):** it ships in the public repo as-is. It's useful to contributors, but it has machine-specific notes (VS 2026 here, your nvm firewall rules, home `codex` npm package, "How the user likes to work"). Trim those, or keep them. I did not edit it.
-4. **Publishing (R4):** create the public GitHub repo `SGranquist13/orbit` (README/package.json already point there), push, let CI run once, then publish a release with the installer attached. Check that CI goes green before you announce.
+Done (2026-10-18):
+- **R3 logo:** you own it. The README credits the artwork to you.
+- **R12 identifier:** changed to `io.github.sgranquist13.orbit`. Your own Orbit's small UI preferences (theme, panel state) reset once; `~/.orbit` is untouched.
+- **R9 CLAUDE.md:** personal and machine notes moved to a gitignored `CLAUDE.local.md`.
 
-Also before announcing: add `docs/screenshot.png` (the README references it). `bun run dev` then `?seed=launch` gives the launch-video fleet.
+Still yours:
+1. **Logo licence:** the repo is MIT, so as things stand the logo is MIT too and anyone may reuse it. Options: keep that, or add a line such as "The Orbit name and logo are not covered by the MIT licence".
+2. **Publish (R4):** create the public repo `SGranquist13/orbit`, push, let CI go green once, then publish a release with the installer attached.
+3. **Screenshot:** add `docs/screenshot.png` (the README references it). `bun run dev` then `?seed=launch` gives a nice-looking fleet.
 
 ## Manual checks (~20 min, real app or installed build)
 
@@ -45,7 +47,7 @@ Also before announcing: add `docs/screenshot.png` (the README references it). `b
 - [ ] Taskbar / installer icon; start-page animation
 - [ ] Mobile pair + revoke + push, only if you decide to advertise it (it is labelled "companion app not yet released")
 
-## What was fixed overnight
+## What was fixed
 
 Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` (UI) and `7cce24f` (docs/packaging), followed by follow-up fixes.
 
@@ -56,6 +58,9 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 | E2 | Bundled teammates you'd messaged (Chief) vanished from the Teammates list, so you couldn't reach their thread | `45b9a62`: list starters with thread activity |
 | E3 | Sidebar shortcut chips ("Ctrl Shift T") wrapped onto two lines next to a badge; the active skill chip's ⚡ icon was invisible (accent on accent) | small UI fix commit |
 | E4 | e2e drift from the 2026-10-17 UI work: skill chips now open a preview, the packs button was renamed, a harness `waitFor` was missing `return`, and the merge step didn't expect the after-merge auto-archive | test fixes; the merge step now also **proves after-merge auto-archive** in the real app |
+| E5 | **Agents outlived Orbit.** Children used `kill_on_drop`, which only fires on a clean exit, so after a crash or Task Manager kill the Claude/Codex agents kept running and spending tokens | `7378d0a`: each agent/git/check process joins a kill-on-close Windows job object. Orbit stays outside it, so browsers or editors it opened survive |
+| E6 | **Archive race on Windows:** archiving right after stopping an agent could fail (the agent still held its folder), leaving an empty folder and an un-archived workspace; this hit after-merge auto-archive | `6c4382d`: retry with backoff, and clear an already-emptied folder (never recursive) |
+| E7 | **New ticket could finish without filing the issue.** The read-only Ticket writer couldn't write the `--body-file` its skill asks for, and the shell workarounds are blocked by Claude Code's safety checks (seen on Sonnet) | `a28e65e`: read-only agents may write only under `~/.orbit/tmp` (verified live: repo writes and `echo > file` stay denied); the skill uses `--body-file` from there |
 
 ### Backend (B), all fixed except B13
 - **B1:** archive no longer destroys uncommitted work. The backend refuses a dirty worktree with "Uncommitted changes: …", and the UI asks before discarding (force).
@@ -100,13 +105,13 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 
 | ID | Sev | Item | Why open |
 |---|---|---|---|
-| R3, R4, R9, R12 | blocker/major | Logo rights, publishing, CLAUDE.md, identifier | Your decisions (above) |
+| R4 | major | Publishing | Your step (above) |
 | R10 | major | Mobile bridge depends on the unpublished `ide_mobile` repo | Labelled "not yet released" in the app; publish `ide_mobile` or copy `docs/protocol.md` later |
-| R13b | minor | Fixed: restrictive Content-Security-Policy; pending real-app verification | CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost`. Inline styles support React style props. Remote markdown images are blocked; UI images are bundled. Local-model HTTP runs in Rust (`llm.rs`), not the webview. `devCsp` adds `http://localhost:1420` to script/style/connect sources and `ws://localhost:1420` to connect sources, plus development-only inline scripts for Vite's React refresh preamble. App/e2e verification remains pending. |
-| R16 | minor | Fixed: Cargo licence allow list and CI gate; pending first CI verification | `src-tauri/deny.toml` and the `licenses` job run `cargo deny check licenses` with `EmbarkStudios/cargo-deny-action@v2`. Only MIT, Apache-2.0, BSD-3-Clause, ISC, Unicode-3.0, Zlib, MPL-2.0 and CDLA-Permissive-2.0 are allowed, using MIT/Apache alternatives where available; GPL/AGPL/LGPL are not allowed. The list covers locally cached lockfile crate metadata; uncached platform dependencies still need CI verification. `cargo deny` was unavailable locally and was not installed globally. |
+| R13b | ✅ done | Content-Security-Policy, **verified by both full suites (46/46, 10/10)** | CSP: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost`. Inline styles support React style props. Remote markdown images are blocked; UI images are bundled. Local-model HTTP runs in Rust (`llm.rs`), not the webview. `devCsp` adds `http://localhost:1420` to script/style/connect sources and `ws://localhost:1420` to connect sources, plus development-only inline scripts for Vite's React refresh preamble. App/e2e verification remains pending. |
+| R16 | minor | Done, pending first CI run: Cargo licence allow list and CI gate; pending first CI verification | `src-tauri/deny.toml` and the `licenses` job run `cargo deny check licenses` with `EmbarkStudios/cargo-deny-action@v2`. Only MIT, Apache-2.0, BSD-3-Clause, ISC, Unicode-3.0, Zlib, MPL-2.0 and CDLA-Permissive-2.0 are allowed, using MIT/Apache alternatives where available; GPL/AGPL/LGPL are not allowed. The list covers locally cached lockfile crate metadata; uncached platform dependencies still need CI verification. `cargo deny` was unavailable locally and was not installed globally. |
 | R22 | polish | Check that "Orbit" doesn't clash with a well-known dev tool before you announce | Quick search |
-| T1 | minor | e2e logs React errors but doesn't fail on them; E1 slipped through the main suite this way | Make the harness fail on "same key" and similar page errors |
-| T2 | minor | About 45 🟢 features are still unverified in the real app (Settings round-trips, Compact / New session, archive restore, cleanup, pack install, Codex steer, owned routines, scheduler tick, New ticket, Address comments) | Writing those e2e steps was dropped tonight to conserve usage; FEATURES.md lists each |
+| T1 | ✅ done | The harness now fails a step on React page errors and kills leftover app and agent processes | — |
+| T2 | minor | 23 more features are now proven in the real app (Settings, Compact/New session, archive and restore, cleanup, pack install, Codex steer, mid-turn queue, scheduler tick, standing and owned routines, teammate CRUD and memory, New ticket, issue chip, Address comments). Still unverified: OS notifications, native dialogs, phone push, linked PRs across repos | Manual check covers most of these |
 | — | polish | Routines shortcut failed once in a full run and never again in four runs (a diagnostic line stays in the step) | Probably timing; watch for it |
 
 ## Hide / label for 0.1
@@ -116,5 +121,5 @@ Each item has a commit on `main`. The merges are `d969fb9` (backend), `79e1b19` 
 
 ## Announcement notes (facts you can use)
 - A Windows desktop app that runs a fleet of Claude Code and Codex agents in parallel git worktrees, with an attention inbox, Ship → PR → CI → merge, GitHub Issues, skill packs, AI teammates with a "Chief" planner, scheduled routines, and a Simplify pass.
-- It is tested end to end against the real app: 23 scenarios with real agents, plus 7 against real GitHub PRs, CI and issues.
-- Rust core (Tauri 2) with 175 unit tests; React 19 UI. MIT licensed. 5.9 MB installer.
+- It is tested end to end against the real app: 46 scenarios with real Claude and Codex agents, plus 10 against real GitHub PRs, CI and issues.
+- Rust core (Tauri 2) with 178 unit tests; React 19 UI. MIT licensed. 5.9 MB installer.
