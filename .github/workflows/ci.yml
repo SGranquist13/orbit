@@ -18,7 +18,6 @@ jobs:
         with:
           command: check licenses
           manifest-path: src-tauri/Cargo.toml
-          command-arguments: --config src-tauri/deny.toml
 
   ui:
     runs-on: ubuntu-latest
