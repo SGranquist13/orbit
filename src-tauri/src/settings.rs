@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn prefix_is_normalized() {
-        assert_eq!(normalize_prefix("steven"), "steven/");
+        assert_eq!(normalize_prefix("you"), "you/");
         assert_eq!(normalize_prefix(" feat/ "), "feat/");
         assert_eq!(normalize_prefix("a b//c"), "a-b/c/");
         assert_eq!(normalize_prefix("  "), "");

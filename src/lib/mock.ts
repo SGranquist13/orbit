@@ -16,8 +16,8 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   id,
   repoId,
   name,
-  branch: `steven/${name.toLowerCase().replace(/\W+/g, "-")}`,
-  path: `C:/Users/steven/.orbit/worktrees/${id}`,
+  branch: `you/${name.toLowerCase().replace(/\W+/g, "-")}`,
+  path: `C:/Users/you/.orbit/worktrees/${id}`,
   agent,
   model: agent === "claude" ? "opus" : null,
   status,
@@ -177,7 +177,7 @@ const attachments: Attachment[] = [
   { id: "a1", workspaceId: "w1", path: "C:/code/shared-ui", name: "shared-ui", editable: false, worktreePath: null, branch: null },
   {
     id: "a2", workspaceId: "w1", path: "C:/code/api", name: "api", editable: true,
-    worktreePath: "C:/Users/steven/.orbit/worktrees/api/fix-onboarding-crash-5c2a", branch: "steven/fix-onboarding-crash-5c2a",
+    worktreePath: "C:/Users/you/.orbit/worktrees/api/fix-onboarding-crash-5c2a", branch: "you/fix-onboarding-crash-5c2a",
   },
 ];
 const suggested: Related[] = [
@@ -251,7 +251,7 @@ function mockCompact(id: string) {
 }
 
 let remoteDevices: RemoteDevice[] = [
-  { id: "dev-1", name: "Steven's iPhone", publicKey: "mock", pushToken: "ExponentPushToken[mock]", pairedAt: Date.now() - 3 * 86_400_000, lastSeenAt: Date.now() - 4 * 60_000 },
+  { id: "dev-1", name: "Alex's iPhone", publicKey: "mock", pushToken: "ExponentPushToken[mock]", pairedAt: Date.now() - 3 * 86_400_000, lastSeenAt: Date.now() - 4 * 60_000 },
 ];
 
 /** A fake, non-scannable QR-like grid so the pairing panel has something to show in the mock. */
@@ -268,7 +268,7 @@ function mockQr(): string {
 }
 
 let settings: Settings = {
-  branchPrefix: "steven/",
+  branchPrefix: "you/",
   defaultAgent: "claude",
   defaultModelClaude: "",
   defaultModelCodex: "",
@@ -335,21 +335,21 @@ const ENUMS: Record<string, string[]> = {
 const checkOverrides: Record<string, string | null> = {};
 let pins = ["shipkit:ship", "shipkit:fix-ci", "shipkit:address-comments", "shipkit:rebase"];
 const environment: EnvironmentInfo = {
-  claude: { path: "C:\\Users\\steven\\AppData\\Roaming\\npm\\claude.cmd", version: "2.1.4", ok: true },
+  claude: { path: "C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd", version: "2.1.4", ok: true },
   // Codex is missing here so the red state is visible.
   codex: { path: null, version: null, loggedIn: false },
-  gh: { path: "C:\\Program Files\\GitHub CLI\\gh.exe", version: "2.62.0", user: "steven", scopes: ["gist", "read:org", "repo"] },
+  gh: { path: "C:\\Program Files\\GitHub CLI\\gh.exe", version: "2.62.0", user: "you", scopes: ["gist", "read:org", "repo"] },
   git: { path: "C:\\Program Files\\Git\\cmd\\git.exe", version: "2.47.1.windows.1" },
-  orbitHome: "C:\\Users\\steven\\.orbit",
+  orbitHome: "C:\\Users\\you\\.orbit",
   dbSizeBytes: 1_482_752,
   worktreeCount: 7,
 };
 const archived: Workspace[] = [
-  { ...ws("a1", "r1", "Add CSV export", "claude", "done"), branch: "steven/add-csv-export-1a2b", updatedAt: now - 3 * 86_400_000 },
-  { ...ws("a2", "r2", "Fix footer links", "codex", "idle"), branch: "steven/fix-footer-links-9c4d", updatedAt: now - 9 * 86_400_000 },
+  { ...ws("a1", "r1", "Add CSV export", "claude", "done"), branch: "you/add-csv-export-1a2b", updatedAt: now - 3 * 86_400_000 },
+  { ...ws("a2", "r2", "Fix footer links", "codex", "idle"), branch: "you/fix-footer-links-9c4d", updatedAt: now - 9 * 86_400_000 },
 ];
 let cleanup: CleanupCandidate[] = [
-  { workspaceId: "w3", name: "Refactor auth flow", branch: "steven/refactor-auth-flow", reason: "PR #801 merged" },
+  { workspaceId: "w3", name: "Refactor auth flow", branch: "you/refactor-auth-flow", reason: "PR #801 merged" },
 ];
 
 // ---- routines: a recurring triage, a nightly check that found nothing, a failing weekly one, a finished one-off
@@ -1212,8 +1212,8 @@ export function installMockBackend() {
           const att = attachments.find((x) => x.id === id)!;
           att.editable = !!a.editable;
           if (att.editable && !att.worktreePath) {
-            att.worktreePath = `C:/Users/steven/.orbit/worktrees/${att.name}/${att.workspaceId}-5c2a`;
-            att.branch = `steven/${att.name}-5c2a`;
+            att.worktreePath = `C:/Users/you/.orbit/worktrees/${att.name}/${att.workspaceId}-5c2a`;
+            att.branch = `you/${att.name}-5c2a`;
           }
           return att;
         }
