@@ -145,7 +145,7 @@ export function Routines() {
           <Plus className="size-3.5" /> New routine
         </Button>
       </header>
-      <div className="dither-rule bg-line-strong" />
+      <div className="border-t-[1.5px] border-line" />
       <div className="flex min-h-0 flex-1">
         <div className="w-[360px] shrink-0 overflow-y-auto border-r-[1.5px] border-line">
           {routines.length === 0 ? (

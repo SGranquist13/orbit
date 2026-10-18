@@ -245,6 +245,9 @@ export function uiHelpers(h) {
   /** Runs a pinned skill chip by its label (chips render uppercase). */
   async function clickChip(label) {
     await h.js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === ${JSON.stringify(label.toUpperCase())}).click()`);
+    // Chips open a preview first; confirm it.
+    await h.waitFor("skill preview", `!!document.querySelector('[data-skill-preview]')`, 5000);
+    await h.js(`[...document.querySelectorAll('[data-skill-preview] button')].find(b => /run in this workspace/i.test(b.innerText)).click()`);
   }
 
   /** Waits until the open workspace has more completed turns than `before`. */

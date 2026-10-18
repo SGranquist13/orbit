@@ -668,6 +668,7 @@ export const api = {
   createWorkspace: (args: CreateWorkspaceArgs) => invoke<Workspace>("create_workspace", { ...args }),
   sendMessage: (id: string, text: string) => invoke<void>("send_message", { id, text }),
   interrupt: (id: string) => invoke<void>("interrupt", { id }),
+  renameWorkspace: (id: string, name: string) => invoke<void>("rename_workspace", { id, name }),
   stopSession: (id: string) => invoke<void>("stop_session", { id }),
   /** Summarise the conversation to free context (`/compact`). */
   compactSession: (id: string) => invoke<void>("compact_session", { id }),

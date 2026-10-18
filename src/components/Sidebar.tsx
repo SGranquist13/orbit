@@ -1,8 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
-import type { Repo, Workspace } from "../lib/ipc";
+import { confirmAction } from "../lib/confirm";
+import { api, type Repo, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
 import { TeammateLabel } from "./Teammates";
 import { AgentIcon, DiffStat, Kbd, OrbitMark, StatusDot, ThemeToggle, cn } from "./ui";
@@ -53,7 +55,7 @@ export function Sidebar() {
           <PanelLeft className="size-3.5" />
         </button>
       </div>
-      <div className="dither-rule bg-line-strong" />
+      <div className="border-t-[1.5px] border-line" />
 
       <nav className="space-y-0.5 px-2 py-2">
         <NavItem
@@ -275,16 +277,139 @@ function RepoGroup({ repo, workspaces }: { repo: Repo; workspaces: Workspace[] }
   );
 }
 
+type MenuItem = { label: string; run: () => void; danger?: boolean; disabled?: boolean } | "sep";
+
+/** Right-click menu for a workspace row; closes on any outside click, scroll, resize or Escape. */
+function WorkspaceMenu({ ws, x, y, onRename, onClose }: { ws: Workspace; x: number; y: number; onRename: () => void; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ x, y });
+  useEffect(() => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ x: Math.max(4, Math.min(x, window.innerWidth - r.width - 4)), y: Math.max(4, Math.min(y, window.innerHeight - r.height - 4)) });
+    const close = () => onClose();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("mousedown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", key);
+    };
+  }, [x, y, onClose]);
+
+  const fail = (e: unknown) => useApp.getState().setError(String(e));
+  const items: MenuItem[] = [
+    { label: "Rename", run: onRename },
+    { label: "Open worktree folder", run: () => void revealItemInDir(ws.path).catch(fail) },
+    { label: "Copy branch name", run: () => void navigator.clipboard.writeText(ws.branch).catch(fail) },
+    "sep",
+    { label: "New session", run: () => void useApp.getState().newSession(ws.id) },
+    { label: "Stop agent", disabled: ws.status !== "running", run: () => void api.interrupt(ws.id).catch(fail) },
+    "sep",
+    {
+      label: "Archive…",
+      danger: true,
+      run: () => {
+        void (async () => {
+          const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?
+
+The branch ${ws.branch} is kept.`, "Archive");
+          if (!ok) return;
+          try {
+            await api.archiveWorkspace(ws.id, true);
+            useApp.getState().removeWorkspace(ws.id);
+          } catch (e) {
+            fail(e);
+          }
+        })();
+      },
+    },
+  ];
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      style={{ left: pos.x, top: pos.y }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="fixed z-50 min-w-[190px] rounded-[6px] border-[1.5px] border-line-strong bg-raised p-1 shadow-pop"
+    >
+      {items.map((it, i) =>
+        it === "sep" ? (
+          <div key={i} className="my-1 border-t border-line" />
+        ) : (
+          <button
+            key={it.label}
+            role="menuitem"
+            disabled={it.disabled}
+            onClick={() => {
+              onClose();
+              it.run();
+            }}
+            className={cn(
+              "flex h-7 w-full items-center rounded-[4px] px-2.5 text-left text-[12.5px] font-medium disabled:opacity-40",
+              it.danger ? "text-bad hover:bg-hover" : "text-dim hover:bg-hover hover:text-fg",
+            )}
+          >
+            {it.label}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
 function WorkspaceRow({ ws }: { ws: Workspace }) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(ws.name);
+  const commitRename = () => {
+    setRenaming(false);
+    const name = draft.trim();
+    if (name && name !== ws.name) void api.renameWorkspace(ws.id, name).catch((e) => useApp.getState().setError(String(e)));
+  };
   const selected = useApp((s) => s.view === "workspace" && s.selectedId === ws.id);
   const unread = useApp((s) => isUnread(ws, s.summaries[ws.id]));
   const totals = diffTotals(useApp((s) => s.changes[ws.id]));
   const running = ws.status === "running";
   return (
     <li>
+      {renaming && (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") setRenaming(false);
+          }}
+          aria-label="Workspace name"
+          className="h-8 w-full rounded-[4px] border-[1.5px] border-line-strong bg-bg px-2 text-[12px] font-medium focus:outline-none"
+        />
+      )}
+      {menu && (
+        <WorkspaceMenu
+          ws={ws}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onRename={() => {
+            setDraft(ws.name);
+            setRenaming(true);
+          }}
+        />
+      )}
       <button
         onClick={() => useApp.getState().select(ws.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
         className={cn(
+          renaming && "hidden",
           "group relative flex h-8 w-full items-center gap-2.5 overflow-hidden rounded-[4px] px-2 text-left text-[12px] font-medium transition-colors",
           selected ? "bg-raised text-fg" : "text-dim hover:bg-hover/70 hover:text-fg",
         )}

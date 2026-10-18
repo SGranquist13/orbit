@@ -937,6 +937,19 @@ fn usage_report(state: State<AppState>, since_ms: Option<i64>) -> CmdResult<usag
     Ok(usage::report(&rows, &infos, since_ms, db::now()))
 }
 
+/// Renames a workspace's display name (the branch and worktree stay as they are).
+#[tauri::command]
+fn rename_workspace(app: AppHandle, state: State<AppState>, id: String, name: String) -> CmdResult<()> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("A workspace needs a name".into());
+    }
+    let updated = state.db().set_name(&id, &name);
+    let ws = updated.map_err(err)?;
+    emit_workspace(&app, &ws);
+    Ok(())
+}
+
 #[tauri::command]
 fn stop_session(state: State<AppState>, id: String) {
     let taken = state.sessions.lock().unwrap().remove(&id);
@@ -1219,6 +1232,7 @@ pub fn run() {
             send_message,
             interrupt,
             stop_session,
+            rename_workspace,
             compact_session,
             new_session,
             workspace_usage,

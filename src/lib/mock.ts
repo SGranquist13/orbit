@@ -3,6 +3,7 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
+import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
 import type { AgentEvent, Attachment, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
@@ -171,6 +172,7 @@ const issues: Issue[] = [
   issue(352, "Docs: document the self-hosting env vars", ["documentation", "good first issue"], "dennis", 600, 1),
 ];
 
+
 const attachments: Attachment[] = [
   { id: "a1", workspaceId: "w1", path: "C:/code/shared-ui", name: "shared-ui", editable: false, worktreePath: null, branch: null },
   {
@@ -183,6 +185,7 @@ const suggested: Related[] = [
   { path: "C:/code/mobile-app", name: "mobile-app", relation: "dependent", evidence: 'package.json depends on "@acme/superset"' },
 ];
 const relatedDefaults: Record<string, string[]> = { r1: ["C:/code/shared-ui"] };
+if (LAUNCH) applyLaunchSeed({ ws, sum, repos, workspaces, summaries, issues, suggested });
 
 const totals = (inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, turns: number): UsageTotals => ({
   inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, turns,
@@ -217,6 +220,11 @@ function mockReport(sinceMs: number | null): UsageReport {
     return { day: d.toISOString().slice(0, 10), tokens: Math.round((grand / 7) * f), costUsd: Math.round(f * 20) / 10 };
   });
   return { totals: sum(rows.map((r) => r.total)), byWorkspace: rows.sort((a, b) => sumTokens(b.total) - sumTokens(a.total)), byAgent: agents, byDay };
+}
+
+function setLaunchStatus(id: string, status: Workspace["status"]) {
+  const w = workspaces.find((x) => x.id === id);
+  if (w) { w.status = status; void emit("workspace", { ...w }); }
 }
 
 function emitAgentEvent(workspaceId: string, event: AgentEvent) {
@@ -909,6 +917,7 @@ function mockSimplifyApply(workspaceId: string, ids: string[]): SimplifyState {
 }
 
 export function installMockBackend() {
+  if (LAUNCH) launchTeammates(workspaces);
   mockIPC(
     async (cmd, args) => {
       const a = (args ?? {}) as { id?: string; slug?: string; workspaceId?: string; repoId?: string; path?: string; editable?: boolean; enabled?: boolean };
@@ -919,9 +928,15 @@ export function installMockBackend() {
         case "list_workspaces":
           return [...workspaces];
         case "load_events":
-          return transcript;
+          return LAUNCH ? launchEvents(id, transcript) : transcript;
         case "workspace_changes":
-          return changes;
+          return LAUNCH ? launchChanges(id) : changes;
+        case "send_message":
+          if (LAUNCH) launchSend(id, (args as { text: string }).text, emitAgentEvent, setLaunchStatus);
+          return null;
+        case "run_skill":
+          if (LAUNCH) launchSend(id, (args as { args: string }).args, emitAgentEvent, setLaunchStatus, (args as { skillId: string }).skillId);
+          return null;
         case "list_packs":
           return packs;
         case "list_skills":
@@ -1002,13 +1017,21 @@ export function installMockBackend() {
           await new Promise((r) => setTimeout(r, 300));
           return issues;
         case "issue_url":
-          return `https://github.com/acme/superset/issues/${workspaces.find((x) => x.id === a.workspaceId)?.issueNumber ?? 0}`;
+          return `https://github.com/acme/${LAUNCH ? "relay" : "superset"}/issues/${workspaces.find((x) => x.id === a.workspaceId)?.issueNumber ?? 0}`;
         case "create_workspace":
         case "start_issue": {
           const n = args as { repoId: string; name?: string; title?: string; agent: "claude" | "codex"; number?: number; issueNumber?: number; profile?: string | null };
-          const w = ws(`w${workspaces.length + 1}`, n.repoId, n.title ?? n.name ?? "New workspace", n.agent, cmd === "start_issue" ? "running" : "idle");
+          const issueNo = n.number ?? n.issueNumber ?? null;
+          const w = ws(`w${workspaces.length + 1}`, n.repoId, LAUNCH && n.title ? launchIssueName(issueNo, n.title) : n.title ?? n.name ?? "New workspace", n.agent, cmd === "start_issue" ? "running" : "idle");
+          if (LAUNCH && cmd === "start_issue") launchSetHero(w.id);
           w.issueNumber = n.number ?? n.issueNumber ?? null;
           w.profile = n.profile ?? null;
+          if (LAUNCH) {
+            const p = args as { prompt?: string | null; title?: string };
+            const text = p.prompt?.trim() || (p.title ? `Fix #${w.issueNumber}: ${p.title}` : "");
+            if (!w.name.trim() && text) w.name = text.split(/\s+/).slice(0, 4).join(" ");
+            if (text) { w.status = "running"; setTimeout(() => launchSend(w.id, text, emitAgentEvent, setLaunchStatus), 300); }
+          }
           workspaces.unshift(w);
           return { ...w };
         }
@@ -1037,6 +1060,11 @@ export function installMockBackend() {
         }
         case "get_pins":
           return pins;
+        case "rename_workspace": {
+          const w = workspaces.find((x) => x.id === a.id);
+          if (w) w.name = (args as { name: string }).name;
+          return null;
+        }
         case "set_pins":
           pins = (args as { pins: string[] }).pins;
           return null;
@@ -1146,8 +1174,10 @@ export function installMockBackend() {
           return { ...w };
         }
         case "merge_pr":
+          if (LAUNCH) { launchMerge(id); return { archived: false }; }
           return { archived: settings.archiveOnMerge };
         case "pr_status":
+          if (LAUNCH) return launchPr(id);
           return id === "w1" ? pr : null;
         case "workspace_summaries":
           return summaries;
@@ -1223,6 +1253,7 @@ export function installMockBackend() {
         }
         case "suggest_prompts":
           await new Promise((r) => setTimeout(r, 1200));
+          if (LAUNCH) return launchSuggestions(id);
           return ["Add a regression test for this", "Show me the diff before continuing", "Run the full test suite"];
         default:
           return null;
@@ -1232,7 +1263,7 @@ export function installMockBackend() {
   );
   // Simulate a streaming reply on the running workspace.
   const words = "Pushed the branch. Opening a draft PR with the template now…".split(" ");
-  words.forEach((w, i) =>
+  if (!LAUNCH) words.forEach((w, i) =>
     setTimeout(
       () => void emit("agent-event", { workspaceId: "w1", seq: null, ts: now, event: { type: "textDelta", text: (i ? " " : "") + w } }),
       1500 + i * 120,

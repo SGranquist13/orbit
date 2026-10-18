@@ -163,7 +163,7 @@ export function Issues() {
           <Plus className="size-3.5" /> New ticket
         </Button>
       </header>
-      <div className="dither-rule bg-line-strong" />
+      <div className="border-t-[1.5px] border-line" />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!repoId ? (

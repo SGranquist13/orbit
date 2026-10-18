@@ -26,9 +26,12 @@ const failed = (t: TeammateView) => t.lastMessage?.kind === "error";
 
 /** The Teammates view: people on the left (search, "+"), the selected thread on the right. */
 export function Teammates() {
-  const teammates = useApp((s) => s.teammates);
+  const all = useApp((s) => s.teammates);
   const selected = useApp((s) => s.selectedTeammate);
   const [query, setQuery] = useState("");
+
+  // Starters are offered in the New teammate dialog; one only shows here once you've created it from there.
+  const teammates = useMemo(() => all.filter((t) => !t.bundled || t.overridden || t.slug === selected), [all, selected]);
 
   // Land on the remembered teammate (or the first) when the view opens without a valid selection.
   useEffect(() => {
@@ -40,6 +43,7 @@ export function Teammates() {
 
   const q = query.trim().toLowerCase();
   const shown = q ? teammates.filter((t) => `${t.name} ${t.description}`.toLowerCase().includes(q)) : teammates;
+  const empty = teammates.length === 0;
 
   return (
     <div className="flex min-w-0 flex-1 bg-bg" data-teammates>
@@ -55,24 +59,26 @@ export function Teammates() {
             <Plus className="size-3.5" strokeWidth={2.5} />
           </button>
         </header>
-        <div className="dither-rule bg-line-strong" />
-        <div className="px-3 pb-1 pt-3">
-          <label className="flex h-8 items-center gap-2 rounded-[4px] border-[1.5px] border-line bg-bg px-2.5 focus-within:border-line-strong">
-            <Search className="size-3.5 shrink-0 text-mute" strokeWidth={2.25} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search teammates"
-              aria-label="Search teammates"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] placeholder:text-mute focus:outline-none"
-            />
-          </label>
-        </div>
+        <div className="border-t-[1.5px] border-line" />
+        {!empty && (
+          <div className="px-3 pb-1 pt-3">
+            <label className="flex h-8 items-center gap-2 rounded-[4px] border-[1.5px] border-line bg-bg px-2.5 focus-within:border-line-strong">
+              <Search className="size-3.5 shrink-0 text-mute" strokeWidth={2.25} />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search teammates"
+                aria-label="Search teammates"
+                className="min-w-0 flex-1 bg-transparent text-[12.5px] placeholder:text-mute focus:outline-none"
+              />
+            </label>
+          </div>
+        )}
         <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
           {shown.map((t) => (
             <TeammateRow key={t.slug} t={t} selected={t.slug === selected} />
           ))}
-          {shown.length === 0 && teammates.length > 0 && <li className="px-3 py-6 text-center text-[12px] text-mute">No teammate matches.</li>}
+          {shown.length === 0 && !empty && <li className="px-3 py-6 text-center text-[12px] text-mute">No teammate matches.</li>}
         </ul>
       </aside>
       {selected && teammates.some((t) => t.slug === selected) ? (
@@ -80,11 +86,11 @@ export function Teammates() {
       ) : (
         <main className="grid min-w-0 flex-1 place-items-center px-6">
           <div className="text-center">
-            <p className="label text-mute">No teammates yet</p>
-            <p className="mx-auto mt-1.5 max-w-[340px] text-[12.5px] leading-relaxed text-mute">
+            <p className="text-[18px] font-semibold tracking-[-0.02em]">Create your first teammate</p>
+            <p className="mx-auto mt-2 max-w-[380px] text-[13px] leading-relaxed text-mute">
               A teammate is a named coworker with its own instructions and memory. Hand it a task and it works in its own workspace.
             </p>
-            <Button variant="outline" className="mt-4" onClick={() => useApp.getState().setTeammateEditor("new")}>
+            <Button variant="primary" className="mt-5" onClick={() => useApp.getState().setTeammateEditor("new")}>
               <Plus className="size-3.5" /> New teammate
             </Button>
           </div>
@@ -351,7 +357,7 @@ export function TeammateThread({ slug }: { slug: string }) {
         </Button>
       </header>
       <RoutinesLine slug={slug} />
-      <div className="dither-rule bg-line-strong" />
+      <div className="border-t-[1.5px] border-line" />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[760px] space-y-4 px-6 py-5">
@@ -467,6 +473,9 @@ export function TeammateEditor({ slug }: { slug: string }) {
   const [readonly, setReadonly] = useState<"" | "true" | "false">(existing?.readonly == null ? "" : existing.readonly ? "true" : "false");
   const [instructions, setInstructions] = useState(existing?.instructions ?? "");
   const [busy, setBusy] = useState(false);
+  const [starter, setStarter] = useState<string | null>(null);
+  const allTeammates = useApp((s) => s.teammates);
+  const starters = allTeammates.filter((t) => t.bundled && !t.overridden);
   const [memory, setMemory] = useState<string | null>(null);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const close = () => useApp.getState().setTeammateEditor(null);
@@ -478,6 +487,19 @@ export function TeammateEditor({ slug }: { slug: string }) {
     api.teammateMemory(slug).then(setMemory, (e) => useApp.getState().setError(String(e)));
   }, [creating, tab, memory, slug]);
 
+  const applyStarter = (t: Teammate) => {
+    setStarter(t.slug);
+    setName(t.name);
+    setAvatar(parseAvatar(t.avatar, t.name));
+    setDescription(t.description);
+    setAgent(t.agent);
+    setModel(t.model ?? "");
+    setProfile(t.profile ?? "shipkit:builder");
+    setAllowed(t.repos);
+    setReadonly(t.readonly == null ? "" : t.readonly ? "true" : "false");
+    setInstructions(t.instructions);
+  };
+
   const isRepoOn = (r: { id: string; name: string }) => allowed.some((a) => a === r.id || a.toLowerCase() === r.name.toLowerCase());
   const toggleRepo = (r: { id: string; name: string }) =>
     setAllowed((cur) => (isRepoOn(r) ? cur.filter((a) => a !== r.id && a.toLowerCase() !== r.name.toLowerCase()) : [...cur, r.name]));
@@ -487,7 +509,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
     setBusy(true);
     try {
       const saved = await api.saveTeammate({
-        slug: creating ? null : slug,
+        slug: creating ? starter : slug,
         name,
         avatar: formatAvatar(avatar),
         description,
@@ -519,14 +541,14 @@ export function TeammateEditor({ slug }: { slug: string }) {
   const remove = async () => {
     const reset = !!existing?.bundled;
     const ok = await confirmAction(
-      reset ? `Reset ${existing?.name} to its default definition? Your edits are discarded; its memory is kept.` : `Delete ${existing?.name}? Its thread is removed; workspaces it created stay.`,
-      reset ? "Reset" : "Delete",
+      reset ? `Remove ${existing?.name} from your teammates? Your edits are discarded; you can add it again from New teammate.` : `Delete ${existing?.name}? Its thread is removed; workspaces it created stay.`,
+      reset ? "Remove" : "Delete",
     );
     if (!ok) return;
     try {
       await api.deleteTeammate(slug);
       await useApp.getState().refreshTeammates();
-      if (!reset && useApp.getState().selectedTeammate === slug) useApp.setState({ selectedTeammate: null });
+      if (useApp.getState().selectedTeammate === slug) useApp.setState({ selectedTeammate: null });
       close();
     } catch (e) {
       useApp.getState().setError(String(e));
@@ -567,6 +589,29 @@ export function TeammateEditor({ slug }: { slug: string }) {
 
         {tab === "definition" ? (
           <div className="space-y-3.5 px-4 py-4">
+            {creating && starters.length > 0 && (
+              <div>
+                <label className={label}>Start from a starter</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {starters.map((t) => (
+                    <button
+                      key={t.slug}
+                      onClick={() => applyStarter(t)}
+                      title={t.description}
+                      aria-pressed={starter === t.slug}
+                      className={cn(
+                        "flex h-8 items-center gap-2 rounded-[4px] border-[1.5px] px-2 text-[12px] font-medium transition-colors",
+                        starter === t.slug ? "border-fg bg-raised text-fg" : "border-line-strong text-dim hover:text-fg",
+                      )}
+                    >
+                      <TeammateAvatar avatar={t.avatar} name={t.name} size={20} />
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11.5px] text-mute">Fills in the form below; change anything before saving.</p>
+              </div>
+            )}
             <div>
               <label className={label}>Name</label>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scout" autoFocus className={field} />
@@ -677,7 +722,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
         <div className="flex items-center gap-2 border-t border-line px-3 py-2.5">
           {!creating && existing && (existing.bundled ? existing.overridden : true) && (
             <Button variant="ghost" onClick={() => void remove()} className={existing.bundled ? "" : "hover:text-bad"}>
-              {existing.bundled ? "Reset to default" : "Delete"}
+              {existing.bundled ? "Remove" : "Delete"}
             </Button>
           )}
           <span className="flex-1" />

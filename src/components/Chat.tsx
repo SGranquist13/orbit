@@ -83,7 +83,7 @@ export function Chat({ ws }: { ws: Workspace }) {
           </>
         )}
       </header>
-      <div className="dither-rule bg-line-strong" />
+      <div className="border-t-[1.5px] border-line" />
       <RelatedPopover ws={ws} />
 
       <Transcript blocks={blocks} live={live} running={running} loading={!events} />
@@ -504,32 +504,75 @@ function SkillChips({ ws, text, onRun }: { ws: Workspace; text: string; onRun: (
   const skills = useApp((s) => s.skills);
   const pins = useApp((s) => s.pins);
   const profiles = useApp((s) => s.profiles);
+  const [preview, setPreview] = useState<Skill | null>(null);
   // A profile with its own skills replaces the global pins.
   const own = activeProfile(profiles, ws)?.skills ?? [];
   const pinned = (own.length > 0 ? own : pins).map((id) => skills.find((s) => s.id === id)).filter((s): s is Skill => !!s);
+  const args = text.trim();
+  const run = (s: Skill) => {
+    setPreview(null);
+    void useApp.getState().runSkill(ws.id, s.id, text);
+    onRun();
+  };
   return (
-    <div className="mx-auto mb-2.5 flex max-w-[880px] flex-wrap items-center gap-1.5">
-      {pinned.map((s) => (
+    <div className="relative mx-auto mb-2.5 max-w-[880px]" onKeyDown={(e) => e.key === "Escape" && setPreview(null)}>
+      {preview && (
+        <>
+          <div className="fixed inset-0 z-10" onMouseDown={() => setPreview(null)} />
+          <div className="absolute bottom-full left-0 z-20 mb-2 w-[420px] max-w-full space-y-2.5 rounded-[6px] border-[1.5px] border-line-strong bg-raised p-3.5 shadow-hard" data-skill-preview={preview.id}>
+            <div className="flex items-center gap-2">
+              <Zap className="size-3.5 text-accent" strokeWidth={2.75} />
+              <span className="text-[13px] font-semibold">{preview.name}</span>
+              <span className="text-[11px] uppercase text-mute/70">{preview.kind}</span>
+            </div>
+            <p className="text-[12.5px] leading-relaxed text-dim">{preview.description || "No description."}</p>
+            <div>
+              <div className="label mb-1 text-mute">Will send to {agentLabel[ws.agent]}</div>
+              <code className="selectable block whitespace-pre-wrap break-words rounded-[4px] border border-line bg-bg px-2.5 py-2 text-[12px] leading-relaxed">
+                /{preview.id}
+                {args ? ` ${args}` : ""}
+              </code>
+              {!args && preview.argumentHint && <p className="mt-1 text-[11.5px] text-mute">Optional input: {preview.argumentHint}. Type it in the box below first to include it.</p>}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={() => run(preview)}>
+                <Zap className="size-3.5" /> Run in this workspace
+              </Button>
+              <Button variant="ghost" onClick={() => setPreview(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="label mr-0.5 text-mute">Skills</span>
+        {pinned.map((s) => (
+          <button
+            key={s.id}
+            title={`${s.description}
+
+Click to preview what it will do before it runs.`}
+            onClick={() => setPreview(preview?.id === s.id ? null : s)}
+            aria-expanded={preview?.id === s.id}
+            className={cn(
+              "group flex h-6 items-center gap-1.5 rounded-[3px] border-[1.5px] px-2 text-[11px] font-semibold uppercase tracking-wide transition-colors hover:border-accent hover:bg-accent hover:text-accent-fg",
+              preview?.id === s.id ? "border-accent bg-accent text-accent-fg" : "border-line-strong text-dim",
+            )}
+          >
+            <Zap className="size-3 text-accent group-hover:text-accent-fg" strokeWidth={2.75} />
+            {s.name}
+          </button>
+        ))}
         <button
-          key={s.id}
-          title={`/${s.id}${s.argumentHint ? ` ${s.argumentHint}` : ""}\n${s.description}${text.trim() ? "\n\nRuns with the composer text as arguments." : ""}`}
-          onClick={() => {
-            void useApp.getState().runSkill(ws.id, s.id, text);
-            onRun();
-          }}
-          className="group flex h-6 items-center gap-1.5 rounded-[3px] border-[1.5px] border-line-strong px-2 text-[11px] font-semibold uppercase tracking-wide text-dim transition-colors hover:border-accent hover:bg-accent hover:text-accent-fg"
+          onClick={() => useApp.getState().setPacksOpen(true)}
+          title="Add or manage skill shortcuts"
+          aria-label="Add or manage skill shortcuts"
+          className="grid size-6 place-items-center rounded-[3px] text-mute hover:bg-hover hover:text-fg"
         >
-          <Zap className="size-3 text-accent group-hover:text-accent-fg" strokeWidth={2.75} />
-          {s.name}
+          <Plus className="size-3.5" />
         </button>
-      ))}
-      <button
-        onClick={() => useApp.getState().setPacksOpen(true)}
-        title="Skill packs & pins"
-        className="grid size-6 place-items-center rounded-[3px] text-mute hover:bg-hover hover:text-fg"
-      >
-        <Plus className="size-3.5" />
-      </button>
+      </div>
     </div>
   );
 }
