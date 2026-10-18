@@ -1,91 +1,165 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128@2x.png" width="96" alt="Orbit logo" />
+
 # Orbit
 
-Run a fleet of coding agents in parallel git worktrees and ship.
+**Run a fleet of coding agents in parallel, and ship what they build.**
 
-Orbit is a desktop IDE for people who work with Claude Code and Codex all day. Each task gets its own git worktree and branch, so many agents can work at once without stepping on each other or on your checkout. An inbox tells you which sessions need you, and when a task is done you take it from diff to pull request, CI and merge without leaving the app. It is built around shipping rather than editing: the agents write the code, Orbit keeps the fleet organised.
+Orbit is a desktop app for developers who work with Claude Code and Codex all day.<br/>
+Every task gets its own git worktree, branch and agent. You get one inbox for all of them, and a straight line from diff to merged PR.
 
-![Orbit](docs/screenshot.png)
+[![Latest release](https://img.shields.io/github/v/release/SGranquist13/orbit?label=release)](https://github.com/SGranquist13/orbit/releases/latest)
+[![CI](https://github.com/SGranquist13/orbit/actions/workflows/ci.yml/badge.svg)](https://github.com/SGranquist13/orbit/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](#requirements)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Status:** v0.1.0 · Windows 10/11 · unsigned installer. See [FEATURES.md](FEATURES.md) for what is proven in the real app and what is only built.
+[**Download**](https://github.com/SGranquist13/orbit/releases/latest) · [Quick start](#quick-start) · [Features](#features) · [FAQ](#faq) · [Changelog](CHANGELOG.md)
 
-## Highlights
+<br/>
 
-- **Fleet of workspaces.** One git worktree and branch per task, Claude Code and Codex side by side, streaming chat, interrupt, resume after restart, per-workspace profiles (Builder, Debugger, Planner, Reviewer, Shipper) with read-only profiles enforced rather than just prompted.
-- **Attention inbox.** Sessions that finished, failed, asked a question or have failing checks, with suggested replies you can send in one keystroke.
-- **Ship panel.** Commit, push and open a draft PR, watch checks, fix failing CI, mark ready and merge. Orbit can run your project's check command before shipping and keeps save-point commits out of the PR history.
-- **GitHub issues.** Browse a repo's issues, start a workspace from one, turn rough notes into a formatted ticket.
-- **Skill packs.** Install Claude-plugin-style skill packs from a git URL; `/` autocomplete and pinned skill chips. A `shipkit` pack ships with the app.
-- **AI teammates and Chief.** Named teammates with their own instructions and memory take tasks and report back; Chief splits a vague request into parts for the others. Hand-off chips move work from planner to builder to reviewer.
-- **Routines.** Scheduled agent runs ("every Monday at 9"), archived automatically when they find nothing to do.
-- **Simplify.** A read-only pass finds cleanups in your diff and applies the low-risk ones, each in its own commit, reverting any that break the checks.
+<img src="docs/screenshot.png" alt="Orbit: a workspace with an agent's fix, its PR, attached folders and skill chips; the sidebar lists the fleet across three repos" width="900" />
+
+</div>
+
+## Why Orbit
+
+Coding agents are good enough to work in parallel, but a terminal per agent doesn't scale. You lose track of which one is waiting on you, they trample each other's files, and every finished task still needs the same commit, push, PR, CI and merge routine.
+
+Orbit is the control room for that workflow:
+
+- **Isolation by default.** Each workspace is a real git worktree on its own branch. Ten agents can work on one repo without touching each other or your checkout.
+- **Attention, not tabs.** An inbox shows only the sessions that need you: finished, failed, asking a question, or blocked by red CI. Each comes with suggested replies you can send in one keystroke.
+- **Built for shipping.** Commit, push, draft PR, checks, Fix CI, review comments and merge, all from one panel. Orbit runs your checks before anything leaves your machine.
+
+It doesn't replace your editor. Agents write the code; Orbit keeps the fleet organised and moving.
+
+## How it works
+
+```
+  New workspace ─▶ worktree + branch ─▶ agent works ─▶ Inbox: "needs you" ─▶ Ship ─▶ PR ─▶ CI ─▶ merge
+  (Ctrl+N)         ~/.orbit/worktrees    Claude/Codex   reply, or hand off       checks first     auto-archive
+```
+
+1. **Start a task** from a prompt, a GitHub issue, or a routine. Orbit creates a worktree and branch and starts the agent, running Claude Code or Codex, on your existing CLI login.
+2. **Keep working** while it runs. Start more. The sidebar shows every workspace's status and diff at a glance.
+3. **Answer the inbox** when something needs you: approve a plan, reply to a question, or hand the work to a reviewer.
+4. **Ship** when it's done: Orbit runs your checks, squashes its save points, opens a draft PR, watches CI, fixes failures and merges. Then it cleans up the worktree.
+
+## Quick start
+
+1. **Install the prerequisites:** [Claude Code](https://claude.com/claude-code) and/or the [Codex CLI](https://github.com/openai/codex), logged in, plus `git`. For the GitHub features, also install the [GitHub CLI](https://cli.github.com) (`gh auth login`).
+2. **Download** `Orbit_x.y.z_x64-setup.exe` from [Releases](https://github.com/SGranquist13/orbit/releases/latest) and run it.
+   > The installer isn't code-signed yet, so Windows SmartScreen will warn you. Click **More info → Run anyway**.
+3. **Add a repository** (bottom-left of the sidebar) and press **Ctrl+N** to start your first workspace.
+4. Give it a task, switch to something else, and come back when the **Inbox** (Ctrl+I) says it's done.
+
+> Want to look around without agents or accounts? Run the UI in mock mode (see [Build from source](#build-from-source)).
+
+## Features
+
+### Fleet of workspaces
+- One **git worktree + branch per task**. Claude Code and Codex run side by side, with streaming chat, tool-call groups, interrupt, and resume after restart.
+- **Profiles:** Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer. Read-only roles are **enforced**, not just prompted.
+- **Attach folders** (read-only or editable) and discover related projects (package.json, Cargo.toml, pyproject, go.mod), so agents can work across repos.
+- **Context meter** per session, with Compact and New session; per-turn tokens and cost, and a usage report.
+
+### Attention inbox
+- Workspaces that finished, failed, asked something, have failing checks or need a sync.
+- **Suggested replies**, from rules or a cheap AI pass, sent with a number key. Inline reply, dismiss, snooze, `j`/`k` navigation.
+
+### Ship to GitHub
+- **Ship panel:** commit, push, draft PR, live checks, *Fix CI*, *Address comments*, *Ready for review*, *Squash & merge*.
+- **Trunk-friendly git:** save-point commits after each turn (with *Undo last turn*), squashed before shipping, plus a ship gate that runs your project's check command first. Merged workspaces archive themselves.
+- **Issues:** browse a repo's issues, start or plan a workspace from one (`Closes #n` included), and turn rough notes into a well-formed ticket.
+- **Preflight:** before shipping, checks boundary changes against their consumers in this repo and attached folders.
+
+### Skills
+- Install **skill packs** from any git URL; they use the standard Claude plugin layout. `/` autocomplete, pinned skill chips, palette entries.
+- Bundled **shipkit** pack: `ship`, `preflight`, `fix-ci`, `address-comments`, `rebase`, `write-ticket`, `start-issue`.
+- Codex can run the same packs too: Orbit inlines the skill for it.
+
+### AI teammates
+- **Named teammates** with their own instructions and memory. Hand one a task in chat; it creates its own workspace and reports back.
+- **Chief** turns a vague request into a plan of parts for other teammates. Parts run in dependency order, and you get a combined report.
+- **Hand-off chips** move work along: Planner → Builder → Reviewer → Shipper.
+
+### Routines and Simplify
+- **Routines:** scheduled agent runs ("every Monday at 9", "weekdays at 17:00", or cron). Runs that find nothing to do archive themselves quietly.
+- **Simplify:** a read-only pass finds cleanups in your diff and applies the low-risk ones one at a time. Each lands in its own commit, and any that breaks your checks is reverted.
+
+### Made for the keyboard
+| Shortcut | Action | Shortcut | Action |
+|---|---|---|---|
+| `Ctrl+K` | Command palette | `Ctrl+.` | Ship panel |
+| `Ctrl+N` | New workspace | `Ctrl+1…9` | Jump to workspace |
+| `Ctrl+I` | Inbox | `Ctrl+B` | Toggle sidebar |
+| `Ctrl+Shift+G` | Issues | `Ctrl+\` | Focus mode |
+| `Ctrl+Shift+E` | Routines | `Ctrl+Shift+L` | Dark / light theme |
+| `Ctrl+Shift+T` | Teammates | `Esc` | Stop the running turn |
+
+Every action is also in the command palette, and Settings (`Ctrl+,`) lets you adjust almost every behaviour.
 
 ## Requirements
 
-To run Orbit:
+| To run Orbit | To build from source (additionally) |
+|---|---|
+| Windows 10 or 11 with WebView2 (built into current Windows) | [Bun](https://bun.sh) |
+| Claude Code and/or Codex CLI, logged in | Rust (stable, MSVC target) |
+| `git` | Visual Studio C++ build tools (Desktop development with C++, x64); VS 2022 is the tested version |
+| GitHub CLI `gh`, logged in (Ship panel and Issues) | |
 
-- Windows 10 or 11 with the WebView2 runtime (present on current Windows).
-- [Claude Code](https://claude.com/claude-code) and/or the Codex CLI, installed and logged in.
-- `git`.
-- The GitHub CLI `gh`, logged in, for the Ship panel and Issues.
-
-To build from source, additionally:
-
-- [Bun](https://bun.sh)
-- Rust (stable) with the MSVC target and the Visual Studio C++ build tools (Desktop development with C++, x64). Visual Studio 2022 is the tested version.
-
-## Install
-
-Download the installer from the [Releases](https://github.com/SGranquist13/orbit/releases) page and run it. The installer is not code-signed yet, so Windows SmartScreen may warn you: click **More info**, then **Run anyway**.
+macOS and Linux aren't supported yet. Tauri runs there, but Orbit hasn't been tested on them.
 
 ## Build from source
 
-```
+```bash
 bun install
-bun run app          # run the desktop app in dev mode
-bun run app:build    # build the NSIS installer
+bun run app          # run the desktop app (dev mode)
+bun run app:build    # build the Windows installer (NSIS)
+bun run dev          # UI-only mock mode at http://localhost:1420: no agents, repos or accounts needed
 ```
 
-`bun run app` and `bun run check:guards` go through `scripts/cargo.cmd` and `scripts/tauri.cmd`, which put the MSVC toolchain on PATH. They use `cl.exe` if it is already on PATH (for example in a Developer Command Prompt), otherwise the `vcvars64.bat` named by the `VCVARS` environment variable, otherwise they look for a Visual Studio install with `vswhere` (preferring VS 2022).
+`scripts/cargo.cmd` and `scripts/tauri.cmd` put the MSVC toolchain on PATH. They use `cl.exe` if it's already there; otherwise the `vcvars64.bat` named by `VCVARS`; otherwise they find Visual Studio with `vswhere`, preferring VS 2022.
 
-## Mock UI mode
+## Privacy and security
 
-```
-bun install
-bun run dev
-```
+- **Local only, no telemetry.** Orbit has no analytics or crash reporting. Its own network traffic is limited to the agent CLIs it launches, `git` and `gh`, an optional local-model server you configure, and Expo push notifications if you pair a phone (device name and status only).
+- **Your data stays in `~/.orbit`:** the state database, worktrees, skill packs and teammate definitions. Your repositories aren't copied; workspaces are worktrees of them.
+- **Agents run unattended by default**, inside their worktree: Claude with `bypassPermissions`, Codex with `danger-full-access`. They can run anything your user can. To tighten that, go to **Settings → Agents** (Claude "Accept edits", Codex "workspace-write"). Read-only profiles are always enforced, and agents are stopped with Orbit even if it crashes.
+- **Skill packs are code.** Only install packs you trust.
+- Report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 
-Then open http://localhost:1420. This runs the whole UI against a fake backend with sample data, so it needs no agents, no git repositories and no accounts. It is the fastest way to look around or work on the interface.
+## FAQ
 
-## Where your data lives
+**Do I need API keys?** No. Orbit drives the Claude Code and Codex CLIs you already use, with their existing logins and subscriptions.
 
-Everything is under `~/.orbit`: the SQLite state database (`state.db`), worktrees (`worktrees/<repo>/<slug>`), installed skill packs (`packs/`) and teammate definitions (`teammates/`). Your repositories are not copied; workspaces are git worktrees of them.
+**Is it an editor?** No. Orbit is where you run and steer agents and ship their work. Open any workspace in your editor when you want to look closer: it's a normal folder on disk.
 
-## Security
+**Can agents break my checkout?** They work in separate worktrees on their own branches. Your main checkout is never touched, and archiving asks before discarding uncommitted work.
 
-- **Agents run unattended by default.** Claude runs with `bypassPermissions` and Codex with approval `never` and `danger-full-access`, inside the workspace's worktree. They can run any command your user can. To tighten this, open Settings > Agents and switch Claude to "Accept edits" and Codex to "workspace-write". Read-only profiles are always enforced regardless of these settings.
-- **Skill packs are code.** A pack installed from a git URL can instruct agents that run unattended. Install packs you trust.
-- **The mobile bridge is off by default.** When you turn it on (Settings > Mobile), Orbit listens on all network interfaces on the configured port; connections need a pairing code and are encrypted. Turn it off when you are not using it.
-- **Local only, no telemetry.** Orbit has no analytics or crash reporting. The network traffic it generates itself is limited to: the agent CLIs it launches (Claude Code, Codex) and whatever those talk to; `git` and `gh` for GitHub; a local-model server (Ollama or an OpenAI-compatible URL) if you configure one under Settings > Models; and Expo push notifications (device name and status only) if you pair a phone.
+**What does it cost?** Orbit is free and MIT-licensed. Agent usage is billed by Anthropic or OpenAI through your own accounts. The context meter and usage report show what each session spent.
 
-To report a vulnerability, see [SECURITY.md](SECURITY.md).
+**Can I use local models?** Utility tasks (suggestions, commit messages, PR drafts, summaries) can run on Ollama or any OpenAI-compatible server (Settings → Models). Running whole agent sessions on local models is experimental.
 
-## Testing
+**How well is it tested?** This release was verified with an end-to-end suite that drives the real app: 46 scenarios with real Claude and Codex agents, plus 10 against real GitHub PRs, CI and issues. There are also 178 Rust unit tests. [FEATURES.md](FEATURES.md) shows exactly what is proven in the real app.
 
-```
-bunx tsc --noEmit        # typecheck the UI
-cd src-tauri && cargo test      # Rust unit tests (use scripts\cargo.cmd test to get the MSVC toolchain)
-bun run check:guards     # clippy; includes the db-lock guard lint
-```
+## Roadmap
 
-The end-to-end suites (`bun run e2e`, `bun run e2e:github`) drive the real app with real agents and cost model usage, so they are maintainer-only. `e2e:github` also creates real PRs and issues; it needs `ORBIT_GH_SANDBOX` set to a private sandbox repo you own whose CI fails when a file named `FAIL` exists (the script explains how to set one up).
+Next up:
+- Load model lists from the CLIs, and switch agent or model on an existing workspace
+- Image and file attachments in the composer
+- Your own Claude plugins and repo-local skills in `/` autocomplete
+- Per-workspace skill-pack toggles
+- Shipping linked PRs across repositories
+- Signed installer, and macOS and Linux builds
 
-## Experimental
+Ideas and discussion live in [PLANNING.md](PLANNING.md). The companion iPhone app (pair, follow and steer the fleet from your phone) is built but not publicly released yet.
 
-- **Local-model agents** (Ollama and similar, Settings > Models) are experimental. Utility tasks such as commit messages and suggestions can use a local model more reliably than whole agent sessions can.
-- **The mobile companion app** is not released yet. The bridge in `src-tauri/src/remote/` is in the repository but there is no public app to pair with.
+## Contributing
 
-## Licence
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, mock mode and the checks to run. [CLAUDE.md](CLAUDE.md) is the architecture brief; it's written for both humans and coding agents.
 
-[MIT](LICENSE). Bundled fonts and dependency licences are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See [CHANGELOG.md](CHANGELOG.md) for release notes and [CONTRIBUTING.md](CONTRIBUTING.md) if you want to help.
+## License
 
-The Orbit name and black-hole artwork (`src/assets/orbit.png` and the app icons made from it) are by SGranquist13.
+[MIT](LICENSE) © SGranquist13. The Orbit name and black-hole artwork (`src/assets/orbit.png` and the app icons) are by SGranquist13. Bundled fonts and dependency licences are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
