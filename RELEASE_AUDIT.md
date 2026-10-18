@@ -1,11 +1,11 @@
 # Orbit 0.1.0 release audit
 
 Run 2026-10-17 → 2026-10-18. Target: public, open-source **v0.1.0** on GitHub (Windows 10/11).
-Pushed to the private repo `SGranquist13/orbit`; nothing is public yet.
+**Released 2026-10-18:** public repo https://github.com/SGranquist13/orbit, release https://github.com/SGranquist13/orbit/releases/tag/v0.1.0 (tag at `d555591`).
 
 ## Verdict (2026-10-18, evening)
 
-**Everything is done except your manual check.** Then "go public" = make the repo public + publish the draft release.
+**Public.** The published installer was smoke-tested after release: silent install, launch (renders with the CSP, isolated data folder), clean silent uninstall. The native-UI checks (folder picker, archive prompts, notification, taskbar icon) are still to do, either by hand or with computer use.
 
 - Code: private repo [SGranquist13/orbit](https://github.com/SGranquist13/orbit), `main` pushed.
 - CI on GitHub: ✅ UI (tsc + build), ✅ Rust (cargo test + clippy on a clean Windows runner, which also proves a fresh-clone build), ✅ licences (cargo-deny).
