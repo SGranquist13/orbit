@@ -11,7 +11,7 @@ What you want the IDE to do, and the honest state of each feature. **Edit the Pr
 
 **Priority:** P1 = core to "drive a fleet of agents and ship", P2 = important, P3 = nice to have.
 
-_Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run e2e` 23/23 and `bun run e2e:github` 7/7 after the audit fixes; installer built. 2026-10-12: `bun run e2e` 23/23 (adds teammates, hand-offs, Chief, routines, trunk save points / ship gate, simplify, local-model suggestions (skips without Ollama)). Before that, 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
+_Last verified: 2026-10-18 (later that day: `bun run e2e` 33/33 with ten new steps for Settings, data and sessions; earlier, the 0.1.0 release audit, see RELEASE_AUDIT.md): `bun run e2e` 23/23 and `bun run e2e:github` 7/7 after the audit fixes; installer built. 2026-10-12: `bun run e2e` 23/23 (adds teammates, hand-offs, Chief, routines, trunk save points / ship gate, simplify, local-model suggestions (skips without Ollama)). Before that, 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
 
 ## Real vs mock: verification ledger (2026-10-09)
 
@@ -40,8 +40,8 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Unread marker when a turn finishes in a background workspace | P2 | 🟢 | Now derived from persisted seen state |
 | OS notification when an agent finishes or fails (window unfocused) | P2 | 🟢 | Not verified; Windows may need notification permission |
 | Command palette (jump to workspace, run skill, actions) | P1 | ✅ | Ctrl+K |
-| Ctrl+1–9 to jump to a workspace | P2 | 🟢 | |
-| Archive workspace (removes worktree, keeps branch) | P2 | 🟢 | Uses a native confirm dialog, which e2e can't click |
+| Ctrl+1–9 to jump to a workspace | P2 | ✅ | **Real-app e2e 2026-10-18 (`ui-shortcuts`).** |
+| Archive workspace (removes worktree, keeps branch) | P2 | ✅ | **Real-app e2e 2026-10-18 (`archive-and-restore`).** Palette path with the confirm auto-accepted (`autoConfirm`); a dirty worktree is refused ("Uncommitted changes:") unless forced. |
 | Add repository via folder picker | P1 | 🟡 | Backend verified; e2e calls it directly because the native picker can't be automated |
 | **Attention inbox** (Ctrl+I): sessions that finished, failed, asked you something, or have failing checks / requested changes | P1 | ✅ | e2e: a workspace finishing in the background appears as Finished |
 | Inbox: rule suggestions + AI suggestions (one-shot Haiku, no tools, ~$0.0002) sent with one click or a number key | P1 | ✅ | e2e: real Haiku suggestions load; key 3 sends one; the row leaves, then returns when done |
@@ -50,13 +50,13 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Seen/dismissed state persisted across restarts | P1 | 🟢 | Unit-tested (`db::tests`) |
 | Inbox: snooze a row (S = 1 hour, or menu: tomorrow 9:00, next week); snoozed rows show in All | P3 | ✅ | e2e `inbox-snooze`: snoozed row leaves Needs you, unsnoozed it returns |
 | Inbox: focus stays on the same index (next row) after dismiss / snooze / send | P3 | 🟢 | Mock UI only |
-| Archived workspaces list / restore (Settings > Data); recreates the worktree on the existing branch if it was removed | P3 | 🟢 | Verified in mock UI; restore logic is Rust, not yet run against a real repo |
+| Archived workspaces list / restore (Settings > Data); recreates the worktree on the existing branch if it was removed | P3 | ✅ | **Real-app e2e 2026-10-18 (`archive-and-restore`).** Verified in mock UI; restore logic is Rust, not yet run against a real repo |
 | **Settings page** (gear in sidebar, Ctrl+, , palette "Open settings"; Esc returns): left section nav, every change saves instantly with a "Saved" tick | P2 | 🟢 | Verified in mock UI. Typed settings blob in `settings.rs` (`get_settings` / `update_settings`), legacy keys still read |
-| Settings: general (theme, branch prefix with live example, default agent + per-agent model, notifications and only-when-unfocused) | P2 | 🟢 | Verified in mock UI; prefix, notifications and defaults are wired to workspace creation, `notify_turn_done`, New workspace / Issues / New ticket |
-| Settings: agent safety (Claude permission mode, Codex sandbox, extra model ids) and tool diagnostics (`environment_info`, Re-check) | P2 | 🟢 | Verified in mock UI; modes go through `SessionConfig` (args unit-tested), idle sessions restart on change; read-only profiles stay enforced |
+| Settings: general (theme, branch prefix with live example, default agent + per-agent model, notifications and only-when-unfocused) | P2 | ✅ | **Real-app e2e 2026-10-18 (`settings-branch-prefix`).** Verified in mock UI; prefix, notifications and defaults are wired to workspace creation, `notify_turn_done`, New workspace / Issues / New ticket |
+| Settings: agent safety (Claude permission mode, Codex sandbox, extra model ids) and tool diagnostics (`environment_info`, Re-check) | P2 | ✅ | **Real-app e2e 2026-10-18 (`settings-accept-edits` + `environment-diagnostics`).** Accept edits: a `node -e` write via Bash is denied while the Write tool works. (A plain `echo > file` is auto-approved by the Claude CLI in this mode.) Diagnostics show verified Claude and Codex paths. |
 | Settings: GitHub merge method and delete remote branch after merge | P2 | 🟢 | Verified in mock UI; `gh pr merge --<method>` args unit-tested, remote ref deleted via `gh api` |
 | Settings: skills and profiles overview, pinned-skill reorder / unpin, inbox AI suggestions on/off + model, shortcuts reference, data folder, about | P2 | 🟢 | Verified in mock UI; suggestions off skips the Haiku call entirely |
-| Worktree cleanup for merged branches (Settings > Data: dry-run list, confirm, archives and removes clean worktrees, keeps branches) | P3 | 🟢 | Verified in mock UI; git/gh detection (`branch --merged`, PR MERGED) not yet run against a real repo |
+| Worktree cleanup for merged branches (Settings > Data: dry-run list, confirm, archives and removes clean worktrees, keeps branches) | P3 | ✅ | **Real-app e2e 2026-10-18 (`cleanup-merged-dry-run`).** Verified in mock UI; git/gh detection (`branch --merged`, PR MERGED) not yet run against a real repo |
 
 ## Agents & chat
 
@@ -69,8 +69,8 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Follow-up messages in the same session | P1 | ✅ | |
 | Interrupt with Esc / stop button | P1 | ✅ | Shown as "Interrupted", workspace goes idle, no error |
 | Resume sessions after app restart | P1 | ✅ | e2e restarts the app and the agent remembers context |
-| Steer Codex mid-turn (`turn/steer`) | P2 | 🟢 | Implemented, not exercised |
-| Claude: messages sent mid-turn get queued | P2 | 🟢 | Claude CLI queues them; not exercised |
+| Steer Codex mid-turn (`turn/steer`) | P2 | ✅ | **Real-app e2e 2026-10-18 (`codex-steer`).** Steer sent while the turn ran; the reply ended with the steered word. |
+| Claude: messages sent mid-turn get queued | P2 | ✅ | **Real-app e2e 2026-10-18 (`claude-midturn-queue`).** Second message sent during a tool call; it was answered after the first. |
 | Model picker per workspace | P2 | 🟡 | Works (haiku in e2e), but the model lists are hardcoded |
 | Load model lists from the CLIs (`codex model/list`) | P3 | ⬜ | |
 | Change agent/model on an existing workspace | P3 | ⬜ | |
@@ -83,10 +83,10 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Host env scrubbing (launching from inside Claude Code) | P1 | ✅ | |
 | Approve or deny tool calls interactively | P3 | 💭 | Agents currently run unattended in worktrees |
 | Image / file attachments in the composer | P3 | ⬜ | |
-| Per-workspace and total cost tracking | P3 | 🟢 | Per-turn `tok · $` line, per-workspace and overall totals. Claude parser fixture-tested; Codex has tokens only (plan billing, no cost). Verified in mock |
-| Context-window meter in the composer footer | P2 | 🟢 | Bar + `% · used / window`, warn at 70%, bad at 90%; click for the session's tokens and cost. Claude and Codex parsers fixture-tested (`codex_usage_turn.jsonl` recorded from codex-cli 0.162); verified in mock |
-| Compact context / New session | P2 | 🟢 | Popover buttons and palette entries. Claude sends `/compact`; Codex `thread/compact/start`; New session clears the stored session id and adds a divider. Verified in mock, not against real agents |
-| Usage report (Settings > Usage) | P3 | 🟢 | Today/7d/30d/All totals, 14-day chart, by workspace and agent. `UsageSection` is ready to mount; aggregation unit-tested; verified in mock |
+| Per-workspace and total cost tracking | P3 | ✅ | **Real-app e2e 2026-10-18 (`context-meter-and-compact` + `usage-report`).** Per-turn `tok · $` line, per-workspace and overall totals. Claude parser fixture-tested; Codex has tokens only (plan billing, no cost). Verified in mock |
+| Context-window meter in the composer footer | P2 | ✅ | **Real-app e2e 2026-10-18 (`context-meter-and-compact`).** Bar + `% · used / window`, warn at 70%, bad at 90%; click for the session's tokens and cost. Claude and Codex parsers fixture-tested (`codex_usage_turn.jsonl` recorded from codex-cli 0.162); verified in mock |
+| Compact context / New session | P2 | ✅ | **Real-app e2e 2026-10-18 (`context-meter-and-compact`).** Real Claude: `/compact` shrank the context (26k to 4k tokens); New session shows the divider and the agent forgot the word. |
+| Usage report (Settings > Usage) | P3 | ✅ | **Real-app e2e 2026-10-18 (`usage-report`).** Today/7d/30d/All totals, 14-day chart, by workspace and agent. `UsageSection` is ready to mount; aggregation unit-tested; verified in mock |
 | Full diff viewer / code review | P3 | 💭 | Deliberately deprioritised; the Changes list exists |
 
 ## Skills
@@ -144,7 +144,7 @@ _Last verified: 2026-10-18 (0.1.0 release audit, see RELEASE_AUDIT.md): `bun run
 | Focus layout: Ship panel hidden until you click **Ship** in the header (Ctrl+.), never opens on its own; header hint shows PR # + checks dot or changed-file count | P1 | ✅ | e2e opens/closes it; verified in mock UI |
 | Narrower, quieter sidebar (216px); collapses to an icon rail (Ctrl+B) | P1 | 🟡 | Slim sidebar seen in the real app; collapse-to-rail only checked in mock |
 | Wider chat column (880px) and bigger composer | P1 | ✅ | Seen in real-app e2e screenshots |
-| Focus mode (Ctrl+\): hides sidebar and Ship panel | P2 | 🟢 | Verified in mock UI |
+| Focus mode (Ctrl+\): hides sidebar and Ship panel | P2 | ✅ | **Real-app e2e 2026-10-18 (`ui-shortcuts`).** Ctrl+\ hides and restores the sidebar. |
 | Responsive layout below ~1000px | P3 | ⬜ | Partly covered by the sidebar rail |
 
 ## Platform & dev
