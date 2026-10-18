@@ -246,7 +246,7 @@ function NavItem({
       )}
     >
       {icon}
-      <span className="flex-1 text-left">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
       {!!count && (
         <span className="rounded-[3px] bg-fg px-1.5 text-[10px] font-semibold leading-4 tabular-nums text-bg">{count}</span>
       )}

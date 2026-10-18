@@ -569,7 +569,7 @@ Click to preview what it will do before it runs.`}
               preview?.id === s.id ? "border-accent bg-accent text-accent-fg" : "border-line-strong text-dim",
             )}
           >
-            <Zap className="size-3 text-accent group-hover:text-accent-fg" strokeWidth={2.75} />
+            <Zap className={cn("size-3 group-hover:text-accent-fg", preview?.id === s.id ? "text-accent-fg" : "text-accent")} strokeWidth={2.75} />
             {s.name}
           </button>
         ))}

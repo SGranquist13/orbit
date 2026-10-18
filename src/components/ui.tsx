@@ -43,7 +43,7 @@ export const agentLabel: Record<AgentKind, string> = { claude: "Claude", codex: 
 
 export function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="rounded-[3px] border border-line-strong/70 bg-raised px-1 font-sans text-[10px] font-medium leading-4 text-mute">
+    <kbd className="shrink-0 whitespace-nowrap rounded-[3px] border border-line-strong/70 bg-raised px-1 font-sans text-[10px] font-medium leading-4 text-mute">
       {children}
     </kbd>
   );
