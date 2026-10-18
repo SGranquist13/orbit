@@ -97,7 +97,7 @@ pub fn install_builtin(home: &Path) -> anyhow::Result<()> {
     let root = packs_dir(home).join(BUILTIN_PACK);
     for (rel, body) in SHIPKIT {
         let p = root.join(rel);
-        std::fs::create_dir_all(p.parent().expect("has parent"))?;
+        std::fs::create_dir_all(p.parent().ok_or_else(|| anyhow!("{} has no parent folder", p.display()))?)?;
         std::fs::write(&p, body)?;
     }
     crate::teammates::install_bundled(&root)?;
@@ -125,7 +125,7 @@ pub fn install(home: &Path, url: &str) -> anyhow::Result<String> {
         return Err(anyhow!("pack `{name}` is already installed"));
     }
     std::fs::create_dir_all(packs_dir(home))?;
-    crate::git::run(&packs_dir(home), &["clone", "--depth", "1", url, &name])?;
+    crate::git::run(&packs_dir(home), &["clone", "--depth", "1", "--", url, &name])?;
     Ok(name)
 }
 

@@ -34,8 +34,14 @@ const DEFAULT_PROFILE: &str = "shipkit:builder";
 
 type CmdResult<T> = Result<T, String>;
 
+/// Command error text. `{:#}` keeps anyhow's context chain (and is plain `Display` for other errors).
 fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
+    format!("{e:#}")
+}
+
+/// Locks a mutex even if a panicking thread poisoned it: one panic must not brick every command.
+pub(crate) fn relock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 pub struct Inner {
@@ -50,7 +56,15 @@ type AppState = Arc<Inner>;
 
 impl Inner {
     fn db(&self) -> std::sync::MutexGuard<'_, Db> {
-        self.db.lock().expect("db lock poisoned")
+        relock(&self.db)
+    }
+
+    fn sessions_lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, SessionHandle>> {
+        relock(&self.sessions)
+    }
+
+    fn notices_lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        relock(&self.role_notices)
     }
 
     fn disabled_packs(&self) -> Vec<String> {
@@ -77,7 +91,7 @@ impl Inner {
             .filter(|w| w.status == "running")
             .map(|w| w.id)
             .collect();
-        self.sessions.lock().unwrap().retain(|id, h| {
+        self.sessions_lock().retain(|id, h| {
             let keep = running.contains(id);
             if !keep {
                 h.send(Command::Shutdown);
@@ -93,7 +107,7 @@ impl Inner {
         if running {
             return;
         }
-        let taken = self.sessions.lock().unwrap().remove(workspace_id);
+        let taken = self.sessions_lock().remove(workspace_id);
         if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
@@ -264,7 +278,7 @@ fn resolve_profile(state: &AppState, ws: &Workspace) -> Option<skills::Profile> 
 }
 
 fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::Result<SessionHandle> {
-    if let Some(h) = state.sessions.lock().unwrap().get(&ws.id) {
+    if let Some(h) = state.sessions_lock().get(&ws.id) {
         return Ok(h.clone());
     }
     let kind = AgentKind::parse(&ws.agent).ok_or_else(|| anyhow::anyhow!("unknown agent {}", ws.agent))?;
@@ -324,14 +338,14 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
             if exited {
                 // Only forget this session if it is still the current one: a restarted or reset
                 // workspace may already have a newer session that must keep running.
-                let mut sessions = state2.sessions.lock().unwrap();
+                let mut sessions = state2.sessions_lock();
                 if sessions.get(&id).is_some_and(|h| h.generation == generation) {
                     sessions.remove(&id);
                 }
             }
         }),
     )?;
-    state.sessions.lock().unwrap().insert(ws.id.clone(), handle.clone());
+    state.sessions_lock().insert(ws.id.clone(), handle.clone());
     Ok(handle)
 }
 
@@ -341,15 +355,23 @@ fn list_repos(state: State<AppState>) -> CmdResult<Vec<Repo>> {
 }
 
 #[tauri::command]
-fn add_repo(state: State<AppState>, path: String) -> CmdResult<Repo> {
-    let top = git::toplevel(Path::new(&path)).map_err(|_| format!("{path} is not a git repository"))?;
-    let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
-    let repo = Repo {
-        id: uuid::Uuid::new_v4().to_string(),
-        name,
-        base_branch: git::default_branch(&top),
-        path: top.to_string_lossy().to_string(),
-    };
+async fn add_repo(state: State<'_, AppState>, path: String) -> CmdResult<Repo> {
+    // git runs off the main thread; the db lock is only taken afterwards.
+    let repo = tauri::async_runtime::spawn_blocking(move || -> CmdResult<Repo> {
+        if !git::git_available() {
+            return Err(git::not_installed("git").replace("`git` is not installed", "Git is not installed"));
+        }
+        let top = git::toplevel(Path::new(&path)).map_err(|_| format!("{path} is not a git repository"))?;
+        let name = top.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+        Ok(Repo {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            base_branch: git::default_branch(&top),
+            path: top.to_string_lossy().to_string(),
+        })
+    })
+    .await
+    .map_err(err)??;
     let db = state.db();
     if let Some(existing) = db.repos().map_err(err)?.into_iter().find(|r| r.path == repo.path) {
         return Ok(existing);
@@ -441,6 +463,7 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: one parameter per UI field
 async fn create_workspace(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -505,6 +528,7 @@ async fn name_workspace(app: AppHandle, state: AppState, id: String, original: S
 /// Creates a workspace for a GitHub issue (no prompt) and runs `shipkit:start-issue` on it,
 /// so the agent reads the issue itself via `gh`.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command: one parameter per UI field
 async fn start_issue(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -579,7 +603,7 @@ pub(crate) fn switch_profile(app: &AppHandle, state: &AppState, id: &str, profil
                 "[Orbit: this workspace switched from the {} role to the {} role. Follow your new role instructions in the system prompt; they replace the earlier role. {access}]\n\n",
                 old.name, new.name
             );
-            state.role_notices.lock().unwrap().insert(id.to_string(), note);
+            state.notices_lock().insert(id.to_string(), note);
         }
     }
     emit_workspace(app, &ws);
@@ -592,11 +616,15 @@ fn list_attachments(state: State<AppState>, workspace_id: String) -> CmdResult<V
 }
 
 #[tauri::command]
-fn attach_folder(state: State<AppState>, workspace_id: String, path: String) -> CmdResult<Attachment> {
-    if !Path::new(&path).is_dir() {
-        return Err(format!("{path} is not a folder"));
-    }
-    let path = related::canonical(Path::new(&path)).to_string_lossy().to_string();
+async fn attach_folder(state: State<'_, AppState>, workspace_id: String, path: String) -> CmdResult<Attachment> {
+    let path = tauri::async_runtime::spawn_blocking(move || -> CmdResult<String> {
+        if !Path::new(&path).is_dir() {
+            return Err(format!("{path} is not a folder"));
+        }
+        Ok(related::canonical(Path::new(&path)).to_string_lossy().to_string())
+    })
+    .await
+    .map_err(err)??;
     let attachment = state.db().add_attachment(&workspace_id, &path).map_err(err)?;
     state.restart_session_if_idle(&workspace_id);
     Ok(attachment)
@@ -700,7 +728,7 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
     let ws = state.db().workspace(id)?;
     on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill });
     // Pending role hand-over note from a profile switch goes to the agent, not the transcript.
-    let note = state.role_notices.lock().unwrap().remove(id);
+    let note = state.notices_lock().remove(id);
     let payload = match note {
         Some(note) => format!("{note}{payload}"),
         None => payload,
@@ -714,7 +742,7 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
     let handle = ensure_session(app, state, &ws).map_err(fail)?;
     if !handle.send(Command::User(payload.clone())) {
         // Session died between lookup and send: drop it and retry once with a fresh process.
-        state.sessions.lock().unwrap().remove(id);
+        state.sessions_lock().remove(id);
         ensure_session(app, state, &ws).map_err(fail)?.send(Command::User(payload));
     }
     let ws = state.db().set_status(id, "running")?;
@@ -853,7 +881,7 @@ async fn mark_pr_ready(state: State<'_, AppState>, id: String, number: u64) -> C
 
 #[tauri::command]
 fn interrupt(state: State<AppState>, id: String) {
-    if let Some(h) = state.sessions.lock().unwrap().get(&id) {
+    if let Some(h) = state.sessions_lock().get(&id) {
         h.send(Command::Interrupt);
     }
 }
@@ -871,7 +899,7 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
     on_agent_event(&app, &state, &id, AgentEvent::UserMessage { text: "/compact".into(), skill: None });
     let handle = ensure_session(&app, &state, &ws).map_err(err)?;
     if !handle.send(Command::Compact) {
-        state.sessions.lock().unwrap().remove(&id);
+        state.sessions_lock().remove(&id);
         ensure_session(&app, &state, &ws).map_err(err)?.send(Command::Compact);
     }
     // Claude runs `/compact` as a turn (status follows its events); Codex's compaction has no
@@ -886,7 +914,7 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
 /// Drops the agent session so the next message starts from a clean context in the same worktree.
 #[tauri::command]
 fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    let taken = state.sessions.lock().unwrap().remove(&id);
+    let taken = state.sessions_lock().remove(&id);
     if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
@@ -895,7 +923,7 @@ fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<
         db.clear_agent_session(&id).map_err(err)?;
         db.set_status(&id, "idle").map_err(err)?
     };
-    state.role_notices.lock().unwrap().remove(&id);
+    state.notices_lock().remove(&id);
     on_agent_event(&app, &state, &id, AgentEvent::SessionReset);
     emit_workspace(&app, &ws);
     Ok(())
@@ -952,7 +980,7 @@ fn rename_workspace(app: AppHandle, state: State<AppState>, id: String, name: St
 
 #[tauri::command]
 fn stop_session(state: State<AppState>, id: String) {
-    let taken = state.sessions.lock().unwrap().remove(&id);
+    let taken = state.sessions_lock().remove(&id);
     if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
@@ -974,17 +1002,40 @@ async fn workspace_changes(state: State<'_, AppState>, id: String) -> CmdResult<
 }
 
 #[tauri::command]
-async fn archive_workspace(state: State<'_, AppState>, id: String, remove_worktree: bool) -> CmdResult<()> {
-    archive_inner(&state, &id, remove_worktree).await
+async fn archive_workspace(
+    state: State<'_, AppState>,
+    id: String,
+    remove_worktree: bool,
+    force: Option<bool>,
+) -> CmdResult<()> {
+    archive_inner(&state, &id, remove_worktree, force.unwrap_or(false)).await
 }
 
-pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: bool) -> CmdResult<()> {
+/// The refusal for archiving a worktree that has unsaved work (the UI keys on the prefix).
+pub(crate) fn dirty_error(paths: &[String]) -> String {
+    format!("Uncommitted changes: {}", paths.join(", "))
+}
+
+/// Archives a workspace. Removing the worktree discards uncommitted/untracked files, so without
+/// `force` a dirty worktree is refused before anything (including the session) is touched.
+pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: bool, force: bool) -> CmdResult<()> {
     let id = id.to_string();
-    let taken = state.sessions.lock().unwrap().remove(&id);
+    let ws = state.db().workspace(&id).map_err(err)?;
+    if remove_worktree && !force {
+        let wt = PathBuf::from(&ws.path);
+        let dirty = tauri::async_runtime::spawn_blocking(move || {
+            if wt.exists() { git::dirty_paths(&wt, 6) } else { Vec::new() }
+        })
+        .await
+        .map_err(err)?;
+        if !dirty.is_empty() {
+            return Err(dirty_error(&dirty));
+        }
+    }
+    let taken = state.sessions_lock().remove(&id);
     if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
-    let ws = state.db().workspace(&id).map_err(err)?;
     if remove_worktree {
         let repo = state.db().repo(&ws.repo_id).map_err(err)?;
         let (repo_path, wt) = (PathBuf::from(repo.path), PathBuf::from(&ws.path));
@@ -1156,7 +1207,7 @@ async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> 
     for c in candidates {
         let Some(ws) = workspaces.iter().find(|w| w.id == c.workspace_id) else { continue };
         let Some(repo) = repos.iter().find(|r| r.id == ws.repo_id) else { continue };
-        let taken = state.sessions.lock().unwrap().remove(&ws.id);
+        let taken = state.sessions_lock().remove(&ws.id);
         if let Some(h) = taken {
             h.send(Command::Shutdown);
         }
@@ -1173,18 +1224,34 @@ async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> 
 
 #[tauri::command]
 fn get_setting(state: State<AppState>, key: String) -> CmdResult<Option<String>> {
+    check_setting_key(&key)?;
     state.db().setting(&key).map_err(err)
 }
 
 #[tauri::command]
 fn set_setting(state: State<AppState>, key: String, value: String) -> CmdResult<()> {
+    check_setting_key(&key)?;
     state.db().set_setting(&key, &value).map_err(err)
+}
+
+/// The webview may only touch the keys the UI uses; secrets such as `remote_keypair` stay backend-only.
+fn check_setting_key(key: &str) -> CmdResult<()> {
+    const ALLOWED: [&str; 3] = [settings::KEY, "pinned_skills", "disabled_packs"];
+    if ALLOWED.contains(&key) || key.starts_with("teammate_seen:") {
+        Ok(())
+    } else {
+        Err(format!("Setting \"{key}\" is not available to the UI"))
+    }
 }
 
 /// `~/.orbit`, moving pre-rename `~/.agentic-ide` state over once. If that old folder has
 /// worktrees we keep using it in place: git links worktrees by absolute path.
-fn default_home() -> PathBuf {
-    let base = dirs::home_dir().expect("home dir");
+fn default_home() -> anyhow::Result<PathBuf> {
+    let base = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not find your home folder (set ORBIT_HOME to choose where Orbit keeps its data)"))?;
+    Ok(default_home_in(&base))
+}
+
+fn default_home_in(base: &Path) -> PathBuf {
     let home = base.join(".orbit");
     let legacy = base.join(".agentic-ide");
     if !home.exists() && legacy.exists() {
@@ -1199,6 +1266,35 @@ fn default_home() -> PathBuf {
     home
 }
 
+/// Opens `<home>/state.db`. A database SQLite can't read is moved aside to `state.db.corrupt-<ts>`
+/// and recreated once; the second return value is where the old file went.
+fn open_db(home: &Path) -> anyhow::Result<(Db, Option<PathBuf>)> {
+    use anyhow::Context;
+    std::fs::create_dir_all(home).with_context(|| format!("could not create {}", home.display()))?;
+    let path = home.join("state.db");
+    match Db::open(&path) {
+        Ok(db) => Ok((db, None)),
+        Err(first) if path.exists() => {
+            let aside = home.join(format!("state.db.corrupt-{}", db::now()));
+            std::fs::rename(&path, &aside)
+                .with_context(|| format!("{} could not be opened ({first:#}) and could not be moved aside", path.display()))?;
+            // The WAL/SHM files belong to the old database.
+            for ext in ["-wal", "-shm"] {
+                let _ = std::fs::remove_file(home.join(format!("state.db{ext}")));
+            }
+            let db = Db::open(&path).with_context(|| format!("could not create a new database at {}", path.display()))?;
+            Ok((db, Some(aside)))
+        }
+        Err(e) => Err(e.context(format!("could not open {}", path.display()))),
+    }
+}
+
+/// A native dialog for failures that happen before any window exists.
+fn startup_dialog(app: &tauri::App, kind: tauri_plugin_dialog::MessageDialogKind, message: String) {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().message(message).title("Orbit").kind(kind).blocking_show();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1207,9 +1303,24 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // ORBIT_HOME isolates state for tests and side-by-side dev builds.
-            let home = std::env::var_os("ORBIT_HOME").map(PathBuf::from).unwrap_or_else(default_home);
-            std::fs::create_dir_all(&home)?;
-            let db = Db::open(&home.join("state.db"))?;
+            let started = std::env::var_os("ORBIT_HOME")
+                .map(|h| Ok(PathBuf::from(h)))
+                .unwrap_or_else(default_home)
+                .and_then(|home| open_db(&home).map(|(db, aside)| (home, db, aside)));
+            let (home, db, aside) = match started {
+                Ok(v) => v,
+                Err(e) => {
+                    startup_dialog(app, tauri_plugin_dialog::MessageDialogKind::Error, format!("Orbit could not start.\n\n{e:#}"));
+                    return Err(e.into());
+                }
+            };
+            if let Some(aside) = aside {
+                startup_dialog(
+                    app,
+                    tauri_plugin_dialog::MessageDialogKind::Warning,
+                    format!("Orbit's database could not be read, so it started with a fresh one. The old file was kept at:\n{}", aside.display()),
+                );
+            }
             if let Err(e) = skills::install_builtin(&home) {
                 eprintln!("failed to install shipkit: {e}");
             }
@@ -1326,6 +1437,78 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_db_is_moved_aside_and_recreated() {
+        let home = std::env::temp_dir().join(format!("orbit-open-db-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("state.db"), "this is not a sqlite database, just text".repeat(20)).unwrap();
+        let (db, aside) = open_db(&home).unwrap();
+        let aside = aside.expect("old file kept");
+        assert!(aside.exists() && aside.file_name().unwrap().to_string_lossy().starts_with("state.db.corrupt-"));
+        assert!(db.setting("anything").unwrap().is_none());
+        drop(db);
+        // A healthy db opens without moving anything.
+        assert!(open_db(&home).unwrap().1.is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn poisoned_locks_still_open() {
+        let m = Arc::new(Mutex::new(1));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison it");
+        })
+        .join();
+        assert!(m.is_poisoned());
+        assert_eq!(*relock(&m), 1);
+    }
+
+    #[test]
+    fn ui_cannot_read_secret_settings() {
+        assert!(check_setting_key("remote_keypair").is_err());
+        assert!(check_setting_key("remote_devices").is_err());
+        assert!(check_setting_key("app_settings").is_ok());
+        assert!(check_setting_key("teammate_seen:chief").is_ok());
+        assert!(check_setting_key("random").is_err());
+    }
+
+    #[test]
+    fn dirty_error_starts_with_marker() {
+        assert!(dirty_error(&["a.txt".into(), "b.txt".into()]).starts_with("Uncommitted changes: a.txt, b.txt"));
+    }
+
+    #[tokio::test]
+    async fn archive_refuses_a_dirty_worktree_unless_forced() {
+        let root = std::env::temp_dir().join(format!("orbit-arch-{}", uuid::Uuid::new_v4().simple()));
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        std::fs::write(repo.join("a.txt"), "1").unwrap();
+        git::run(&repo, &["add", "-A"]).unwrap();
+        git::run(&repo, &["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-qm", "init"]).unwrap();
+        let wt = root.join("wt");
+        git::run(&repo, &["worktree", "add", "-b", "w", &wt.to_string_lossy()]).unwrap();
+        std::fs::write(wt.join("scratch.txt"), "precious").unwrap();
+
+        let db = Db::memory();
+        db.insert_repo(&Repo { id: "r".into(), name: "repo".into(), base_branch: "main".into(), path: repo.to_string_lossy().to_string() }).unwrap();
+        let ws = Workspace {
+            id: "w".into(), repo_id: "r".into(), name: "task".into(), branch: "w".into(), path: wt.to_string_lossy().to_string(),
+            agent: "claude".into(), status: "idle".into(), ..Default::default()
+        };
+        db.insert_workspace(&ws).unwrap();
+        let state: AppState = Arc::new(Inner { db: Mutex::new(db), sessions: Mutex::default(), role_notices: Mutex::default(), home: root.clone() });
+
+        let e = archive_inner(&state, &ws.id, true, false).await.unwrap_err();
+        assert!(e.starts_with("Uncommitted changes:") && e.contains("scratch.txt"), "{e}");
+        assert!(wt.join("scratch.txt").exists(), "nothing was removed");
+        archive_inner(&state, &ws.id, true, true).await.unwrap();
+        assert!(!wt.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn derived_names_are_recognised() {

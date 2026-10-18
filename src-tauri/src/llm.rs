@@ -92,7 +92,7 @@ pub fn plan(s: &Settings, task: Task) -> Option<Plan> {
 static LAST_ERRORS: OnceLock<Mutex<HashMap<&'static str, String>>> = OnceLock::new();
 
 fn errors() -> std::sync::MutexGuard<'static, HashMap<&'static str, String>> {
-    LAST_ERRORS.get_or_init(Default::default).lock().unwrap()
+    LAST_ERRORS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner())
 }
 
 /// The most recent failure per backend (`claude`, `ollama`, `openaiCompat`); cleared on its next success.
@@ -386,7 +386,7 @@ pub async fn status(s: &Settings) -> LocalStatus {
     let openai = s.local_provider == "openai";
     let ollama_url = if openai { DEFAULT_OLLAMA_URL.to_string() } else { s.local_base_url() };
     let openai_url = if openai { s.local_base_url() } else { DEFAULT_OPENAI_URL.to_string() };
-    let key = Some(s.local_api_key.as_str()).filter(|_| openai);
+    let key = openai.then_some(s.local_api_key.as_str());
     let (version_url, tags_url, models_url) =
         (format!("{ollama_url}/api/version"), format!("{ollama_url}/api/tags"), format!("{openai_url}/v1/models"));
     let (version, tags, models) = tokio::join!(get_json(&version_url, None), get_json(&tags_url, None), get_json(&models_url, key));

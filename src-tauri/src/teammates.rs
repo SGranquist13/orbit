@@ -763,7 +763,7 @@ pub async fn teammate_send(
     let open = open.filter(|task| live.iter().any(|w| w.id == task.workspace_id));
     match decide(new_task, open.as_ref()) {
         Delegation::Continue(_) => {
-            let task = open.expect("Continue implies an open task");
+            let Some(task) = open else { return Err("There is no open task to continue".into()) };
             post(&app, &state, message(&slug, "user", "message", &text, Some(&task.workspace_id)));
             let _ = state.db().update_teammate_task(&task.id, "running", None, None);
             changed(&app, &slug);
@@ -887,7 +887,7 @@ pub(crate) fn adopt_task(app: &AppHandle, state: &AppState, s: Start, ws_id: &st
     let ws = crate::switch_profile(app, state, ws_id, t.profile.as_deref()).map_err(err)?;
     let note = format!("[Orbit: this workspace was handed to {} ({}). Follow their instructions from now on; the earlier role no longer applies.]\n\n", t.name, s.slug);
     {
-        let mut notices = state.role_notices.lock().unwrap();
+        let mut notices = state.notices_lock();
         let merged = format!("{}{note}", notices.remove(ws_id).unwrap_or_default());
         notices.insert(ws_id.to_string(), merged);
     }

@@ -120,7 +120,7 @@ export function Mobile() {
       <Row
         label="Allow phone connections"
         field="remoteEnabled"
-        description="Lets the Orbit phone app watch and drive your workspaces. Everything is end-to-end encrypted and only paired phones can connect."
+        description="Lets the Orbit phone app watch and drive your workspaces. Everything is end-to-end encrypted and only paired phones can connect. While on, Orbit listens on all network interfaces (not just this computer)."
       >
         <Toggle label="Allow phone connections" checked={s.remoteEnabled} onChange={(v) => void save({ remoteEnabled: v })} />
       </Row>

@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
 import type { PrStatus, Workspace } from "../lib/ipc";
 import { api } from "../lib/ipc";
@@ -40,7 +41,7 @@ export function RightPanel({ ws }: { ws: Workspace }) {
     const ok = await confirmAction(`Archive "${ws.name}" and delete its worktree?\n\nThe branch ${ws.branch} is kept.`, "Archive");
     if (!ok) return;
     try {
-      await api.archiveWorkspace(ws.id, true);
+      await archiveWithWorktree(ws.id, ws.name);
       useApp.getState().removeWorkspace(ws.id);
     } catch (e) {
       useApp.getState().setError(String(e));

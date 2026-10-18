@@ -189,6 +189,7 @@ async fn send_error(ws: &mut Ws, code: &str, message: &str) {
     let _ = ws.close(None).await;
 }
 
+#[allow(clippy::result_large_err)] // the signature is fixed by tungstenite's handshake callback
 fn check_path(req: &Request, resp: Response) -> Result<Response, ErrorResponse> {
     if req.uri().path() == "/v1" {
         Ok(resp)

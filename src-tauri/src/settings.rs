@@ -294,7 +294,7 @@ impl Settings {
     pub fn patched(&self, patch: &Value) -> Result<Self, String> {
         let Some(patch) = patch.as_object() else { return Err("settings patch must be an object".into()) };
         let mut base = serde_json::to_value(self).map_err(|e| e.to_string())?;
-        let map = base.as_object_mut().expect("settings serialize to an object");
+        let map = base.as_object_mut().ok_or("settings did not serialize to an object")?;
         for (k, v) in patch {
             map.insert(k.clone(), v.clone());
         }

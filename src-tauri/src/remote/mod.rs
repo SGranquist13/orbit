@@ -149,7 +149,7 @@ impl Backend for OrbitBackend {
             }
             "interrupt" => {
                 let id = str_param(&params, "workspaceId")?;
-                if let Some(h) = st.sessions.lock().unwrap().get(id) {
+                if let Some(h) = st.sessions_lock().get(id) {
                     h.send(crate::Command::Interrupt);
                 }
                 Ok(Value::Null)

@@ -580,12 +580,13 @@ async fn run_find(ws: &Workspace, base: String, kind: Scope, model: String, max:
 // ---- apply ----
 
 fn interrupt(state: &AppState, ws_id: &str) {
-    if let Some(h) = state.sessions.lock().unwrap().get(ws_id) {
+    if let Some(h) = state.sessions_lock().get(ws_id) {
         h.send(Command::Interrupt);
     }
 }
 
 /// Everything after the agent's edit turn: decide, then commit or revert. Returns the finished row fields.
+#[allow(clippy::type_complexity)]
 fn finish_step(wt: &Path, pre: &str, title: &str, check: impl FnOnce() -> (CheckOutcome, Option<CheckResult>)) -> anyhow::Result<(StepDecision, Option<CheckResult>, Option<(String, i64)>)> {
     // The git lock is not held while the check runs: it can take minutes and would stall other workspaces.
     let changed = {

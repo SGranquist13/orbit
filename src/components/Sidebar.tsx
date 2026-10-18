@@ -3,6 +3,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
+import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
 import { api, type Repo, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
@@ -319,7 +320,7 @@ function WorkspaceMenu({ ws, x, y, onRename, onClose }: { ws: Workspace; x: numb
 The branch ${ws.branch} is kept.`, "Archive");
           if (!ok) return;
           try {
-            await api.archiveWorkspace(ws.id, true);
+            await archiveWithWorktree(ws.id, ws.name);
             useApp.getState().removeWorkspace(ws.id);
           } catch (e) {
             fail(e);

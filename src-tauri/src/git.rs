@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,7 +16,11 @@ pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let out = cmd.output().with_context(|| format!("{program} {}", args.join(" ")))?;
+    let out = match cmd.output() {
+        Ok(o) => o,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(anyhow!(not_installed(program))),
+        Err(e) => return Err(anyhow::Error::new(e).context(format!("{program} {}", args.join(" ")))),
+    };
     if !out.status.success() {
         return Err(anyhow!(
             "{program} {} failed: {}",
@@ -25,6 +29,23 @@ pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// "`gh` is not installed or not on PATH (…)": what users see when a tool can't be spawned.
+pub fn not_installed(program: &str) -> String {
+    let hint = match program {
+        "git" => "install it from git-scm.com",
+        "gh" => "install it from cli.github.com and run `gh auth login`",
+        "claude" => "install Claude Code from claude.com/claude-code",
+        "codex" => "install the Codex CLI (npm i -g @openai/codex)",
+        _ => "install it and make sure it is on your PATH",
+    };
+    format!("`{program}` is not installed or not on PATH ({hint})")
+}
+
+/// True when `git` can be spawned at all.
+pub fn git_available() -> bool {
+    !matches!(run(Path::new("."), &["--version"]), Err(e) if e.to_string().contains("is not installed"))
 }
 
 pub fn toplevel(path: &Path) -> anyhow::Result<PathBuf> {
@@ -125,9 +146,21 @@ pub fn create_worktree_from(repo: &Path, path: &Path, branch: &str, start: &str)
     Ok(())
 }
 
+/// Removes the worktree folder. A folder that is already gone is fine: stale records are pruned.
 pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
+    if !path.exists() {
+        let _ = run(repo, &["worktree", "prune"]);
+        return Ok(());
+    }
     run(repo, &["worktree", "remove", "--force", &path.to_string_lossy()])?;
     Ok(())
+}
+
+/// Up to `limit` paths with uncommitted or untracked changes (empty when clean or unreadable).
+pub fn dirty_paths(worktree: &Path, limit: usize) -> Vec<String> {
+    run(worktree, &["status", "--porcelain"])
+        .map(|s| s.lines().filter(|l| l.len() > 3).map(|l| l[3..].trim().to_string()).take(limit).collect())
+        .unwrap_or_default()
 }
 
 /// Re-attaches an existing branch as a worktree at `path` (used when restoring an archived workspace).
@@ -298,6 +331,31 @@ mod tests {
         assert_eq!(commits_ahead(&d, "main"), Some(1));
         assert_eq!(commits_ahead(&d, "no-such-ref"), None);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn remove_worktree_tolerates_missing_folder_and_dirty_paths_listed() {
+        let d = tmp_repo("rm");
+        std::fs::write(d.join("a.txt"), "1").unwrap();
+        commit_all(&d);
+        let wt = d.parent().unwrap().join(format!("orbit-wt-{}", uuid::Uuid::new_v4().simple()));
+        run(&d, &["worktree", "add", "-b", "w", &wt.to_string_lossy()]).unwrap();
+        assert!(dirty_paths(&wt, 5).is_empty());
+        std::fs::write(wt.join("new.txt"), "x").unwrap();
+        assert_eq!(dirty_paths(&wt, 5), vec!["new.txt".to_string()]);
+        std::fs::remove_file(wt.join("new.txt")).unwrap();
+        // Folder deleted by hand: removal still succeeds and the stale record is pruned.
+        std::fs::remove_dir_all(&wt).unwrap();
+        remove_worktree(&d, &wt).unwrap();
+        assert!(!run(&d, &["worktree", "list"]).unwrap().contains("orbit-wt-"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn missing_program_is_readable() {
+        let e = exec("orbit-no-such-tool-xyz", Path::new("."), &["--version"]).unwrap_err();
+        assert!(format!("{e:#}").contains("`orbit-no-such-tool-xyz` is not installed or not on PATH"));
+        assert!(not_installed("gh").contains("cli.github.com"));
     }
 
     #[test]
