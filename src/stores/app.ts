@@ -169,7 +169,8 @@ interface AppState {
   removeWorkspace: (id: string) => void;
 }
 
-let initialized = false;
+// One init in flight at a time (StrictMode runs effects twice); cleared on failure so a later call can retry.
+let initializing: Promise<void> | null = null;
 
 function readFlag(key: string) {
   try {
@@ -276,29 +277,32 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  init: async () => {
-    if (initialized) return;
-    // Only marked done after the first load succeeds, so a failed startup can retry.
-    const [repos, workspaces, sums] = await Promise.all([api.listRepos(), api.listWorkspaces(), api.workspaceSummaries()]);
-    initialized = true;
-    set({ repos, workspaces, summaries: Object.fromEntries(sums.map((x) => [x.workspaceId, x])) });
-    api
-      .allWorkspaceUsage()
-      .then((list) => set({ usage: Object.fromEntries(list.map((u) => [u.workspaceId, u])) }))
-      .catch(() => {});
-    await events.onWorkspace((ws) => get().upsertWorkspace(ws));
-    await events.onAgentEvent(onAgentEvent);
-    await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
-    await events.onRoutinesChanged(() => void get().refreshRoutines());
-    void get().refreshRoutines();
-    await events.onTeammateChanged(() => void get().refreshTeammates());
-    void get().refreshTeammates();
-    await events.onSimplify(onSimplify);
-    for (const ws of workspaces) void get().refreshChanges(ws.id);
-    void get().loadSkills();
-    void get().loadSettings();
-    const last = localStorage.getItem("selectedWorkspace");
-    if (last && workspaces.some((w) => w.id === last)) get().select(last);
+  init: () => {
+    initializing ??= (async () => {
+      const [repos, workspaces, sums] = await Promise.all([api.listRepos(), api.listWorkspaces(), api.workspaceSummaries()]);
+      set({ repos, workspaces, summaries: Object.fromEntries(sums.map((x) => [x.workspaceId, x])) });
+      api
+        .allWorkspaceUsage()
+        .then((list) => set({ usage: Object.fromEntries(list.map((u) => [u.workspaceId, u])) }))
+        .catch(() => {});
+      await events.onWorkspace((ws) => get().upsertWorkspace(ws));
+      await events.onAgentEvent(onAgentEvent);
+      await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
+      await events.onRoutinesChanged(() => void get().refreshRoutines());
+      void get().refreshRoutines();
+      await events.onTeammateChanged(() => void get().refreshTeammates());
+      void get().refreshTeammates();
+      await events.onSimplify(onSimplify);
+      for (const ws of workspaces) void get().refreshChanges(ws.id);
+      void get().loadSkills();
+      void get().loadSettings();
+      const last = localStorage.getItem("selectedWorkspace");
+      if (last && workspaces.some((w) => w.id === last)) get().select(last);
+    })().catch((e) => {
+      initializing = null;
+      throw e;
+    });
+    return initializing;
   },
 
   select: (id) => {
