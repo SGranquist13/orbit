@@ -13,6 +13,8 @@ What you want the IDE to do, and the honest state of each feature. **Edit the Pr
 
 _Last verified: 2026-10-18 (later that day: `bun run e2e` 46/46 (and `e2e:github` 10/10) with ten new steps for Settings, data and sessions and twelve for packs, routines, trunk gates and teammates; earlier, the 0.1.0 release audit): `bun run e2e` 23/23 and `bun run e2e:github` 7/7 after the audit fixes; installer built. 2026-10-12: `bun run e2e` 23/23 (adds teammates, hand-offs, Chief, routines, trunk save points / ship gate, simplify, local-model suggestions (skips without Ollama)). Before that, 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
 
+Orbit Code backend (2026-10-18): filesystem guards, editing/conflicts, git revisions, search, ref-counted watchers and PTYs implemented in `src-tauri/src/code/`, with editor/terminal settings. Backend unit tests added; execution and clippy are pending because this worktree's environment cannot download the new Cargo dependencies. Real-app verification remains pending.
+
 ## Real vs mock: verification ledger (2026-10-09)
 
 **Totals:** 123 features: ✅ 56 · 🟢 48 · 🟡 7 · ⬜ 9 · 💭 3.

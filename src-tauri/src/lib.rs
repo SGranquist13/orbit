@@ -4,6 +4,7 @@
 
 mod agent;
 mod checks;
+mod code;
 mod db;
 mod gh;
 mod git;
@@ -1340,6 +1341,21 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            code::fs::code_list_dir,
+            code::fs::code_read_file,
+            code::fs::code_write_file,
+            code::fs::code_create,
+            code::fs::code_rename,
+            code::fs::code_delete,
+            code::fs::code_list_files,
+            code::fs::code_file_at,
+            code::watch::code_watch,
+            code::watch::code_unwatch,
+            code::search::code_search,
+            code::pty::pty_open,
+            code::pty::pty_write,
+            code::pty::pty_resize,
+            code::pty::pty_close,
             list_repos,
             add_repo,
             list_workspaces,
@@ -1434,8 +1450,11 @@ pub fn run() {
             routines::routine_runs,
             routines::preview_schedule,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) { code::pty::close_all(); }
+        });
 }
 
 #[cfg(test)]

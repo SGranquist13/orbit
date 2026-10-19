@@ -25,6 +25,12 @@ pub const SIMPLIFY_MODELS: &[&str] = &["haiku", "sonnet", "opus"];
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    pub editor_font_size: u32,
+    pub editor_tab_size: u32,
+    pub editor_word_wrap: bool,
+    pub editor_autosave: String,
+    pub editor_follow_agent: bool,
+    pub terminal_shell: String,
     // general
     pub branch_prefix: String,
     pub default_agent: String,
@@ -99,6 +105,12 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            editor_font_size: 13,
+            editor_tab_size: 2,
+            editor_word_wrap: false,
+            editor_autosave: "off".into(),
+            editor_follow_agent: true,
+            terminal_shell: String::new(),
             branch_prefix: default_branch_prefix(),
             default_agent: "claude".into(),
             default_model_claude: String::new(),
@@ -266,6 +278,9 @@ impl Settings {
         if !(1..=8).contains(&self.routine_concurrency) {
             return Err(format!("invalid routineConcurrency {} (expected 1-8)", self.routine_concurrency));
         }
+        check("editorAutosave", &self.editor_autosave, &["off", "delay", "focus"])?;
+        self.editor_font_size = self.editor_font_size.clamp(9, 28);
+        self.editor_tab_size = self.editor_tab_size.clamp(1, 8);
         self.branch_prefix = normalize_prefix(&self.branch_prefix);
         self.extra_models_claude = normalize_models(&self.extra_models_claude);
         self.extra_models_codex = normalize_models(&self.extra_models_codex);
@@ -407,6 +422,22 @@ mod tests {
         assert!(d.patched(&json!({ "simplifyModel": "gpt" })).is_err());
         assert!(d.patched(&json!({ "simplifyMaxCandidates": 0 })).is_err());
         assert!(d.patched(&json!({ "simplifyMaxCandidates": 31 })).is_err());
+    }
+
+    #[test]
+    fn editor_settings_defaults_clamps_and_enums() {
+        let d = Settings::load(Some("{}"), None);
+        assert_eq!((d.editor_font_size, d.editor_tab_size), (13, 2));
+        assert!(!d.editor_word_wrap && d.editor_follow_agent);
+        assert_eq!(d.editor_autosave, "off");
+        assert!(d.terminal_shell.is_empty());
+        let s = d.patched(&json!({"editorFontSize": 100, "editorTabSize": 0, "editorAutosave": "delay", "terminalShell": "pwsh.exe -NoLogo"})).unwrap();
+        assert_eq!((s.editor_font_size, s.editor_tab_size), (28, 1));
+        assert_eq!(s.terminal_shell, "pwsh.exe -NoLogo");
+        assert!(d.patched(&json!({"editorAutosave": "focus"})).is_ok());
+        assert!(d.patched(&json!({"editorAutosave": "always"})).is_err());
+        let s = d.patched(&json!({"editorFontSize": 0, "editorTabSize": 100})).unwrap();
+        assert_eq!((s.editor_font_size, s.editor_tab_size), (9, 8));
     }
 
     #[test]

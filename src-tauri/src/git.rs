@@ -7,8 +7,17 @@ pub fn run(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
     exec("git", cwd, args)
 }
 
+/// Like `run`, preserving trailing whitespace for editor revision buffers.
+pub fn run_raw(cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
+    exec_raw("git", cwd, args)
+}
+
 /// Runs a CLI without a console window; errors carry its stderr.
 pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
+    Ok(exec_raw(program, cwd, args)?.trim_end().to_string())
+}
+
+fn exec_raw(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
     let mut cmd = Command::new(program);
     cmd.args(args).current_dir(cwd);
     #[cfg(windows)]
@@ -29,7 +38,7 @@ pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// "`gh` is not installed or not on PATH (…)": what users see when a tool can't be spawned.

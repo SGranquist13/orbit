@@ -265,13 +265,18 @@ pub fn spawn_std(cmd: &mut std::process::Command) -> std::io::Result<std::proces
 /// When the IDE itself is launched from inside a Claude Code session, that host's
 /// env (auth proxy URL, session ids, entrypoint) leaks into children and breaks their auth.
 fn scrub_env(cmd: &mut Command) {
-    let inside_claude_host = std::env::var_os("CLAUDECODE").is_some();
-    for (key, _) in std::env::vars_os() {
-        let Some(key) = key.to_str() else { continue };
-        if is_host_var(key) || (inside_claude_host && key == "ANTHROPIC_BASE_URL") {
-            cmd.env_remove(key);
-        }
+    for key in host_env_keys() {
+        cmd.env_remove(key);
     }
+}
+
+/// Host session variables that must not leak into agents or interactive terminals.
+pub(crate) fn host_env_keys() -> Vec<OsString> {
+    let inside_claude_host = std::env::var_os("CLAUDECODE").is_some();
+    std::env::vars_os().filter_map(|(key, _)| {
+        let remove = key.to_str().is_some_and(|k| is_host_var(k) || (inside_claude_host && k == "ANTHROPIC_BASE_URL"));
+        remove.then_some(key)
+    }).collect()
 }
 
 fn is_host_var(key: &str) -> bool {
