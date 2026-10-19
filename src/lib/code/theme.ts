@@ -8,7 +8,12 @@ export const codeTheme = [
     ".cm-scroller": { fontFamily: '"JetBrains Mono Variable", monospace', lineHeight: "1.65", overflow: "auto" },
     ".cm-content": { padding: "12px 0", caretColor: "var(--fg)" },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--fg)" },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": { backgroundColor: "var(--hover)" },
+    // Same specificity as CM's base theme so these win over its default lavender.
+    "& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--fg) 9%, transparent)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--fg) 16%, transparent)" },
+    // The app-wide ::selection paints text in the accent ink, which vanishes on CM's drawn selection.
+    // currentColor keeps each token's own colour (inherit would pick up the parent's ::selection colour).
+    ".cm-content ::selection, .cm-content::selection": { color: "currentColor" },
     ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--panel)" },
     ".cm-gutters": { backgroundColor: "var(--bg)", color: "var(--mute)", borderRight: "1.5px solid var(--line)" },
     ".cm-lineNumbers .cm-gutterElement": { padding: "0 12px" },

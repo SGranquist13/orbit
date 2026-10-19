@@ -74,7 +74,7 @@ export function SearchPanel() {
           placeholder="Search in files"
           value={query}
           onChange={(e) => useCode.setState({ searchQuery: e.target.value })}
-          className={cn(field, "w-56 flex-1")}
+          className={cn(field, "min-w-[180px] flex-1")}
         />
         {toggles.map(([key, text, label]) => (
           <button
