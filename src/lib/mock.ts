@@ -1,4 +1,4 @@
-import { mockCodeCommand } from "./code/mock";
+import { mockCodeCommand, simulateCodeTurn } from "./code/mock";
 // Browser-only mock backend: `bun run dev` + open http://localhost:1420 to iterate on UI
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
@@ -940,8 +940,27 @@ export function installMockBackend() {
           return LAUNCH ? launchEvents(id, transcript) : transcript;
         case "workspace_changes":
           return LAUNCH ? launchChanges(id) : changes;
+        case "interrupt": {
+          const workspace = workspaces.find((w) => w.id === id);
+          if (workspace) { workspace.status = "idle"; void emit("workspace", { ...workspace }); }
+          emitAgentEvent(id, { type: "turnCompleted", durationMs: null, costUsd: null, isError: false, error: null, interrupted: true });
+          return null;
+        }
         case "send_message":
           if (LAUNCH) launchSend(id, (args as { text: string }).text, emitAgentEvent, setLaunchStatus);
+          else {
+            emitAgentEvent(id, { type: "userMessage", text: (args as { text: string }).text });
+            if (id === "w1") window.dispatchEvent(new CustomEvent("orbit-simulate-agent-edit"));
+            else {
+              setLaunchStatus(id, "running");
+              emitAgentEvent(id, { type: "turnStarted" });
+              setTimeout(() => {
+                emitAgentEvent(id, { type: "message", text: "I reviewed the selected lines. This is a mock reply; connect an agent in the desktop app for a real response." });
+                emitAgentEvent(id, { type: "turnCompleted", durationMs: 800, costUsd: null, isError: false, error: null });
+                setLaunchStatus(id, "idle");
+              }, 800);
+            }
+          }
           return null;
         case "run_skill":
           if (LAUNCH) launchSend(id, (args as { args: string }).args, emitAgentEvent, setLaunchStatus, (args as { skillId: string }).skillId);
@@ -1270,6 +1289,25 @@ export function installMockBackend() {
     },
     { shouldMockEvents: true },
   );
+  let liveTurn = false;
+  const simulate = async () => {
+    if (liveTurn || LAUNCH) return;
+    const { useCode } = await import("../stores/code");
+    const workspace = workspaces.find((w) => w.id === "w1");
+    const root = useCode.getState().roots.find((r) => r.workspaceId === "w1" || r.path === workspace?.path);
+    if (!root || !workspace) return;
+    liveTurn = true;
+    workspace.status = "running";
+    await emit("workspace", { ...workspace });
+    try {
+      await simulateCodeTurn(root.path, (event) => emitAgentEvent("w1", event), () => workspace.status !== "running");
+      if (workspace.status === "running") { workspace.status = "idle"; await emit("workspace", { ...workspace }); }
+    } finally { liveTurn = false; }
+  };
+  if (!LAUNCH) {
+    window.addEventListener("orbit-simulate-agent-edit", () => void simulate());
+    setInterval(() => void simulate(), 12000);
+  }
   // Simulate a streaming reply on the running workspace.
   const words = "Pushed the branch. Opening a draft PR with the template now…".split(" ");
   if (!LAUNCH) words.forEach((w, i) =>

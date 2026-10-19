@@ -8,6 +8,7 @@ import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button, Kbd } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
 import { useTheme } from "./lib/theme";
+import { useCode } from "./stores/code";
 import { useApp } from "./stores/app";
 
 const CodeView = lazy(() => import("./components/code/CodeView").then((m) => ({ default: m.CodeView })));
@@ -60,7 +61,10 @@ export default function App() {
           useTheme.getState().toggle();
         } else if (key === "o") {
           e.preventDefault();
-          s.setView(s.view === "code" ? "workspace" : "code");
+          const ws = s.workspaces.find((w) => w.id === s.selectedId);
+          if (s.view === "workspace" && ws) {
+            void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => s.setView("code"));
+          } else s.setView(s.view === "code" ? "workspace" : "code");
         } else if (key === "g") {
           e.preventDefault();
           s.setView(s.view === "issues" ? "workspace" : "issues");
@@ -76,6 +80,8 @@ export default function App() {
         return;
       }
       if (key === "k") {
+        // CodeMirror owns Mod-K only while its source editor has focus.
+        if (s.view === "code" && (e.target as HTMLElement)?.closest?.(".cm-editor, [aria-label='Ask about selection']")) return;
         e.preventDefault();
         s.setPaletteOpen(!s.paletteOpen);
       } else if (e.key === ",") {

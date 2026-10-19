@@ -1,3 +1,4 @@
+import { bufferKey, useCode } from "../stores/code";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   Archive,
@@ -89,14 +90,21 @@ export function RightPanel({ ws }: { ws: Workspace }) {
         {files?.map((f) => {
           const slash = f.path.lastIndexOf("/");
           return (
-            <li key={f.path} className="flex h-7 items-center gap-2 rounded-[3px] px-2 hover:bg-hover" title={f.path}>
+            <li key={f.path}><button className="flex h-7 w-full items-center gap-2 rounded-[3px] px-2 text-left hover:bg-hover" title={f.path} onClick={() => void (async () => {
+              await useCode.getState().openRoot(ws.path, { workspaceId: ws.id });
+              const root = useCode.getState().activeRoot;
+              if (!root) return;
+              await useCode.getState().openFile(f.path, { preview: false }, root);
+              useCode.setState((s) => ({ agentDiff: null, diffTabs: { ...s.diffTabs, [bufferKey(root, f.path)]: "base" } }));
+              useApp.getState().setView("code");
+            })()}>
               <span className={cn("size-1.5 shrink-0", f.untracked ? "bg-ok" : "bg-warn")} />
               <span className="min-w-0 flex-1 truncate text-[12px]">
                 <span className="font-medium text-fg">{f.path.slice(slash + 1)}</span>
                 {slash > 0 && <span className="ml-1.5 text-mute">{f.path.slice(0, slash)}</span>}
               </span>
               <DiffStat additions={f.additions} deletions={f.deletions} />
-            </li>
+            </button></li>
           );
         })}
         {files && files.length === 0 && <p className="px-2 pt-2 text-[12px] text-mute">No changes yet.</p>}

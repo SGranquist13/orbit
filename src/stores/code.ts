@@ -1,5 +1,7 @@
 import { create } from "zustand";
-import { codeApi, codeEvents, CONFLICT_PREFIX, type DirEntry } from "../lib/ipc";
+import { codeApi, codeEvents, events, CONFLICT_PREFIX, type DirEntry, type AgentEventPayload } from "../lib/ipc";
+import { createEditTracker, samePath } from "../lib/code/agentEdits";
+import { agentChanges, type LineRange } from "../lib/code/agentMarks";
 import { confirmAction } from "../lib/confirm";
 import { useApp } from "./app";
 
@@ -17,6 +19,8 @@ export interface CodeRoot {
   expanded: string[];
 }
 export interface Buffer {
+  userVersion?: number;
+  changedBy?: string;
   text: string;
   savedText: string;
   mtime: number;
@@ -84,13 +88,44 @@ export interface FileTarget {
   start: number;
   end: number;
 }
+export interface AgentActivity {
+  removed?: boolean;
+  id: string;
+  ts: number;
+  root: string;
+  workspaceId: string;
+  turn: number;
+  rel: string;
+  phase: "editing" | "done" | "failed";
+  additions: number;
+  deletions: number;
+}
+export interface AgentTurn {
+  number: number;
+  running: boolean;
+  userVersions: Record<string, number>;
+}
+export const baselineKey = (entry: Pick<AgentActivity, "root" | "workspaceId" | "turn" | "rel">) =>
+  `${entry.workspaceId}|${entry.turn}|${bufferKey(entry.root, entry.rel)}`;
 interface CodeState extends Persisted {
+  activity: AgentActivity[];
+  turns: Record<string, AgentTurn>;
+  agentMessages: Record<string, string>;
+  baselines: Record<string, string>;
+  agentDiff: AgentActivity | null;
+  marks: Record<string, { ranges: LineRange[]; nonce: number }>;
+  markEpoch: number;
+  setMode: (path: string, mode: CodeRoot["mode"]) => void;
+  toggleMode: () => void;
+  clearMarks: () => void;
+  showAgentDiff: (entry: AgentActivity) => Promise<void>;
+  onAgentEvent: (payload: AgentEventPayload) => void;
   terminals: CodeTerminal[];
   activeBottomTab: string;
   searchQuery: string;
   searchFocus: number;
   selection: string;
-  jump: { key: string; target: FileTarget; nonce: number } | null;
+  jump: { key: string; target: FileTarget; nonce: number; follow?: boolean } | null;
   diffTabs: Record<string, "HEAD" | "base" | "disk">;
   newTerminal: () => void;
   toggleTerminal: () => void;
@@ -129,6 +164,8 @@ interface CodeState extends Persisted {
 let terminalNumber = 0;
 const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let initialized: Promise<void> | undefined;
+let agentUnlisten: (() => void) | undefined;
+let fsUnlisten: (() => void) | undefined;
 const saving = new Map<string, Promise<void>>();
 const belongs = (file: string, dir: string) => file === dir || file.startsWith(`${dir}/`);
 export const useCode = create<CodeState>((set, get) => {
@@ -138,8 +175,204 @@ export const useCode = create<CodeState>((set, get) => {
     const root = get().roots.find((r) => r.path === path);
     if (root) await Promise.all([get().loadFiles(path), ...root.expanded.map((rel) => get().loadDir(path, rel))]);
   };
+  const trackers = new Map<string, ReturnType<typeof createEditTracker>>();
+  const baselineRequests = new Map<string, Promise<void>>();
+  const capture = (entry: AgentActivity, beforeLanding: boolean) => {
+    const key = baselineKey(entry);
+    if (key in get().baselines) return Promise.resolve();
+    const pending = baselineRequests.get(key);
+    if (pending) return pending;
+    const buffer = get().buffers[bufferKey(entry.root, entry.rel)];
+    const request = (async () => {
+      let text: string | undefined = buffer?.savedText;
+      if (text === undefined && beforeLanding) {
+        try {
+          text = (await codeApi.readFile(entry.root, entry.rel)).text ?? undefined;
+        } catch {
+          /* New file or already removed. */
+        }
+      }
+      if (text === undefined) {
+        try {
+          text = (await codeApi.fileAt(entry.root, entry.rel, "HEAD")) ?? "";
+        } catch {
+          text = "";
+        }
+      }
+      set((s) => ({ baselines: { ...s.baselines, [key]: text! } }));
+    })();
+    baselineRequests.set(key, request);
+    void request.finally(() => baselineRequests.delete(key));
+    return request;
+  };
+  const record = (entry: AgentActivity) =>
+    set((s) => ({
+      activity: [...s.activity.filter((a) => a.id !== entry.id || a.root !== entry.root || a.rel !== entry.rel), entry].slice(
+        -500,
+      ),
+    }));
+  const land = async (entry: AgentActivity) => {
+    await capture(entry, false);
+    const key = bufferKey(entry.root, entry.rel);
+    try {
+      const file = entry.removed
+        ? { text: "", mtime: Date.now(), binary: false, tooLarge: false }
+        : await codeApi.readFile(entry.root, entry.rel);
+      if (file.text === null) return;
+      const changes = agentChanges(get().baselines[baselineKey(entry)] ?? "", file.text);
+      const latest = get().activity.find((a) => a.id === entry.id && a.root === entry.root && a.rel === entry.rel);
+      if (!latest) return;
+      record({ ...latest, additions: changes.additions, deletions: changes.deletions });
+      const turn = get().turns[entry.workspaceId];
+      if (turn?.number !== entry.turn) return;
+      const root = get().roots.find((r) => r.path === entry.root);
+      if (!root) return;
+      const previous = get().buffers[key];
+      const watch = root.mode === "watch" && (previous?.userVersion ?? 0) === (turn.userVersions[key] ?? 0);
+      const delta = agentChanges(previous?.text ?? get().baselines[baselineKey(entry)] ?? "", file.text);
+      set((s) => ({ marks: { ...s.marks, [key]: { ranges: changes.ranges, nonce: Date.now() } } }));
+      if (previous && (!previous.dirty || watch)) {
+        set((s) => ({
+          buffers: {
+            ...s.buffers,
+            [key]: {
+              ...file,
+              text: file.text!,
+              savedText: file.text!,
+              userVersion: previous.userVersion,
+              dirty: false,
+              loading: false,
+              diskChanged: false,
+              changedBy: entry.workspaceId,
+              ...(entry.removed ? { error: "File was removed on disk." } : {}),
+            },
+          },
+        }));
+        if (watch && root.activeRel === entry.rel && delta.ranges.length) {
+          // A follow jump scrolls within Code, without moving DOM focus.
+          set({ jump: { key, target: { line: delta.ranges[0].from, start: 0, end: 0 }, follow: true, nonce: Date.now() } });
+        }
+      } else if (previous)
+        set((s) => ({
+          buffers: { ...s.buffers, [key]: { ...s.buffers[key], diskChanged: true, changedBy: entry.workspaceId } },
+        }));
+    } catch {
+      /* Removed/unreadable files remain visible in the timeline. */
+    }
+  };
   return {
     ...restore(),
+    activity: [],
+    turns: {},
+    agentMessages: {},
+    baselines: {},
+    agentDiff: null,
+    marks: {},
+    markEpoch: 0,
+    setMode: (path, mode) => rootUpdate(path, (r) => ({ ...r, mode })),
+    toggleMode: () => {
+      const root = get().roots.find((r) => r.path === get().activeRoot);
+      if (root) get().setMode(root.path, root.mode === "watch" ? "manual" : "watch");
+    },
+    clearMarks: () => set((s) => ({ marks: {}, markEpoch: s.markEpoch + 1 })),
+    showAgentDiff: async (entry) => {
+      set({ activeRoot: entry.root });
+      await get().openFile(entry.rel, { preview: false }, entry.root);
+      set({ agentDiff: entry });
+    },
+    onAgentEvent: ({ workspaceId, event, ts }) => {
+      const ws = useApp.getState().workspaces.find((w) => w.id === workspaceId);
+      const roots = get().roots.filter((r) => r.workspaceId === workspaceId || (ws && samePath(r.path, ws.path)));
+      if (!roots.length) return;
+      if (event.type === "turnStarted") {
+        const number = (get().turns[workspaceId]?.number ?? 0) + 1;
+        for (const [key, tracker] of trackers) if (key.startsWith(`${workspaceId}|`)) tracker.clear();
+        set((s) => ({
+          turns: {
+            ...s.turns,
+            [workspaceId]: {
+              number,
+              running: true,
+              userVersions: Object.fromEntries(Object.entries(s.buffers).map(([key, b]) => [key, b.userVersion ?? 0])),
+            },
+          },
+          agentMessages: { ...s.agentMessages, [workspaceId]: "" },
+          baselines: Object.fromEntries(
+            Object.entries(s.baselines).filter(([key]) => s.activity.some((a) => baselineKey(a) === key)),
+          ),
+          marks: Object.fromEntries(Object.entries(s.marks).filter(([key]) => !roots.some((r) => key.startsWith(`${r.path}|`)))),
+          markEpoch: s.markEpoch + 1,
+        }));
+        // Freeze loaded files now, before the first tool writes them.
+        for (const root of roots)
+          for (const [key, b] of Object.entries(get().buffers)) {
+            if (!key.startsWith(`${root.path}|`)) continue;
+            const baseline = baselineKey({ root: root.path, workspaceId, turn: number, rel: key.slice(root.path.length + 1) });
+            set((s) => ({ baselines: { ...s.baselines, [baseline]: b.savedText } }));
+          }
+        if (useApp.getState().settings?.editorFollowAgent) for (const root of roots) get().setMode(root.path, "watch");
+        return;
+      }
+      if (event.type === "message" || event.type === "textDelta") {
+        set((s) => ({
+          agentMessages: {
+            ...s.agentMessages,
+            [workspaceId]: (event.type === "message" ? event.text : (s.agentMessages[workspaceId] ?? "") + event.text)
+              .replace(/\s+/g, " ")
+              .trimStart()
+              .slice(-400),
+          },
+        }));
+        return;
+      }
+      if (event.type === "turnCompleted" || event.type === "exited") {
+        const turn = get().turns[workspaceId];
+        if (turn)
+          set((s) => ({
+            turns: { ...s.turns, [workspaceId]: { ...turn, running: false } },
+            activity: s.activity.map((a) =>
+              a.workspaceId === workspaceId && a.phase === "editing" ? { ...a, phase: "failed" } : a,
+            ),
+          }));
+        return;
+      }
+      for (const root of roots) {
+        const trackerKey = `${workspaceId}|${root.path}`;
+        let tracker = trackers.get(trackerKey);
+        if (!tracker) {
+          tracker = createEditTracker();
+          trackers.set(trackerKey, tracker);
+        }
+        const edit = tracker.accept(event, root.path);
+        if (!edit) continue;
+        for (const rel of edit.paths) {
+          const turn = get().turns[workspaceId]?.number ?? 0;
+          const entry: AgentActivity = {
+            id: `${workspaceId}:${turn}:${edit.id}`,
+            ts,
+            workspaceId,
+            root: root.path,
+            turn,
+            rel,
+            phase: edit.phase === "pending" ? "editing" : edit.phase === "failed" ? "failed" : "done",
+            additions: 0,
+            deletions: 0,
+          };
+          record(entry);
+          if (edit.phase === "pending") {
+            void capture(entry, true);
+            if (root.mode === "watch") {
+              set((s) => {
+                const diffTabs = { ...s.diffTabs };
+                delete diffTabs[bufferKey(root.path, rel)];
+                return { diffTabs, agentDiff: s.agentDiff?.root === root.path ? null : s.agentDiff };
+              });
+              void get().openFile(rel, { preview: true }, root.path);
+            }
+          } else if (edit.phase === "landed") void land(entry);
+        }
+      }
+    },
     terminals: [],
     activeBottomTab: "search",
     searchQuery: "",
@@ -185,7 +418,7 @@ export const useCode = create<CodeState>((set, get) => {
         diffTabs = { ...s.diffTabs };
       if (diffTabs[key]) delete diffTabs[key];
       else diffTabs[key] = "HEAD";
-      set({ diffTabs });
+      set({ diffTabs, agentDiff: null });
     },
     openFileAt: async (rel, target, path = get().activeRoot ?? "") => {
       if (!get().roots.some((r) => r.path === path)) return;
@@ -194,10 +427,12 @@ export const useCode = create<CodeState>((set, get) => {
       set((s) => {
         const diffTabs = { ...s.diffTabs };
         delete diffTabs[bufferKey(path, rel)];
-        return { diffTabs, jump: { key: bufferKey(path, rel), target, nonce: Date.now() } };
+        return { diffTabs, agentDiff: null, jump: { key: bufferKey(path, rel), target, nonce: Date.now() } };
       });
     },
     autosave: (path, rel) => {
+      const root = get().roots.find((r) => r.path === path);
+      if (root?.mode === "watch" && root.workspaceId && get().turns[root.workspaceId]?.running) return;
       const b = get().buffers[bufferKey(path, rel)];
       if (b?.dirty && !b.diskChanged) void get().save(rel, path);
     },
@@ -208,9 +443,33 @@ export const useCode = create<CodeState>((set, get) => {
     activityOpen: false,
     init: () =>
       (initialized ??= (async () => {
-        await codeEvents.onFs((event) => {
+        agentUnlisten ??= await events.onAgentEvent((payload) => get().onAgentEvent(payload));
+        fsUnlisten ??= await codeEvents.onFs((event) => {
           const root = get().roots.find((r) => r.path === event.root);
           if (!root) return;
+          const ws = useApp.getState().workspaces.find((w) => w.id === root.workspaceId || samePath(w.path, root.path));
+          if (ws && (get().turns[ws.id]?.running ?? ws.status === "running")) {
+            for (const rel of event.paths) {
+              const turn = get().turns[ws.id]?.number ?? 0;
+              const existing = [...get().activity]
+                .reverse()
+                .find((a) => a.root === root.path && a.workspaceId === ws.id && a.turn === turn && a.rel === rel);
+              const entry: AgentActivity = {
+                id: existing?.id ?? `fs:${crypto.randomUUID()}`,
+                ts: Date.now(),
+                root: root.path,
+                workspaceId: ws.id,
+                turn,
+                rel,
+                phase: "done",
+                removed: event.kind === "remove",
+                additions: existing?.additions ?? 0,
+                deletions: existing?.deletions ?? 0,
+              };
+              record(entry);
+              void land(entry);
+            }
+          }
           for (const dir of root.expanded) {
             if (event.paths.some((p) => !dir || belongs(p, dir) || belongs(dir, p))) void get().loadDir(root.path, dir);
           }
@@ -258,6 +517,8 @@ export const useCode = create<CodeState>((set, get) => {
     openRoot: async (path, options) => {
       path = path.replace(/\\/g, "/");
       if (path !== "/" && !/^[A-Za-z]:\/$/.test(path)) path = path.replace(/\/$/, "");
+      options ??= {};
+      options.workspaceId ??= useApp.getState().workspaces.find((w) => samePath(w.path, path))?.id;
       await get().init();
       if (!get().roots.some((r) => r.path === path)) {
         try {
@@ -269,12 +530,7 @@ export const useCode = create<CodeState>((set, get) => {
                 path,
                 label: path.split("/").pop() || path,
                 workspaceId: options?.workspaceId ?? null,
-                mode:
-                  options?.workspaceId &&
-                  useApp.getState().settings?.editorFollowAgent &&
-                  useApp.getState().workspaces.some((w) => w.id === options.workspaceId && w.status === "running")
-                    ? "watch"
-                    : "manual",
+                mode: options?.workspaceId && useApp.getState().settings?.editorFollowAgent ? "watch" : "manual",
                 tabs: [],
                 activeRel: null,
                 expanded: [""],
@@ -290,14 +546,26 @@ export const useCode = create<CodeState>((set, get) => {
         rootUpdate(path, (r) => ({
           ...r,
           workspaceId: options.workspaceId!,
-          mode:
-            useApp.getState().settings?.editorFollowAgent &&
-            useApp.getState().workspaces.some((w) => w.id === options.workspaceId && w.status === "running")
-              ? "watch"
-              : "manual",
+          mode: useApp.getState().settings?.editorFollowAgent ? "watch" : "manual",
         }));
-      set((s) => ({ activeRoot: path, recent: [path, ...s.recent.filter((p) => p !== path)].slice(0, 12) }));
+      set((s) => ({
+        activeRoot: path,
+        activityOpen: options?.workspaceId ? true : s.activityOpen,
+        recent: [path, ...s.recent.filter((p) => p !== path)].slice(0, 12),
+      }));
       await refresh(path);
+      const ws = useApp.getState().workspaces.find((w) => w.id === options?.workspaceId || samePath(w.path, path));
+      if (ws && !get().turns[ws.id])
+        set((s) => ({
+          turns: {
+            ...s.turns,
+            [ws.id]: {
+              number: 0,
+              running: ws.status === "running",
+              userVersions: Object.fromEntries(Object.entries(s.buffers).map(([key, b]) => [key, b.userVersion ?? 0])),
+            },
+          },
+        }));
     },
     closeRoot: async (path) => {
       if (
@@ -395,7 +663,9 @@ export const useCode = create<CodeState>((set, get) => {
           }, 1000),
         );
       }
-      set((s) => ({ buffers: { ...s.buffers, [key]: { ...b, text, dirty: text !== b.savedText } } }));
+      set((s) => ({
+        buffers: { ...s.buffers, [key]: { ...b, text, userVersion: (b.userVersion ?? 0) + 1, dirty: text !== b.savedText } },
+      }));
       rootUpdate(path, (r) => ({ ...r, tabs: r.tabs.map((t) => (t.rel === rel ? { ...t, preview: false } : t)) }));
     },
     save: (rel, path = get().activeRoot ?? "") => {
@@ -463,6 +733,8 @@ export const useCode = create<CodeState>((set, get) => {
             ...s.buffers,
             [key]: {
               ...file,
+              userVersion: current.userVersion,
+              changedBy: current.changedBy,
               text: file.text ?? "",
               savedText: file.text ?? "",
               dirty: false,
@@ -594,13 +866,11 @@ useCode.subscribe((s, previous) => {
 });
 
 useApp.subscribe((app, previous) => {
-  if (app.settings?.editorFollowAgent === previous.settings?.editorFollowAgent && app.workspaces === previous.workspaces) return;
-  const roots = useCode.getState().roots.map((r) => {
-    const mode =
-      app.settings?.editorFollowAgent && app.workspaces.some((w) => w.id === r.workspaceId && w.status === "running")
-        ? ("watch" as const)
-        : ("manual" as const);
-    return r.mode === mode ? r : { ...r, mode };
-  });
-  if (roots.some((r, i) => r !== useCode.getState().roots[i])) useCode.setState({ roots });
+  if (app.workspaces === previous.workspaces) return;
+  for (const ws of app.workspaces) {
+    if (ws.status !== "running" || previous.workspaces.find((w) => w.id === ws.id)?.status === "running") continue;
+    if (!app.settings?.editorFollowAgent) continue;
+    for (const root of useCode.getState().roots)
+      if (root.workspaceId === ws.id || samePath(root.path, ws.path)) useCode.getState().setMode(root.path, "watch");
+  }
 });

@@ -350,3 +350,24 @@ input:focus-visible {
 .code-diff .cm-merge-a .cm-changedLineGutter { background: var(--bad); }
 .code-diff .cm-merge-b .cm-changedLineGutter { background: var(--ok); }
 .code-diff .cm-mergeView .cm-collapsedLines { background: var(--panel); color: var(--mute); }
+
+/* A separate agent gutter sits before the git gutter. Dither never masks source text. */
+.cm-agent-gutter { width: 5px; }
+.cm-agent-gutter .cm-gutterElement { padding: 0 1px; }
+.cm-agent-mark { display: block; width: 2px; height: 100%; background: var(--run); }
+.cm-agent-flash { position: relative; }
+.cm-agent-flash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--run);
+  mask-image: var(--dither-fade-x);
+  mask-repeat: repeat-y;
+  mask-size: 100% 32px;
+  animation: agent-flash 1.2s ease-out forwards;
+}
+@keyframes agent-flash { from { opacity: 0.3; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cm-agent-flash::before { animation: none; opacity: 0.12; }
+}

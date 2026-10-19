@@ -1,5 +1,5 @@
 import { emit } from "@tauri-apps/api/event";
-import type { CodeFsEvent, DirEntry, SearchMatch, SearchOptions } from "../ipc";
+import type { AgentEvent, CodeFsEvent, DirEntry, SearchMatch, SearchOptions } from "../ipc";
 
 interface MockFile {
   text: string;
@@ -82,6 +82,34 @@ function tree(root: string) {
 }
 function fs(root: string, paths: string[], kind: CodeFsEvent["kind"]) {
   setTimeout(() => void emit("code-fs", { root, paths, kind }), 0);
+}
+
+/** Exercise the same event/filesystem path as the desktop agents. */
+export async function simulateCodeTurn(root: string, send: (event: AgentEvent) => void, stopped: () => boolean = () => false) {
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const files = tree(root);
+  send({ type: "turnStarted" });
+  const started = Date.now();
+  for (const [index, rel] of ["src/auth/session.ts", "src/main.ts", "README.md"].entries()) {
+    if (stopped()) return;
+    const id = `live-${started}-${index}`;
+    send({ type: "toolCall", id, name: "Edit", input: { file_path: `${root}/${rel}` } });
+    await pause(900);
+    if (stopped()) return;
+    const file = files.get(rel);
+    if (file) {
+      const stamp = new Date().toLocaleTimeString();
+      file.text = rel.endsWith(".md")
+        ? file.text.replace(/\n<!-- Agent review:.*? -->\n/g, "\n") + `\n<!-- Agent review: ${stamp} -->\n`
+        : file.text.replace(/^\/\/ Agent review:.*\n/m, "") + `// Agent review: ${stamp}\n`;
+      file.mtime = tick();
+      await emit("code-fs", { root, paths: [rel], kind: "modify" });
+    }
+    await pause(400);
+    send({ type: "toolResult", id, output: "Updated file", isError: false });
+  }
+  send({ type: "message", text: "Updated session handling, the app entry point, and the development notes." });
+  send({ type: "turnCompleted", durationMs: Date.now() - started, costUsd: null, isError: false, error: null });
 }
 function glob(patterns: string, rel: string) {
   return patterns

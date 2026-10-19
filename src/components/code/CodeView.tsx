@@ -8,6 +8,7 @@ import { Explorer } from "./Explorer";
 import { EditorTabs } from "./EditorTabs";
 import { EditorPane } from "./EditorPane";
 import { BottomPanel } from "./BottomPanel";
+import { AgentStrip, ActivityTimeline } from "./AgentActivity";
 import { QuickOpen } from "./QuickOpen";
 
 export function CodeView() {
@@ -24,6 +25,11 @@ export function CodeView() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (useApp.getState().view !== "code") return;
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "w") {
+        e.preventDefault();
+        useCode.getState().toggleMode();
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const s = useCode.getState(),
         rel = s.roots.find((r) => r.path === s.activeRoot)?.activeRel;
@@ -53,6 +59,7 @@ export function CodeView() {
       <header className="flex h-12 shrink-0 items-center gap-3 border-b-[1.5px] border-line px-3" data-tauri-drag-region>
         <span className="text-[13px] font-medium text-mute">Code</span>
         <FolderSwitcher />
+        <AgentStrip />
         {root && (
           <button
             className="ml-auto flex items-center gap-2 rounded-[4px] px-2 py-1 text-[12px] text-mute hover:bg-hover hover:text-fg"
@@ -117,7 +124,9 @@ export function CodeView() {
           hidden={!activityOpen}
           style={{ width: activityWidth }}
           className="shrink-0 border-l-[1.5px] border-line bg-panel"
-        />
+        >
+          <ActivityTimeline />
+        </aside>
       </div>
       {quickOpen && <QuickOpen />}
     </main>

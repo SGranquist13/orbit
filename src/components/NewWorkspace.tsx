@@ -15,7 +15,7 @@ function titleFrom(prompt: string) {
 export function NewWorkspace() {
   const repos = useApp((s) => s.repos);
   const selectedRepo = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId)?.repoId);
-  const [repoId, setRepoId] = useState(() => localStorage.getItem("lastRepo") ?? "");
+  const [repoId, setRepoId] = useState(() => useApp.getState().newWorkspacePrefill?.repoId ?? localStorage.getItem("lastRepo") ?? "");
   const settings = useApp((s) => s.settings);
   // Agent and model start from Settings; only the last repo is remembered between uses.
   const [agent, setAgent] = useState<AgentKind>(() => settings?.defaultAgent ?? "claude");
@@ -36,7 +36,7 @@ export function NewWorkspace() {
   // Always start from Builder: silently inheriting a read-only profile from last time is a trap.
   const [profileId, setProfileId] = useState(DEFAULT_PROFILE);
   const profile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.id === DEFAULT_PROFILE);
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(() => useApp.getState().newWorkspacePrefill?.prompt ?? "");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);

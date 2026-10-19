@@ -1515,4 +1515,40 @@ await step("chief", async () => {
   await sleep(1500);
 });
 
+// Standalone: node scripts/e2e.mjs code-live (one cheap real Haiku edit).
+await step("code-live", async () => {
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  const filename = "ORBIT_LIVE_E2E.ts";
+  fs.writeFileSync(path.join(ws.path, filename), "export const liveValue = 1;\n");
+  try {
+    await js(`document.querySelector('button[title="Open in Code (Ctrl+Shift+O)"]').click()`);
+    await waitFor("linked Code root", `return !!document.querySelector('[data-code-view] [aria-label="Editor mode"]')`, 10000);
+    await waitFor("live fixture", `return !!document.getElementById('file-${filename}')`, 10000);
+    await js(`document.getElementById('file-${filename}').click()`);
+    await waitFor("initial file", `return document.querySelector('.cm-content')?.innerText.includes('liveValue = 1')`, 10000);
+    await js(`[...document.querySelectorAll('[aria-label="Editor mode"] button')].find(b => b.innerText === 'Watch').click()`);
+    await invoke("send_message", { id: ws.id, text: `Use Edit to replace liveValue = 1 with liveValue = 2 in ${filename}. Reply with just done.` });
+    await waitFor("agent timeline", `return document.querySelector('aside[aria-label="Activity"]')?.innerText.includes('${filename}')`, 120000);
+    await waitFor("agent edit followed", `return document.querySelector('.cm-content')?.innerText.includes('liveValue = 2')`, 120000);
+    await until("live turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120000, 500);
+    await waitFor("agent gutter", `return !!document.querySelector('.cm-agent-gutter .cm-agent-mark')`, 10000);
+    await js(`[...document.querySelectorAll('aside[aria-label="Activity"] button')].find(b => b.innerText.includes('${filename}')).click()`);
+    await waitFor("turn comparison", `return document.querySelector('.code-diff')?.innerText.includes('liveValue = 1') && document.querySelector('.code-diff')?.innerText.includes('liveValue = 2')`, 10000);
+    await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Back to file').click()`);
+    await js(`document.querySelector('.cm-content').focus()`);
+    await key("k", { ctrl: true });
+    await waitFor("selection prompt owns Ctrl K", `return !!document.querySelector('textarea[aria-label="Question about selection"]') && !document.querySelector('[cmdk-input]')`, 5000);
+    await type("Explain this line");
+    await js(`const select = document.querySelector('select[aria-label="Target workspace"]'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'new'); select.dispatchEvent(new Event('change', { bubbles: true }));`);
+    await js(`[...document.querySelectorAll('[aria-label="Ask about selection"] button')].find(b => b.innerText === 'Continue').click()`);
+    await waitFor("new workspace selection prefill", `const t = document.querySelector('textarea[placeholder^="Describe the task"]'); return t?.value.includes('${filename}') && t.value.includes('Explain this line')`, 5000);
+    await key("Escape");
+    await key("w", { ctrl: true, alt: true });
+    await waitFor("manual shortcut", `return [...document.querySelectorAll('[aria-label="Editor mode"] button')].find(b => b.innerText === 'Manual')?.getAttribute('aria-checked') === 'true'`, 5000);
+    await shot("code-live");
+  } finally {
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+  }
+});
+
 await h.finish();

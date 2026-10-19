@@ -15,6 +15,8 @@ _Last verified: 2026-10-18 (later that day: `bun run e2e` 46/46 (and `e2e:github
 
 Orbit Code backend (2026-10-18): filesystem guards, editing/conflicts, git revisions, search, ref-counted watchers and PTYs implemented in `src-tauri/src/code/`, with editor/terminal settings. Backend unit tests added; execution and clippy are pending because this worktree's environment cannot download the new Cargo dependencies. Real-app verification remains pending.
 
+Orbit Code live view (2026-10-18, built; real-app verification pending): Watch/Manual modes, Claude/Codex edit tracking, per-turn baselines and timeline comparisons, agent flashes/gutter/tree/tab marks, read-only while working, selection questions and workspace entry points. `scripts/code-live-smoke.ts` covers paths, line diffs/mapped marks and store event/conflict behavior. Browser mock simulates w1 edits every 12 seconds with its root open (also available in the palette). `scripts/e2e.mjs code-live` adds a real Haiku edit + selection-prefill scenario; real-app and visual verification remain pending.
+
 ## Real vs mock: verification ledger (2026-10-09)
 
 **Totals:** 123 features: ✅ 56 · 🟢 48 · 🟡 7 · ⬜ 9 · 💭 3.
