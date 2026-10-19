@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../stores/app";
 import { Button, Kbd, cn } from "./ui";
+import { Editor } from "./settings/Editor";
 import { Agents } from "./settings/Agents";
 import { Section } from "./settings/controls";
 import { Data } from "./settings/Data";
@@ -13,6 +14,7 @@ import { UsageSection } from "./settings/UsageSection";
 
 const SECTIONS = [
   { id: "general", title: "General", body: <General /> },
+  { id: "editor", title: "Editor", body: <Editor />, description: "The Code view: editor, autosave, terminal." },
   { id: "agents", title: "Agents", body: <Agents />, description: "Permissions, models and the tools Orbit drives." },
   { id: "git", title: "Git", body: <Git />, description: "How Orbit handles commits, checks, syncing and merging. Defaults follow trunk-based practice; every piece can be changed or switched off." },
   { id: "github", title: "GitHub", body: <GitHub /> },

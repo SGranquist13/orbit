@@ -7,6 +7,8 @@ interface MockFile {
   binary: boolean;
   mtime: number;
 }
+const revisions = new Map<string, Map<string, string>>();
+const shells = new Map<string, { root: string; line: string }>();
 const trees = new Map<string, Map<string, MockFile>>();
 let clock = Date.now(),
   terminal = 0;
@@ -59,6 +61,23 @@ function tree(root: string) {
       files.set(segments.slice(0, i).join("/"), { text: "", dir: true, binary: false, mtime: tick() });
     files.set(rel, { text, dir: false, binary: rel.endsWith(".png"), mtime: tick() });
   }
+  const head = new Map<string, string>();
+  for (const [rel, text] of Object.entries(seed)) {
+    if (rel === "src/components/Login.tsx") continue;
+    head.set(
+      rel,
+      rel === "README.md"
+        ? text
+            .replace("24 hours", "12 hours")
+            .replace("A focused workspace for your team.\n", "A workspace for your team.\nLegacy documentation.\n")
+        : rel === "src/main.ts"
+          ? text
+              .replace('  console.info("Welcome", session?.user.name ?? "guest");', "  console.log(session);")
+              .replace("\nvoid main();", "\n// Start the app\nvoid main();")
+          : text,
+    );
+  }
+  revisions.set(root, head);
   return files;
 }
 function fs(root: string, paths: string[], kind: CodeFsEvent["kind"]) {
@@ -84,6 +103,8 @@ function glob(patterns: string, rel: string) {
 export async function mockCodeCommand(cmd: string, args: unknown): Promise<unknown> {
   const a = (args ?? {}) as {
     root: string;
+    cwd: string;
+    rev: string;
     rel: string;
     from: string;
     to: string;
@@ -98,15 +119,51 @@ export async function mockCodeCommand(cmd: string, args: unknown): Promise<unkno
   };
   if (cmd === "pty_open") {
     const id = `mock-pty-${++terminal}`;
-    setTimeout(() => void emit("pty-data", { id, data: "Orbit mock terminal\r\n$ " }), 50);
+    shells.set(id, { root: a.cwd, line: "" });
+    setTimeout(() => {
+      if (shells.has(id)) void emit("pty-data", { id, data: `PS ${a.cwd.replace(/\//g, "\\")}> ` });
+    }, 20);
     return id;
   }
   if (cmd === "pty_write") {
-    await emit("pty-data", { id: a.id, data: a.data });
+    const shell = shells.get(a.id);
+    if (!shell) return null;
+    let output = "";
+    for (const char of a.data) {
+      if (char === "\r" || char === "\n") {
+        const command = shell.line.trim();
+        shell.line = "";
+        output += "\r\n";
+        if (command.toLowerCase() === "exit") {
+          if (output) await emit("pty-data", { id: a.id, data: output });
+          shells.delete(a.id);
+          await emit("pty-exit", { id: a.id, code: 0 });
+          return null;
+        }
+        if (/^echo(?: |$)/i.test(command)) output += command.slice(5) + "\r\n";
+        else if (/^(ls|dir)$/i.test(command))
+          output += [...tree(shell.root).keys()].filter((p) => !p.includes("/")).join("  ") + "\r\n";
+        else if (/^pwd$/i.test(command)) output += shell.root.replace(/\//g, "\\") + "\r\n";
+        else if (command) output += `(mock shell) ${command}\r\n`;
+        output += `PS ${shell.root.replace(/\//g, "\\")}> `;
+      } else if (char === "\x7f" || char === "\b") {
+        if (shell.line) {
+          shell.line = Array.from(shell.line).slice(0, -1).join("");
+          output += "\b \b";
+        }
+      } else if (char === "\x03") {
+        shell.line = "";
+        output += `^C\r\nPS ${shell.root.replace(/\//g, "\\")}> `;
+      } else if (char >= " ") {
+        shell.line += char;
+        output += char;
+      }
+    }
+    if (output) await emit("pty-data", { id: a.id, data: output });
     return null;
   }
   if (cmd === "pty_close") {
-    await emit("pty-exit", { id: a.id, code: 0 });
+    shells.delete(a.id);
     return null;
   }
   if (cmd === "pty_resize" || cmd === "code_watch" || cmd === "code_unwatch") return null;
@@ -178,8 +235,8 @@ export async function mockCodeCommand(cmd: string, args: unknown): Promise<unkno
         .map(([p]) => p)
         .sort();
     case "code_file_at": {
-      const f = files.get(rel);
-      return f && !f.dir && !f.binary ? f.text.replace(/24 hours/, "12 hours") + "\n// Previous revision\n" : null;
+      const text = revisions.get(a.root)?.get(rel) ?? null;
+      return text === null ? null : a.rev === "base" && rel === "README.md" ? text.replace("12 hours", "6 hours") : text;
     }
     case "code_search": {
       const matches: SearchMatch[] = [],

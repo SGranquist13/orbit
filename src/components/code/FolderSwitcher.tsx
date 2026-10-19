@@ -52,6 +52,7 @@ export function FolderSwitcher() {
         <FolderOpen className="size-3.5 shrink-0 text-mute" />
         <span className="truncate">{ws?.name ?? root?.label ?? "Open folder"}</span>
         {ws && <span className="truncate text-mute">{ws.branch}</span>}
+        {root?.mode === "watch" && <span className="text-[11px] text-run">Watch</span>}
         <ChevronDown className="size-3 text-mute" />
       </button>
       {expanded && (

@@ -91,6 +91,14 @@ export function Palette() {
             {codeView && <>
               <Command.Item className={item} value="Quick open file" onSelect={run(() => useCode.getState().setQuickOpen(true))}>Quick open file<span className="ml-auto text-mute">Ctrl P</span></Command.Item>
               {codeRoot && <>
+                {([
+                  ["New terminal", () => useCode.getState().newTerminal()],
+                  ["Toggle terminal", () => useCode.getState().toggleTerminal()],
+                  ["Search in files", () => useCode.getState().openSearch()],
+                  ["Toggle diff", () => useCode.getState().toggleDiff()],
+                ] as [string, () => void][]).map(([title, action]) => (
+                  <Command.Item key={title} className={item} value={title} onSelect={run(action)}>{title}</Command.Item>
+                ))}
                 <Command.Item className={item} value="Save all files" onSelect={run(() => { void useCode.getState().saveAll(); })}>Save all files</Command.Item>
                 <Command.Item className={item} value="Close folder in Code" onSelect={run(() => { void useCode.getState().closeRoot(codeRoot.path); })}>Close folder in Code</Command.Item>
                 {([["new-file", "New file"], ["new-folder", "New folder"], ["rename", "Rename entry"], ["delete", "Delete entry"], ["copy-path", "Copy relative path"], ["reveal", "Reveal in Explorer"]] as [ExplorerAction, string][]).map(([action, title]) => <Command.Item key={action} className={item} value={title} onSelect={run(() => explorerAction(action))}>{title}</Command.Item>)}

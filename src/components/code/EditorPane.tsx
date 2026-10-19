@@ -6,6 +6,9 @@ import { searchKeymap, search, gotoLine, openSearchPanel } from "@codemirror/sea
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from "@codemirror/language";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, completeAnyWord } from "@codemirror/autocomplete";
 import { openPath } from "@tauri-apps/plugin-opener";
+import { codeApi } from "../../lib/ipc";
+import { gitGutter } from "../../lib/code/gitGutter";
+import { DiffView } from "./DiffView";
 import { codeTheme } from "../../lib/code/theme";
 import { loadLanguage } from "../../lib/code/languages";
 import { minimalChange } from "../../lib/code/helpers";
@@ -13,7 +16,15 @@ import { bufferKey, useCode } from "../../stores/code";
 import { useApp } from "../../stores/app";
 import { Button } from "../ui";
 
-const states = new Map<string, { state: EditorState; top: number; left: number; settings: Compartment; language: Compartment }>();
+interface CachedEditor {
+  state: EditorState;
+  top: number;
+  left: number;
+  settings: Compartment;
+  language: Compartment;
+  git: Compartment;
+}
+const states = new Map<string, CachedEditor>();
 const diskReload = Annotation.define<boolean>();
 useCode.subscribe((s) => {
   for (const key of states.keys()) if (!s.buffers[key]) states.delete(key);
@@ -24,6 +35,8 @@ export function EditorPane() {
     rel = useCode((s) => s.roots.find((r) => r.path === s.activeRoot)?.activeRel);
   const key = root && rel ? bufferKey(root, rel) : "",
     buffer = useCode((s) => s.buffers[key]);
+  const revision = useCode((s) => s.diffTabs[key]);
+  const jump = useCode((s) => s.jump);
   const settings = useApp((s) => s.settings);
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null),
@@ -74,16 +87,19 @@ export function EditorPane() {
     let entry = states.get(key);
     if (!entry) {
       const config = new Compartment(),
-        language = new Compartment();
+        language = new Compartment(),
+        git = new Compartment();
       entry = {
         top: 0,
         left: 0,
         settings: config,
         language,
+        git,
         state: EditorState.create({
           doc: buffer.text,
           extensions: [
             codeTheme,
+            git.of([]),
             lineNumbers(),
             foldGutter(),
             history(),
@@ -107,7 +123,16 @@ export function EditorPane() {
               ...completionKeymap,
               indentWithTab,
             ]),
+            EditorView.domEventHandlers({
+              blur: () => {
+                if (useApp.getState().settings?.editorAutosave === "focus") useCode.getState().autosave(root, rel);
+              },
+            }),
             EditorView.updateListener.of((update) => {
+              if (update.selectionSet)
+                useCode.setState({
+                  selection: update.state.sliceDoc(update.state.selection.main.from, update.state.selection.main.to),
+                });
               const cached = states.get(key);
               if (cached) cached.state = update.state;
               if (update.docChanged && !update.transactions.some((t) => t.annotation(diskReload)))
@@ -121,6 +146,7 @@ export function EditorPane() {
     if (currentKey.current !== key) {
       currentKey.current = key;
       editor.setState(entry.state);
+      useCode.setState({ selection: entry.state.sliceDoc(entry.state.selection.main.from, entry.state.selection.main.to) });
       editor.scrollDOM.scrollTop = entry.top;
       editor.scrollDOM.scrollLeft = entry.left;
       editor.focus();
@@ -160,6 +186,35 @@ export function EditorPane() {
     editor.scrollDOM.scrollTop = top;
     editor.scrollDOM.scrollLeft = left;
   }, [key, buffer?.text, visible]);
+  useEffect(() => {
+    if (!visible || !root || !rel) return;
+    let cancelled = false;
+    void codeApi
+      .fileAt(root, rel, "HEAD")
+      .then((baseline) => {
+        const cached = states.get(key);
+        if (cancelled || !cached) return;
+        const effects = cached.git.reconfigure(gitGutter(baseline));
+        if (view.current && currentKey.current === key) view.current.dispatch({ effects });
+        else cached.state = cached.state.update({ effects }).state;
+      })
+      .catch((e) => {
+        if (!cancelled) useApp.getState().setError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, visible, buffer?.savedText, buffer?.mtime]);
+  useLayoutEffect(() => {
+    const editor = view.current;
+    if (!editor || !visible || !jump || jump.key !== key || revision) return;
+    const line = editor.state.doc.line(Math.max(1, Math.min(editor.state.doc.lines, jump.target.line)));
+    const from = line.from + Math.min(line.length, Math.max(0, jump.target.start));
+    const to = Math.max(from, line.from + Math.min(line.length, Math.max(0, jump.target.end)));
+    editor.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+    editor.focus();
+    useCode.setState({ jump: null });
+  }, [key, visible, jump, revision]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {buffer?.diskChanged && buffer.dirty && (
@@ -167,7 +222,7 @@ export function EditorPane() {
           <span className="text-warn">Changed on disk.</span>
           <Button onClick={() => void useCode.getState().reloadFromDisk(rel!, root!, true)}>Reload</Button>
           <Button onClick={() => void useCode.getState().keepMine(rel!)}>Keep mine</Button>
-          {/* TODO: Compare action when diff panel lands. */}
+          <Button onClick={() => useCode.setState((s) => ({ diffTabs: { ...s.diffTabs, [key]: "disk" } }))}>Compare</Button>
         </div>
       )}
       {!rel ? (
@@ -192,7 +247,8 @@ export function EditorPane() {
           </div>
         </div>
       ) : null}
-      <div ref={host} className={visible ? "min-h-0 flex-1 overflow-hidden" : "hidden"} />
+      {visible && revision && root && rel && <DiffView key={key} root={root} rel={rel} revision={revision} />}
+      <div ref={host} className={visible && !revision ? "min-h-0 flex-1 overflow-hidden" : "hidden"} />
     </div>
   );
 }

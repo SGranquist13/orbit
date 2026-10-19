@@ -1,5 +1,5 @@
 import { FolderPlus, Plus, X } from "lucide-react";
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Chat } from "./components/Chat";
 import { NewWorkspace } from "./components/NewWorkspace";
 import { Palette } from "./components/Palette";
@@ -35,6 +35,8 @@ export default function App() {
   const packsOpen = useApp((s) => s.packsOpen);
   const ticketOpen = useApp((s) => s.ticketOpen);
   const view = useApp((s) => s.view);
+  const [codeLoaded, setCodeLoaded] = useState(view === "code");
+  useEffect(() => { if (view === "code") setCodeLoaded(true); }, [view]);
   const shipOpen = useApp((s) => s.shipOpen);
   const simplifyOpen = useApp((s) => s.simplifyOpen);
   const focusMode = useApp((s) => s.focusMode);
@@ -112,9 +114,12 @@ export default function App() {
   return (
     <div className="flex h-full">
       {!focusMode && <Sidebar />}
-      {view === "code" ? (
-        <Lazy><CodeView /></Lazy>
-      ) : view === "settings" ? (
+      {(codeLoaded || view === "code") && (
+        <div className={view === "code" ? "flex min-w-0 flex-1" : "hidden"}>
+          <Lazy><CodeView /></Lazy>
+        </div>
+      )}
+      {view === "code" ? null : view === "settings" ? (
         <Lazy><Settings /></Lazy>
       ) : view === "inbox" ? (
         <Lazy><Inbox /></Lazy>
