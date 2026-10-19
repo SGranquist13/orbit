@@ -28,7 +28,7 @@ export function Stage({ w, h, aspect }: { w: number; h: number; aspect: Aspect }
 
   void prog;
   return (
-    <div id="stage" style={{ position: "relative", width: w, height: h, overflow: "hidden", background: "#050506" }}>
+    <div id="stage" style={{ position: "relative", width: w, height: h, overflow: "clip", background: "#050506" }}>
       {(holeA || holeB) && <BlackHoleLayer w={w} h={h} aspect={aspect} t={t} />}
       {terminals && <Terminals w={w} h={h} aspect={aspect} t={t} />}
       {app && <AppLayer w={w} h={h} aspect={aspect} t={t} />}

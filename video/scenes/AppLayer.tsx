@@ -39,8 +39,8 @@ export function AppLayer({ aspect, t }: { w: number; h: number; aspect: Aspect; 
     <>
       <div
         style={{
-          position: "absolute", left: f.win.x, top: f.win.y, width: f.win.w, height: f.win.h, overflow: "hidden",
-          border: "1.5px solid var(--line-strong)", borderRadius: 6, boxShadow: "6px 6px 0 0 #000, 6px 6px 0 1.5px var(--line-strong)", background: "var(--bg)",
+          position: "absolute", left: f.win.x, top: f.win.y, width: f.win.w, height: f.win.h, overflow: "clip",
+          border: "1.5px solid var(--line-strong)", borderRadius: 6, ...fadeMask(cam.fade), boxShadow: "6px 6px 0 0 #000, 6px 6px 0 1.5px var(--line-strong)", background: "var(--bg)",
         }}
       >
         <div
@@ -58,4 +58,13 @@ export function AppLayer({ aspect, t }: { w: number; h: number; aspect: Aspect; 
       </div>
     </>
   );
+}
+
+/** Soft edges on the sides where the camera cuts through the app, so no text is cropped hard. */
+function fadeMask(f?: { l: number; r: number; t: number; b: number }): React.CSSProperties {
+  if (!f || f.l + f.r + f.t + f.b < 1) return {};
+  const g = (dir: string, a: number, b: number) =>
+    `linear-gradient(${dir}, transparent 0, #000 ${a}px, #000 calc(100% - ${b}px), transparent 100%)`;
+  const image = `${g("to right", f.l, f.r)}, ${g("to bottom", f.t, f.b)}`;
+  return { WebkitMaskImage: image, maskImage: image, WebkitMaskComposite: "source-in", maskComposite: "intersect" } as React.CSSProperties;
 }

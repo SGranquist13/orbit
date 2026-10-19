@@ -63,13 +63,10 @@ function w1Steps(): Step[] {
   const msg = (e: StoredEvent) => (e.event as { text: string }).text;
   void msg;
   return [
-    { at: T.fleet + 0.25, events: [b[0]] },
-    { at: T.fleet + 0.9, dur: 0.7, events: [b[1]] },
-    { at: T.fleet + 1.8, events: [b[2], b[3]] },
-    { at: T.fleet + 2.3, events: [b[4], b[5]] },
-    { at: T.fleet + 2.8, events: [b[6], b[7]] },
-    { at: T.fleet + 3.4, dur: 2.2, events: [b[8]] },
-    { at: T.fleet + 5.7, events: [b[9], b[10], b[11], b[12]] },
+    { at: 0, events: b.slice(0, 8) },
+    { at: T.fleet + 0.5, dur: 2.9, events: [b[8]] },
+    { at: T.fleet + 3.7, events: [b[9], b[10]] },
+    { at: T.fleet + 4.3, events: [b[11], b[12]] },
   ];
 }
 
@@ -265,7 +262,7 @@ function viewFor(t: number): View {
   // Scene 4: the fleet; w1 streams a fix.
   if (t < T.inbox) {
     const s = streamAt(w1Steps(), t);
-    const workspaces = ws.map((w) => (w.id === "w1" ? { ...w, status: (s.running || (t > T.fleet + 0.2 && t < T.fleet + 5.7) ? "running" : "idle") as Workspace["status"] } : w));
+    const workspaces = ws.map((w) => (w.id === "w1" ? { ...w, status: (s.running || (t < T.fleet + 4.3) ? "running" : "idle") as Workspace["status"] } : w));
     return { view: "workspace", selectedId: "w1", shipOpen: false, workspaces, transcripts: { w1: s.events }, live: { w1: s.live } };
   }
   // Scene 5: the inbox.
@@ -312,16 +309,22 @@ export interface Cam {
   fx: number;
   fy: number;
   s: number;
+  /** Soft edge (stage px) where the view cuts through the app. */
+  fade?: { l: number; r: number; t: number; b: number };
 }
 
-const mix = (a: Cam, b: Cam, x: number): Cam => ({ fx: lerp(a.fx, b.fx, x), fy: lerp(a.fy, b.fy, x), s: lerp(a.s, b.s, x) });
+const F0 = { l: 0, r: 0, t: 0, b: 0 };
+const mix = (a: Cam, b: Cam, x: number): Cam => {
+  const fa = a.fade ?? F0, fb = b.fade ?? F0;
+  return { fx: lerp(a.fx, b.fx, x), fy: lerp(a.fy, b.fy, x), s: lerp(a.s, b.s, x), fade: { l: lerp(fa.l, fb.l, x), r: lerp(fa.r, fb.r, x), t: lerp(fa.t, fb.t, x), b: lerp(fa.b, fb.b, x) } };
+};
 
 /** Camera keyframes per scene, in virtual app coordinates (focus point) and scale. Always clamped inside the app. */
 export function cameraAt(t: number, aspect: Aspect): Cam {
   const f = frameFor(aspect);
   const raw = rawCamera(t, aspect, f);
   const hw = f.win.w / raw.s / 2, hh = f.win.h / raw.s / 2;
-  return { s: raw.s, fx: clamp(raw.fx, hw, f.virt.w - hw), fy: clamp(raw.fy, hh, f.virt.h - hh) };
+  return { s: raw.s, fx: clamp(raw.fx, hw, f.virt.w - hw), fy: clamp(raw.fy, hh, f.virt.h - hh), fade: raw.fade };
 }
 
 function rawCamera(t: number, aspect: Aspect, f: Frame): Cam {
@@ -330,10 +333,17 @@ function rawCamera(t: number, aspect: Aspect, f: Frame): Cam {
   const e = (a: number, b: number) => easeInOut(prog(t, a, b));
   const push = (a: Cam, b: Cam, t0: number, t1: number) => mix(a, b, e(t0, t1));
   if (aspect === "4x5") {
-    const side = k(240, 300, 1.55), chat = k(560, 330, 1.4), inbox = k(620, 300, 1.12), ship = k(700, 380, 1.4), team = k(560, 330, 1.3);
-    if (t < T.fleet) return push(overview, side, 9.6, 12.5);
-    if (t < T.inbox) return push(side, chat, T.fleet, T.fleet + 1.4);
-    if (t < T.ship) return push(chat, inbox, T.inbox - 0.3, T.inbox + 0.6);
+    const fd = (l: number, r: number, t: number, b: number) => ({ l, r, t, b });
+    const kf = (fx: number, fy: number, s: number, fade = F0): Cam => ({ fx, fy, s, fade });
+    // Sidebar is 217 wide, the Ship panel 304, so these crops land on panel edges.
+    const side = kf(330, 660, 1.7, fd(0, 110, 70, 0));
+    const chat = kf(380, 400, 1.4, fd(0, 90, 44, 80));
+    const inbox = kf(609, 330, 1.29);
+    const ship = kf(660, 300, 1.5, fd(180, 0, 0, 70));
+    const team = kf(609, 330, 1.29);
+    if (t < T.fleet) return push(mix(overview, overview, 0), side, 9.7, 12.2);
+    if (t < T.inbox) return push(side, chat, T.fleet - 0.1, T.fleet + 0.9);
+    if (t < T.ship) return push(chat, inbox, T.inbox - 0.3, T.inbox + 0.7);
     if (t < T.teammates) return push(inbox, ship, T.ship - 0.3, T.ship + 0.8);
     return push(ship, team, T.teammates - 0.3, T.teammates + 0.8);
   }
