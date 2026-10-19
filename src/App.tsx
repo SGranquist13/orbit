@@ -10,6 +10,8 @@ import { OrbitHero } from "./components/OrbitHero";
 import { useTheme } from "./lib/theme";
 import { useApp } from "./stores/app";
 
+const CodeView = lazy(() => import("./components/code/CodeView").then((m) => ({ default: m.CodeView })));
+
 // Heavy views load on first use so the main chunk stays small.
 const Inbox = lazy(() => import("./components/Inbox").then((m) => ({ default: m.Inbox })));
 const Issues = lazy(() => import("./components/Issues").then((m) => ({ default: m.Issues })));
@@ -54,6 +56,9 @@ export default function App() {
         if (key === "l") {
           e.preventDefault();
           useTheme.getState().toggle();
+        } else if (key === "o") {
+          e.preventDefault();
+          s.setView(s.view === "code" ? "workspace" : "code");
         } else if (key === "g") {
           e.preventDefault();
           s.setView(s.view === "issues" ? "workspace" : "issues");
@@ -107,7 +112,9 @@ export default function App() {
   return (
     <div className="flex h-full">
       {!focusMode && <Sidebar />}
-      {view === "settings" ? (
+      {view === "code" ? (
+        <Lazy><CodeView /></Lazy>
+      ) : view === "settings" ? (
         <Lazy><Settings /></Lazy>
       ) : view === "inbox" ? (
         <Lazy><Inbox /></Lazy>

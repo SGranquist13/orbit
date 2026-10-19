@@ -1,3 +1,7 @@
+import { useCode } from "../stores/code";
+import { openCodeFolder } from "./code/FolderSwitcher";
+import { explorerAction, type ExplorerAction } from "./code/Explorer";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
 import { AlarmClock, Archive, CalendarClock, Check, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Square, SunMoon, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
@@ -12,6 +16,10 @@ import { TeammateAvatar } from "./TeammateAvatar";
 import { AgentIcon, StatusDot, TeammateDot } from "./ui";
 
 export function Palette() {
+  const codeView = useApp((s) => s.view === "code");
+  const codeRoot = useCode((s) => s.roots.find((r) => r.path === s.activeRoot));
+  const codeRel = codeRoot?.activeRel;
+  const codeBuffer = useCode((s) => codeRoot && codeRel ? s.buffers[`${codeRoot.path}|${codeRel}`] : undefined);
   const workspaces = useApp((s) => s.workspaces);
   const repos = useApp((s) => s.repos);
   const skills = useApp((s) => s.skills);
@@ -77,6 +85,27 @@ export function Palette() {
           )}
           {scope !== "teammates" && (
           <>
+          <Command.Group heading="Code" className={heading}>
+            <Command.Item className={item} value="Open Code" onSelect={run(() => useApp.getState().setView("code"))}><FolderSymlink className="size-3.5" />Open Code<span className="ml-auto text-mute">Ctrl Shift O</span></Command.Item>
+            <Command.Item className={item} value="Open folder in Code" onSelect={run(() => { void openCodeFolder(); })}><FolderPlus className="size-3.5" />Open folder in Code</Command.Item>
+            {codeView && <>
+              <Command.Item className={item} value="Quick open file" onSelect={run(() => useCode.getState().setQuickOpen(true))}>Quick open file<span className="ml-auto text-mute">Ctrl P</span></Command.Item>
+              {codeRoot && <>
+                <Command.Item className={item} value="Save all files" onSelect={run(() => { void useCode.getState().saveAll(); })}>Save all files</Command.Item>
+                <Command.Item className={item} value="Close folder in Code" onSelect={run(() => { void useCode.getState().closeRoot(codeRoot.path); })}>Close folder in Code</Command.Item>
+                {([["new-file", "New file"], ["new-folder", "New folder"], ["rename", "Rename entry"], ["delete", "Delete entry"], ["copy-path", "Copy relative path"], ["reveal", "Reveal in Explorer"]] as [ExplorerAction, string][]).map(([action, title]) => <Command.Item key={action} className={item} value={title} onSelect={run(() => explorerAction(action))}>{title}</Command.Item>)}
+              </>}
+              {codeRel && <>
+                <Command.Item className={item} value="Save file" onSelect={run(() => { void useCode.getState().save(codeRel); })}>Save file</Command.Item>
+                <Command.Item className={item} value="Close file tab" onSelect={run(() => { void useCode.getState().closeTab(codeRel); })}>Close file tab</Command.Item>
+                <Command.Item className={item} value="Pin preview tab" onSelect={run(() => useCode.getState().pin(codeRel))}>Pin preview tab</Command.Item>
+                <Command.Item className={item} value="Reload file from disk" onSelect={run(() => { void useCode.getState().reloadFromDisk(codeRel, undefined, true); })}>Reload file from disk</Command.Item>
+                <Command.Item className={item} value="Open file externally" onSelect={run(() => { void openPath(`${codeRoot!.path}/${codeRel}`).catch((e) => useApp.getState().setError(String(e))); })}>Open file externally</Command.Item>
+                {codeBuffer?.dirty && codeBuffer.diskChanged && <Command.Item className={item} value="Keep mine (overwrite on next save)" onSelect={run(() => { void useCode.getState().keepMine(codeRel); })}>Keep mine (overwrite on next save)</Command.Item>}
+                {["Find in file", "Replace in file", "Go to line"].map((title) => <Command.Item key={title} className={item} value={title} onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: title })))}>{title}</Command.Item>)}
+              </>}
+            </>}
+          </Command.Group>
           <Command.Group heading="Actions" className={heading}>
             <Command.Item
               className={item}

@@ -27,7 +27,7 @@ import { confirmAction } from "../lib/confirm";
 import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
 
-export type View = "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate";
+export type View = "code" | "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate";
 
 interface AppState {
   repos: Repo[];

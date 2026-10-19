@@ -118,6 +118,43 @@ await step("add-repo", async () => {
   await waitFor("repo in sidebar", `return document.body.innerText.toUpperCase().includes('REPO')`, 10_000);
 }, { always: true });
 
+await step("code-shell", async () => {
+  const filename = "ORBIT_CODE_E2E.ts";
+  const file = path.join(repo, filename);
+  fs.writeFileSync(file, "export const value = 1;\n");
+  try {
+    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("o", { ctrl: true, shift: true });
+    await waitFor("Code view", `return !!document.querySelector('[data-code-view]')`, 10_000);
+    await js(`document.querySelector('[data-code-view] header button[aria-haspopup="menu"]').click()`);
+    const repoName = (await invoke("list_repos"))[0].name;
+    await js(`[...document.querySelectorAll('[role="menuitem"]')].find(b => b.innerText.includes(${JSON.stringify(repoName)})).click()`);
+    await waitFor("Code explorer", `return !!document.getElementById('file-${filename}')`, 10_000);
+    await js(`document.getElementById('file-${filename}').click()`);
+    await waitFor("CodeMirror document", `return document.querySelector('.cm-content')?.innerText.includes('export const value = 1')`, 10_000);
+    await js(`document.querySelector('.cm-content').focus()`);
+    await key("End", { ctrl: true });
+    await type("\n// Saved through Orbit Code\n");
+    await waitFor("dirty tab", `return !!document.querySelector('[role="tablist"] [aria-label="Unsaved"]')`, 5000);
+    await key("s", { ctrl: true });
+    await until("Code saved file", async () => fs.readFileSync(file, "utf8").includes("Saved through Orbit Code"), 10_000, 100);
+    await waitFor("clean tab", `return !document.querySelector('[role="tablist"] [aria-label="Unsaved"]')`, 5000);
+    // Prove an external clean-buffer reload through the native watcher.
+    fs.writeFileSync(file, "export const value = 2;\n");
+    await waitFor("external file reload", `return document.querySelector('.cm-content')?.innerText.includes('export const value = 2')`, 10_000);
+    await key("p", { ctrl: true });
+    await waitFor("quick open", `return !!document.querySelector('[cmdk-input][placeholder^="Find a file"]')`, 5000);
+    await key("Escape");
+    await shot("code-shell-void");
+    await key("l", { ctrl: true, shift: true });
+    await shot("code-shell-paper");
+    await key("l", { ctrl: true, shift: true });
+    await key("w", { ctrl: true });
+  } finally {
+    fs.rmSync(file, { force: true });
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+  }
+});
+
 await step("claude-workspace-turn", async () => {
   await newWorkspace({
     agent: "claude",

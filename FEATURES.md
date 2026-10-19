@@ -210,3 +210,9 @@ The mock (`bun run dev` in a browser) renders the **same components** as the rea
 - Every mock workspace shows the same canned transcript, and the only "streaming" is a scripted sentence.
 - The mock always returns an open PR with failing checks; the real app asks `gh`.
 - Mock actions (send, run skill, install pack) do nothing.
+
+## Code view (frontend slice, 2026-10-18)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| Code shell: folders/workspaces, explorer, CodeMirror tabs and quick open | P1 | 🟡 | Implemented with preview/pinned tabs, per-buffer editor states, lazy languages, theme tokens, file operations, disk-conflict confirmation, persisted roots/layout, and an in-memory mock filesystem. Typecheck, production build and mock/store smoke verified; browser and real-app verification pending. `code-shell` e2e step added but not run. Terminal/search panels, git diff/gutter, Editor settings UI and agent Watch mode are later slices; hidden panel/activity extension points exist. `@codemirror/merge` is declared/locked but its download was blocked in this environment. |

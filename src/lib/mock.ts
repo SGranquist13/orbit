@@ -1,3 +1,4 @@
+import { mockCodeCommand } from "./code/mock";
 // Browser-only mock backend: `bun run dev` + open http://localhost:1420 to iterate on UI
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
@@ -928,6 +929,7 @@ export function installMockBackend() {
     async (cmd, args) => {
       const a = (args ?? {}) as { id?: string; slug?: string; workspaceId?: string; repoId?: string; path?: string; editable?: boolean; enabled?: boolean };
       const id = a.id ?? "";
+      if (cmd.startsWith("code_") || cmd.startsWith("pty_")) return mockCodeCommand(cmd, args);
       switch (cmd) {
         case "list_repos":
           return repos;

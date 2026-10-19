@@ -1,6 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, ChevronRight, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, Code2, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import { archiveWithWorktree } from "../lib/archive";
@@ -59,6 +59,7 @@ export function Sidebar() {
       <div className="border-t-[1.5px] border-line" />
 
       <nav className="space-y-0.5 px-2 py-2">
+        <NavItem icon={<Code2 className="size-3.5" />} label="Code" kbd="Ctrl Shift O" active={view === "code"} onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} />
         <NavItem
           icon={<Inbox className="size-3.5" strokeWidth={2.5} />}
           label="Inbox"
@@ -136,6 +137,7 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
       </div>
       <div className="dither-rule w-full bg-line-strong" />
       <nav className="flex flex-col items-center gap-0.5 py-2 text-dim">
+        <button title="Code (Ctrl Shift O)" onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} className={cn(btn, view === "code" && "bg-raised text-fg")}><Code2 className="size-3.5" /></button>
         <button
           onClick={() => useApp.getState().setView(view === "inbox" ? "workspace" : "inbox")}
           title="Inbox (Ctrl I)"
