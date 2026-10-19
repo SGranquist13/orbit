@@ -377,6 +377,16 @@ export interface Settings {
   remotePush: boolean;
   /** Max routine runs going at once (1-8). */
   routineConcurrency: number;
+  // Code view (editor + terminal)
+  editorFontSize: number;
+  editorTabSize: number;
+  editorWordWrap: boolean;
+  /** "off" | "delay" (1s after typing stops) | "focus" (when the editor loses focus or the tab changes). */
+  editorAutosave: "off" | "delay" | "focus";
+  /** Open a running workspace's folder in Watch mode (the editor follows the agent). */
+  editorFollowAgent: boolean;
+  /** Empty = auto (pwsh, then powershell, then cmd on Windows; $SHELL elsewhere). */
+  terminalShell: string;
 }
 
 /** `llm.rs`: local model servers for utility tasks. */
@@ -747,4 +757,111 @@ export const events = {
   onTeammateChanged: (cb: (slug: string) => void): Promise<UnlistenFn> => listen<string>("teammate-changed", (e) => cb(e.payload)),
   onSimplify: (cb: (s: SimplifyState) => void): Promise<UnlistenFn> =>
     listen<SimplifyState>("simplify", (e) => cb(e.payload)),
+};
+
+// ── Orbit Code (the Code view: editor, terminal, search). Rust: src-tauri/src/code/. ──
+// Every `rel` is a forward-slash path relative to `root`; the backend rejects paths that resolve outside it.
+
+export interface DirEntry {
+  name: string;
+  /** Relative to root, forward slashes. */
+  rel: string;
+  dir: boolean;
+  /** Matched by .gitignore (shown dimmed). */
+  ignored: boolean;
+  size: number;
+}
+
+export interface FileContent {
+  /** null when `binary` or `tooLarge`. */
+  text: string | null;
+  /** ms epoch; pass back to `writeFile` as `expectedMtime`. */
+  mtime: number;
+  size: number;
+  binary: boolean;
+  /** Over 5 MB. */
+  tooLarge: boolean;
+}
+
+export interface SearchOptions {
+  regex: boolean;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  /** Comma-separated globs, e.g. "src/**,*.rs". Empty = everything not gitignored. */
+  include: string;
+  exclude: string;
+}
+
+export interface SearchMatch {
+  rel: string;
+  /** 1-based. */
+  line: number;
+  /** 0-based UTF-16 column range within `text`. */
+  start: number;
+  end: number;
+  /** The line's text, trimmed to 300 chars. */
+  text: string;
+}
+
+export interface SearchResult {
+  matches: SearchMatch[];
+  /** Hit the 2,000-match cap. */
+  truncated: boolean;
+  /** Echoes the request's generation; drop results older than the latest request. */
+  generation: number;
+}
+
+export interface CodeFsEvent {
+  root: string;
+  /** Changed paths, relative to root. */
+  paths: string[];
+  kind: "create" | "modify" | "remove" | "rename" | "other";
+}
+
+export interface PtyData {
+  id: string;
+  data: string;
+}
+
+export interface PtyExit {
+  id: string;
+  code: number | null;
+}
+
+/** Writing failed because the file changed on disk since `expectedMtime`. The error string starts with this. */
+export const CONFLICT_PREFIX = "conflict:";
+
+export const codeApi = {
+  listDir: (root: string, rel: string) => invoke<DirEntry[]>("code_list_dir", { root, rel }),
+  readFile: (root: string, rel: string) => invoke<FileContent>("code_read_file", { root, rel }),
+  /** Returns the new mtime. Rejects with `conflict: …` when `expectedMtime` is stale; pass null to overwrite. */
+  writeFile: (root: string, rel: string, text: string, expectedMtime: number | null) =>
+    invoke<number>("code_write_file", { root, rel, text, expectedMtime }),
+  create: (root: string, rel: string, dir: boolean) => invoke<void>("code_create", { root, rel, dir }),
+  rename: (root: string, from: string, to: string) => invoke<void>("code_rename", { root, from, to }),
+  /** Moves to the recycle bin. */
+  remove: (root: string, rel: string) => invoke<void>("code_delete", { root, rel }),
+  /** Ref-counted; changes arrive as `code-fs` events. */
+  watch: (root: string) => invoke<void>("code_watch", { root }),
+  unwatch: (root: string) => invoke<void>("code_unwatch", { root }),
+  search: (root: string, query: string, options: SearchOptions, generation: number) =>
+    invoke<SearchResult>("code_search", { root, query, options, generation }),
+  /** Every non-ignored file under root (for quick open), capped at 20,000. */
+  listFiles: (root: string) => invoke<string[]>("code_list_files", { root }),
+  /** File content at a git revision: "HEAD" or "base" (merge-base with the repo's base branch). null if absent there. */
+  fileAt: (root: string, rel: string, rev: "HEAD" | "base") => invoke<string | null>("code_file_at", { root, rel, rev }),
+};
+
+export const ptyApi = {
+  /** Starts the configured shell in `cwd`; returns the terminal id. */
+  open: (cwd: string, cols: number, rows: number) => invoke<string>("pty_open", { cwd, cols, rows }),
+  write: (id: string, data: string) => invoke<void>("pty_write", { id, data }),
+  resize: (id: string, cols: number, rows: number) => invoke<void>("pty_resize", { id, cols, rows }),
+  close: (id: string) => invoke<void>("pty_close", { id }),
+};
+
+export const codeEvents = {
+  onFs: (cb: (e: CodeFsEvent) => void): Promise<UnlistenFn> => listen<CodeFsEvent>("code-fs", (e) => cb(e.payload)),
+  onPtyData: (cb: (e: PtyData) => void): Promise<UnlistenFn> => listen<PtyData>("pty-data", (e) => cb(e.payload)),
+  onPtyExit: (cb: (e: PtyExit) => void): Promise<UnlistenFn> => listen<PtyExit>("pty-exit", (e) => cb(e.payload)),
 };

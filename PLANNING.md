@@ -11,6 +11,18 @@ Raw ideas, as they come. Unsorted, unfiltered.
 
 ## Shaping
 
+### 12. Orbit Code: a built-in IDE with a live view of the agent (decided 2026-10-18, building)
+
+An almost-complete IDE inside Orbit for building and playing by hand, and above all a **live view of the agent changing your files**.
+
+- **Engine:** our own IDE shell on CodeMirror 6 (CM6 does the text-editing core; Orbit owns the shell and the look). Monaco rejected: looks like VS Code. A from-scratch text engine rejected: months before it beats a textarea.
+- **Placement:** a global **Code** view (nav item, Ctrl+Shift+O) that opens any folder: a repo, any workspace's worktree, or any folder ("Open any worktree").
+- **Watch mode** (a workspace folder while its agent runs): the editor follows the agent, opens the file it touches, reloads as it changes, flashes the changed lines, shows "Editing path" and an activity timeline per turn. Buffers are read-only while it runs.
+- **Manual mode:** a normal IDE. Agent changes reload clean buffers silently; dirty buffers get "Changed on disk: Reload · Compare · Keep mine"; saves check mtime so an agent edit is never overwritten silently.
+- **Ask about selection (Ctrl+K):** send the selected lines plus a question to the folder's workspace agent (or a new workspace).
+- **Core:** file tree (create/rename/delete to recycle bin), tabs, save/autosave, quick open, find/replace, project search, integrated terminal (xterm + portable-pty), git gutter and diff vs HEAD/base, Settings > Editor.
+- Rust `src-tauri/src/code/` (fs with a path guard, watcher, search, pty); UI `src/components/code/`, store `src/stores/code.ts`; IPC contract `codeApi` / `ptyApi` / `codeEvents` in `ipc.ts`.
+
 ### 11. Create a workspace without a task (built, mock-verified)
 The New workspace dialog's prompt is optional: empty = **Create** (worktree + branch, agent idle, composer focused, Attach / profile available), text = **Start** as before. Optional name field (kept over the auto-namer). Backend needed no change (`create_workspace` already takes an optional prompt). Later: setup controls (attach folders) inside the dialog, a Settings default for which action is primary, cleanup of idle never-started workspaces, "not started" label in sidebar/inbox.
 
@@ -290,6 +302,7 @@ Agreed ideas, each with a line on where it landed in FEATURES.md.
 - **#5 Multi-folder sessions**: built; e2e verified (attach, discovery, editable worktrees).
 - **#6 Routines, #7 Trunk-based git handling, #8 Simplify, #9 Local models**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted) and built the same day, then connected (Simplify as a routine action, routine summaries / save-point messages / PR drafts through `llm.rs`). All 🟢: none has had a real-app e2e run yet. FEATURES.md: Routines, git flow, simplify; Local models.
 - **#1 Focus on the main workspace**: built (Ship button + hidden panel, slimmer collapsible sidebar, wider chat, focus mode).
+- **#12 Orbit Code**: decided 2026-10-18 (CodeMirror 6, global Code view, Watch/Manual modes); building. FEATURES.md: Code view.
 
 ## Parked
 
