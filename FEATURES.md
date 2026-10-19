@@ -215,4 +215,10 @@ The mock (`bun run dev` in a browser) renders the **same components** as the rea
 
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
-| Code shell: folders/workspaces, explorer, CodeMirror tabs and quick open | P1 | 🟡 | Implemented with preview/pinned tabs, per-buffer editor states, lazy languages, theme tokens, file operations, disk-conflict confirmation, persisted roots/layout, and an in-memory mock filesystem. Typecheck, production build and mock/store smoke verified; browser and real-app verification pending. `code-shell` e2e step added but not run. Terminal/search panels, git diff/gutter, Editor settings UI and agent Watch mode are later slices; hidden panel/activity extension points exist. `@codemirror/merge` is declared/locked but its download was blocked in this environment. |
+| Code shell: folders/workspaces, explorer, CodeMirror tabs and quick open | P1 | 🟡 | Implemented with preview/pinned tabs, per-buffer editor states, lazy languages, theme tokens, file operations, disk-conflict confirmation, persisted roots/layout, and an in-memory mock filesystem. Typecheck, production build and mock/store smoke verified; browser and real-app verification pending. `code-shell` e2e step added but not run. Terminal/search, diff/gutter and Editor settings are implemented in the following slice; activity remains an extension point. |
+
+### Code panels slice (2026-10-18)
+
+| Feature | Priority | Status | Notes |
+|---|---|---|---|
+| Code terminals, project search, git gutter/diff and Editor settings | P1 | 🟢 | Resizable persisted bottom panel; xterm PTY sessions survive tab/root/view switches, restart on exit, theme/font updates and clipboard shortcuts. Debounced project search with filters, grouped results and selection jumps. HEAD gutter, HEAD/base side-by-side diff, disk-conflict comparison. Live editor settings and conflict-safe delay/focus autosave; workspace Watch mode reflects the follow setting and agent status. Required dependencies are installed. Typecheck/build and mock/store regression smoke pass. `code-panels` real-app e2e is written but unrun; browser/console verification is blocked by tool approval policy and occupied port 1420. Mock PTY is a tiny fake shell, not a real process. |

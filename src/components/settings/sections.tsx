@@ -68,6 +68,20 @@ const SHORTCUTS: { group: string; items: [string[], string][] }[] = [
     ],
   },
   {
+    group: "Code",
+    items: [
+      [["Ctrl", "Shift", "O"], "Open Code"],
+      [["Ctrl", "P"], "Quick open file"],
+      [["Ctrl", "`"], "Toggle terminal"],
+      [["Ctrl", "Shift", "F"], "Search in files"],
+      [["Ctrl", "Shift", "C"], "Copy terminal selection"],
+      [["Ctrl", "Shift", "V"], "Paste into terminal"],
+      [["Ctrl", "S"], "Save file"],
+      [["Ctrl", "Shift", "S"], "Save all files"],
+      [["Ctrl", "W"], "Close file tab"],
+    ],
+  },
+  {
     group: "Chat",
     items: [
       [["Enter"], "Send message"],

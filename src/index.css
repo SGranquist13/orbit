@@ -338,3 +338,15 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .avatar-blink .avatar-eyes { animation: none; }
 }
+
+/* MergeView owns the shared vertical scroll so unchanged lines stay aligned. */
+.code-diff .cm-mergeView { height: 100%; overflow: auto; }
+.code-diff .cm-mergeViewEditors { min-height: 100%; }
+.code-diff .cm-mergeViewEditor { min-width: 0; }
+.code-diff .cm-merge-a .cm-changedLine { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.code-diff .cm-merge-b .cm-changedLine { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.code-diff .cm-merge-a .cm-changedText { background: color-mix(in srgb, var(--bad) 20%, transparent); }
+.code-diff .cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--ok) 20%, transparent); }
+.code-diff .cm-merge-a .cm-changedLineGutter { background: var(--bad); }
+.code-diff .cm-merge-b .cm-changedLineGutter { background: var(--ok); }
+.code-diff .cm-mergeView .cm-collapsedLines { background: var(--panel); color: var(--mute); }

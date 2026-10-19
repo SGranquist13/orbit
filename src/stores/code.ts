@@ -47,6 +47,7 @@ interface Persisted {
   explorerWidth: number;
   activityWidth: number;
   bottomHeight: number;
+  bottomOpen: boolean;
 }
 function restore(): Persisted {
   const fallback: Persisted = {
@@ -56,6 +57,7 @@ function restore(): Persisted {
     explorerWidth: 248,
     activityWidth: 280,
     bottomHeight: 220,
+    bottomOpen: false,
   };
   try {
     const p = JSON.parse(localStorage.getItem("orbit.code") ?? "null");
@@ -71,7 +73,32 @@ function restore(): Persisted {
     return fallback;
   }
 }
+export interface CodeTerminal {
+  id: string;
+  title: string;
+  root: string;
+  exited: boolean;
+}
+export interface FileTarget {
+  line: number;
+  start: number;
+  end: number;
+}
 interface CodeState extends Persisted {
+  terminals: CodeTerminal[];
+  activeBottomTab: string;
+  searchQuery: string;
+  searchFocus: number;
+  selection: string;
+  jump: { key: string; target: FileTarget; nonce: number } | null;
+  diffTabs: Record<string, "HEAD" | "base" | "disk">;
+  newTerminal: () => void;
+  toggleTerminal: () => void;
+  closeTerminal: (id: string) => void;
+  openSearch: () => void;
+  toggleDiff: () => void;
+  openFileAt: (rel: string, target: FileTarget, path?: string) => Promise<void>;
+  autosave: (path: string, rel: string) => void;
   buffers: Record<string, Buffer>;
   dirs: Record<string, DirEntry[]>;
   files: Record<string, string[]>;
@@ -99,6 +126,8 @@ interface CodeState extends Persisted {
   setQuickOpen: (open: boolean) => void;
   setExplorerWidth: (width: number) => void;
 }
+let terminalNumber = 0;
+const autosaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let initialized: Promise<void> | undefined;
 const saving = new Map<string, Promise<void>>();
 const belongs = (file: string, dir: string) => file === dir || file.startsWith(`${dir}/`);
@@ -111,11 +140,71 @@ export const useCode = create<CodeState>((set, get) => {
   };
   return {
     ...restore(),
+    terminals: [],
+    activeBottomTab: "search",
+    searchQuery: "",
+    searchFocus: 0,
+    selection: "",
+    jump: null,
+    diffTabs: {},
+    newTerminal: () => {
+      const root = get().activeRoot;
+      if (!root) return;
+      const id = crypto.randomUUID();
+      set((s) => ({
+        terminals: [...s.terminals, { id, title: `Terminal ${++terminalNumber}`, root, exited: false }],
+        bottomOpen: true,
+        activeBottomTab: id,
+      }));
+    },
+    toggleTerminal: () => {
+      if (!get().terminals.length) get().newTerminal();
+      else
+        set((s) => ({
+          bottomOpen: !s.bottomOpen,
+          activeBottomTab: s.terminals.some((t) => t.id === s.activeBottomTab) ? s.activeBottomTab : s.terminals[0].id,
+        }));
+    },
+    closeTerminal: (id) =>
+      set((s) => ({
+        terminals: s.terminals.filter((t) => t.id !== id),
+        activeBottomTab: s.activeBottomTab === id ? (s.terminals.find((t) => t.id !== id)?.id ?? "search") : s.activeBottomTab,
+      })),
+    openSearch: () =>
+      set((s) => ({
+        bottomOpen: true,
+        activeBottomTab: "search",
+        searchQuery: s.selection || s.searchQuery,
+        searchFocus: s.searchFocus + 1,
+      })),
+    toggleDiff: () => {
+      const s = get(),
+        rel = s.roots.find((r) => r.path === s.activeRoot)?.activeRel;
+      if (!s.activeRoot || !rel) return;
+      const key = bufferKey(s.activeRoot, rel),
+        diffTabs = { ...s.diffTabs };
+      if (diffTabs[key]) delete diffTabs[key];
+      else diffTabs[key] = "HEAD";
+      set({ diffTabs });
+    },
+    openFileAt: async (rel, target, path = get().activeRoot ?? "") => {
+      if (!get().roots.some((r) => r.path === path)) return;
+      set({ activeRoot: path });
+      await get().openFile(rel, { preview: false }, path);
+      set((s) => {
+        const diffTabs = { ...s.diffTabs };
+        delete diffTabs[bufferKey(path, rel)];
+        return { diffTabs, jump: { key: bufferKey(path, rel), target, nonce: Date.now() } };
+      });
+    },
+    autosave: (path, rel) => {
+      const b = get().buffers[bufferKey(path, rel)];
+      if (b?.dirty && !b.diskChanged) void get().save(rel, path);
+    },
     buffers: {},
     dirs: {},
     files: {},
     quickOpen: false,
-    bottomOpen: false,
     activityOpen: false,
     init: () =>
       (initialized ??= (async () => {
@@ -180,7 +269,12 @@ export const useCode = create<CodeState>((set, get) => {
                 path,
                 label: path.split("/").pop() || path,
                 workspaceId: options?.workspaceId ?? null,
-                mode: "manual",
+                mode:
+                  options?.workspaceId &&
+                  useApp.getState().settings?.editorFollowAgent &&
+                  useApp.getState().workspaces.some((w) => w.id === options.workspaceId && w.status === "running")
+                    ? "watch"
+                    : "manual",
                 tabs: [],
                 activeRel: null,
                 expanded: [""],
@@ -192,6 +286,16 @@ export const useCode = create<CodeState>((set, get) => {
           return;
         }
       }
+      if (options?.workspaceId)
+        rootUpdate(path, (r) => ({
+          ...r,
+          workspaceId: options.workspaceId!,
+          mode:
+            useApp.getState().settings?.editorFollowAgent &&
+            useApp.getState().workspaces.some((w) => w.id === options.workspaceId && w.status === "running")
+              ? "watch"
+              : "manual",
+        }));
       set((s) => ({ activeRoot: path, recent: [path, ...s.recent.filter((p) => p !== path)].slice(0, 12) }));
       await refresh(path);
     },
@@ -281,6 +385,16 @@ export const useCode = create<CodeState>((set, get) => {
       const key = bufferKey(path, rel),
         b = get().buffers[key];
       if (!b) return;
+      clearTimeout(autosaveTimers.get(key));
+      if (useApp.getState().settings?.editorAutosave === "delay") {
+        autosaveTimers.set(
+          key,
+          setTimeout(() => {
+            autosaveTimers.delete(key);
+            if (useApp.getState().settings?.editorAutosave === "delay") get().autosave(path, rel);
+          }, 1000),
+        );
+      }
       set((s) => ({ buffers: { ...s.buffers, [key]: { ...b, text, dirty: text !== b.savedText } } }));
       rootUpdate(path, (r) => ({ ...r, tabs: r.tabs.map((t) => (t.rel === rel ? { ...t, preview: false } : t)) }));
     },
@@ -437,7 +551,17 @@ export const useCode = create<CodeState>((set, get) => {
     setExplorerWidth: (width) => set({ explorerWidth: Math.max(160, Math.min(480, width)) }),
   };
 });
-useCode.subscribe((s) => {
+useCode.subscribe((s, previous) => {
+  if (
+    s.roots === previous.roots &&
+    s.activeRoot === previous.activeRoot &&
+    s.recent === previous.recent &&
+    s.explorerWidth === previous.explorerWidth &&
+    s.activityWidth === previous.activityWidth &&
+    s.bottomHeight === previous.bottomHeight &&
+    s.bottomOpen === previous.bottomOpen
+  )
+    return;
   try {
     localStorage.setItem(
       "orbit.code",
@@ -448,9 +572,35 @@ useCode.subscribe((s) => {
         explorerWidth: s.explorerWidth,
         activityWidth: s.activityWidth,
         bottomHeight: s.bottomHeight,
+        bottomOpen: s.bottomOpen,
       }),
     );
   } catch {
     /* Private mode / storage quota. */
   }
+});
+
+// Focus autosave also covers tab/root changes triggered outside the editor (including Quick Open).
+useCode.subscribe((s, previous) => {
+  const rel = previous.roots.find((r) => r.path === previous.activeRoot)?.activeRel;
+  const next = s.roots.find((r) => r.path === s.activeRoot)?.activeRel;
+  if (
+    useApp.getState().settings?.editorAutosave === "focus" &&
+    previous.activeRoot &&
+    rel &&
+    (previous.activeRoot !== s.activeRoot || rel !== next)
+  )
+    s.autosave(previous.activeRoot, rel);
+});
+
+useApp.subscribe((app, previous) => {
+  if (app.settings?.editorFollowAgent === previous.settings?.editorFollowAgent && app.workspaces === previous.workspaces) return;
+  const roots = useCode.getState().roots.map((r) => {
+    const mode =
+      app.settings?.editorFollowAgent && app.workspaces.some((w) => w.id === r.workspaceId && w.status === "running")
+        ? ("watch" as const)
+        : ("manual" as const);
+    return r.mode === mode ? r : { ...r, mode };
+  });
+  if (roots.some((r, i) => r !== useCode.getState().roots[i])) useCode.setState({ roots });
 });

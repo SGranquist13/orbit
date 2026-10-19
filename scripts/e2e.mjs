@@ -155,6 +155,44 @@ await step("code-shell", async () => {
   }
 });
 
+// Requires the Code backend branch; no agent turn is needed for these editor checks.
+await step("code-panels", async () => {
+  const filename = "ORBIT_PANELS_E2E.ts";
+  const file = path.join(repo, filename);
+  fs.writeFileSync(file, 'export const PANEL_NEEDLE = "hi";\n');
+  try {
+    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("o", { ctrl: true, shift: true });
+    await waitFor("Code view", `return !!document.querySelector('[data-code-view]')`, 10_000);
+    await js(`document.querySelector('[data-code-view] header button[aria-haspopup="menu"]').click()`);
+    const repoName = (await invoke("list_repos"))[0].name;
+    await js(`[...document.querySelectorAll('[role="menuitem"]')].find(b => b.innerText.includes(${JSON.stringify(repoName)})).click()`);
+    await waitFor("panel fixture", `return !!document.getElementById('file-${filename}')`, 10_000);
+    await js(`document.getElementById('file-${filename}').click()`);
+    await waitFor("added gutter", `return !!document.querySelector('.cm-git-added')`, 10_000);
+    await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Diff').click()`);
+    await waitFor("merge editors", `return document.querySelectorAll('.code-diff .cm-editor').length === 2`, 10_000);
+    await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Diff').click()`);
+    await key("f", { ctrl: true, shift: true });
+    await waitFor("project search focus", `return document.activeElement?.getAttribute('aria-label') === 'Search in files'`, 5000);
+    await type("PANEL_NEEDLE");
+    await waitFor("project search result", `return [...document.querySelectorAll('details button')].some(b => b.innerText.includes('PANEL_NEEDLE'))`, 10_000);
+    await js(`[...document.querySelectorAll('details button')].find(b => b.innerText.includes('PANEL_NEEDLE')).click()`);
+    await waitFor("search selection", `const el = document.querySelector('.cm-content'); return el && window.getSelection()?.toString() === 'PANEL_NEEDLE'`, 5000);
+    await key("`", { ctrl: true });
+    await waitFor("terminal textarea", `return !!document.querySelector('.xterm-helper-textarea')`, 10_000);
+    await js(`document.querySelector('.xterm-helper-textarea').focus()`);
+    await type("echo ORBIT_TERMINAL_SMOKE");
+    await key("Enter");
+    await waitFor("terminal shell output", `return (document.querySelector('.xterm-rows')?.textContent.match(/ORBIT_TERMINAL_SMOKE/g) || []).length >= 2`, 10_000);
+    await shot("code-panels");
+    await js(`document.querySelector('[aria-label^="Close Terminal"]').click()`);
+    await key("w", { ctrl: true });
+  } finally {
+    fs.rmSync(file, { force: true });
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+  }
+});
+
 await step("claude-workspace-turn", async () => {
   await newWorkspace({
     agent: "claude",

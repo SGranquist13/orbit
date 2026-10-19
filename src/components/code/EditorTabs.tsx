@@ -5,6 +5,8 @@ import { cn } from "../ui";
 export function EditorTabs() {
   const root = useCode((s) => s.roots.find((r) => r.path === s.activeRoot)),
     buffers = useCode((s) => s.buffers);
+  const activeKey = root?.activeRel ? bufferKey(root.path, root.activeRel) : "";
+  const diff = useCode((s) => !!s.diffTabs[activeKey]);
   return (
     <div
       role="tablist"
@@ -45,6 +47,15 @@ export function EditorTabs() {
           </button>
         </div>
       ))}
+      {root?.activeRel && (
+        <button
+          aria-pressed={diff}
+          className="ml-auto shrink-0 px-3 text-[12px] text-mute hover:bg-hover hover:text-fg"
+          onClick={() => useCode.getState().toggleDiff()}
+        >
+          Diff
+        </button>
+      )}
     </div>
   );
 }
