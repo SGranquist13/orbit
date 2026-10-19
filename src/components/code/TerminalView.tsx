@@ -117,12 +117,15 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
       await Promise.all([
         register(
           codeEvents.onPtyData((e) => {
+            // Output can still arrive after close; writing into a disposed xterm throws.
+            if (disposed) return;
             if (id === e.id) term.write(e.data);
             else if (opening) earlyData.push(e);
           }),
         ),
         register(
           codeEvents.onPtyExit((e) => {
+            if (disposed) return;
             if (id === e.id) exited(e.code);
             else if (opening) earlyExit.push(e);
           }),

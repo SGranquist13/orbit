@@ -11,7 +11,7 @@ Raw ideas, as they come. Unsorted, unfiltered.
 
 ## Shaping
 
-### 12. Orbit Code: a built-in IDE with a live view of the agent (decided 2026-10-18, building)
+### 12. Orbit Code: a built-in IDE with a live view of the agent (built 2026-10-18)
 
 An almost-complete IDE inside Orbit for building and playing by hand, and above all a **live view of the agent changing your files**.
 
@@ -302,7 +302,7 @@ Agreed ideas, each with a line on where it landed in FEATURES.md.
 - **#5 Multi-folder sessions**: built; e2e verified (attach, discovery, editable worktrees).
 - **#6 Routines, #7 Trunk-based git handling, #8 Simplify, #9 Local models**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted) and built the same day, then connected (Simplify as a routine action, routine summaries / save-point messages / PR drafts through `llm.rs`). All 🟢: none has had a real-app e2e run yet. FEATURES.md: Routines, git flow, simplify; Local models.
 - **#1 Focus on the main workspace**: built (Ship button + hidden panel, slimmer collapsible sidebar, wider chat, focus mode).
-- **#12 Orbit Code**: decided 2026-10-18 (CodeMirror 6, global Code view, Watch/Manual modes); building. FEATURES.md: Code view.
+- **#12 Orbit Code**: decided 2026-10-18 (CodeMirror 6, global Code view, Watch/Manual modes); built the same day, real-app e2e for the shell, panels and live view. FEATURES.md: Code view.
 
 ## Parked
 
