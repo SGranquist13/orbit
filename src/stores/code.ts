@@ -14,6 +14,8 @@ export interface CodeRoot {
   label: string;
   workspaceId: string | null;
   mode: "watch" | "manual";
+  /** The user picked the mode themselves; agent turns no longer switch it to Watch. */
+  modePinned?: boolean;
   tabs: Tab[];
   activeRel: string | null;
   expanded: string[];
@@ -115,7 +117,8 @@ interface CodeState extends Persisted {
   agentDiff: AgentActivity | null;
   marks: Record<string, { ranges: LineRange[]; nonce: number }>;
   markEpoch: number;
-  setMode: (path: string, mode: CodeRoot["mode"]) => void;
+  /** A user choice (pins the mode). Automatic switches pass `auto` and leave pinned roots alone. */
+  setMode: (path: string, mode: CodeRoot["mode"], auto?: boolean) => void;
   toggleMode: () => void;
   clearMarks: () => void;
   showAgentDiff: (entry: AgentActivity) => Promise<void>;
@@ -269,7 +272,8 @@ export const useCode = create<CodeState>((set, get) => {
     agentDiff: null,
     marks: {},
     markEpoch: 0,
-    setMode: (path, mode) => rootUpdate(path, (r) => ({ ...r, mode })),
+    setMode: (path, mode, auto) =>
+      rootUpdate(path, (r) => (auto ? (r.modePinned ? r : { ...r, mode }) : { ...r, mode, modePinned: true })),
     toggleMode: () => {
       const root = get().roots.find((r) => r.path === get().activeRoot);
       if (root) get().setMode(root.path, root.mode === "watch" ? "manual" : "watch");
@@ -310,7 +314,7 @@ export const useCode = create<CodeState>((set, get) => {
             const baseline = baselineKey({ root: root.path, workspaceId, turn: number, rel: key.slice(root.path.length + 1) });
             set((s) => ({ baselines: { ...s.baselines, [baseline]: b.savedText } }));
           }
-        if (useApp.getState().settings?.editorFollowAgent) for (const root of roots) get().setMode(root.path, "watch");
+        if (useApp.getState().settings?.editorFollowAgent) for (const root of roots) get().setMode(root.path, "watch", true);
         return;
       }
       if (event.type === "message" || event.type === "textDelta") {
@@ -871,6 +875,6 @@ useApp.subscribe((app, previous) => {
     if (ws.status !== "running" || previous.workspaces.find((w) => w.id === ws.id)?.status === "running") continue;
     if (!app.settings?.editorFollowAgent) continue;
     for (const root of useCode.getState().roots)
-      if (root.workspaceId === ws.id || samePath(root.path, ws.path)) useCode.getState().setMode(root.path, "watch");
+      if (root.workspaceId === ws.id || samePath(root.path, ws.path)) useCode.getState().setMode(root.path, "watch", true);
   }
 });

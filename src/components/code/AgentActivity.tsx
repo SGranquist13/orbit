@@ -84,7 +84,7 @@ export function ActivityTimeline() {
         {[...groups].map(([key, entries]) => (
           <section key={key} className="border-b border-line pb-2">
             <h2 className="px-3 pb-1 pt-3 text-[11px] font-medium text-mute">
-              Turn {entries[0].turn} · {ago(Math.min(...entries.map((e) => e.ts)))}
+              {entries[0].turn > 0 ? `Turn ${entries[0].turn}` : "Earlier"} · {ago(Math.min(...entries.map((e) => e.ts)))}
             </h2>
             {entries.map((entry) => (
               <button

@@ -35,5 +35,5 @@ export function selectionMessage(selection: { rel: string; from: number; to: num
     ] ?? "";
   // Use a longer fence if the selected source itself contains backticks.
   const fence = "`".repeat(Math.max(3, ...[...selection.text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-  return `In \`${selection.rel}\` ${selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}-${selection.to}`}:\n\n${fence}${language}\n${selection.text}\n${fence}\n\n${question.trim()}`;
+  return `In \`${selection.rel}\` ${selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}-${selection.to}`}:\n\n${fence}${language}\n${selection.text.replace(/\n+$/, "")}\n${fence}\n\n${question.trim()}`;
 }

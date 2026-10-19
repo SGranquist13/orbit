@@ -77,8 +77,7 @@ export function AskSelection({ selection, close }: { selection: SelectionQuestio
     >
       <div className="mb-2 flex items-center justify-between gap-2 text-[12px] text-mute">
         <span>
-          Lines {selection.from}
-          {selection.to !== selection.from ? `–${selection.to}` : ""}
+          {selection.to !== selection.from ? `Lines ${selection.from}–${selection.to}` : `Line ${selection.from}`}
         </span>
         <select
           aria-label="Target workspace"
