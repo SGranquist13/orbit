@@ -8,7 +8,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - **Ideas under discussion: [PLANNING.md](PLANNING.md)** (#1–#9 are built; #10 AI teammates phase 1 is built (phase 2: Chief, hand-offs, teammate routines); new ideas go to its Inbox).
 - **Built 2026-10-10, proven 2026-10-12:** Routines (run-now path; scheduler tick, standing workspaces and the Simplify action not yet exercised), trunk git handling (Settings > Git: save points, Ship gate, squash proven; auto-sync and after-merge cleanup not yet), Simplify (button) and Local models (Settings > Models; the e2e step skips without Ollama). Getting there took 5 real-app runs; the bugs found are recorded in Known traps (scratch outside git, CLI identity, db guards).
 - **Built 2026-10-12 (all 🟢):** AI teammates phase 2: Chief (plan card, Start all), hand-off chips, teammate-owned routines. Their e2e steps `teammates-handoff` and `chief` are written but have never run.
-- **Last full runs (2026-10-18, 0.1.0 release audit, see RELEASE_AUDIT.md):** `bun run e2e` **46/46**, `bun run e2e:github` **10/10**, `cargo test` 178 pass + 8 opt-in (live tests against real Claude/Codex/Ollama, and `interop_server` used by `ide_mobile`'s `npm run interop`), clippy 0 warnings, installer builds.
+- **Last full runs (2026-10-18, 0.1.0 release audit):** `bun run e2e` **46/46**, `bun run e2e:github` **10/10**, `cargo test` 178 pass + 8 opt-in (live tests against real Claude/Codex/Ollama, and `interop_server` used by `ide_mobile`'s `npm run interop`), clippy 0 warnings, installer builds.
 
 ## Known traps (each cost real debugging time)
 - **package.json scripts run in Bun's shell:** `\` is an escape there (and `\t` in JSON is a tab), so script paths use forward slashes (`scripts/tauri.cmd`).

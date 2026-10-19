@@ -39,3 +39,6 @@ CLAUDE.local.md
 # launch video renders and build output
 video/out/
 video/dist/
+
+# Internal release notes (kept locally)
+RELEASE_AUDIT.md

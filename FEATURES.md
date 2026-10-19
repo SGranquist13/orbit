@@ -11,7 +11,7 @@ What you want the IDE to do, and the honest state of each feature. **Edit the Pr
 
 **Priority:** P1 = core to "drive a fleet of agents and ship", P2 = important, P3 = nice to have.
 
-_Last verified: 2026-10-18 (later that day: `bun run e2e` 46/46 (and `e2e:github` 10/10) with ten new steps for Settings, data and sessions and twelve for packs, routines, trunk gates and teammates; earlier, the 0.1.0 release audit, see RELEASE_AUDIT.md): `bun run e2e` 23/23 and `bun run e2e:github` 7/7 after the audit fixes; installer built. 2026-10-12: `bun run e2e` 23/23 (adds teammates, hand-offs, Chief, routines, trunk save points / ship gate, simplify, local-model suggestions (skips without Ollama)). Before that, 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
+_Last verified: 2026-10-18 (later that day: `bun run e2e` 46/46 (and `e2e:github` 10/10) with ten new steps for Settings, data and sessions and twelve for packs, routines, trunk gates and teammates; earlier, the 0.1.0 release audit): `bun run e2e` 23/23 and `bun run e2e:github` 7/7 after the audit fixes; installer built. 2026-10-12: `bun run e2e` 23/23 (adds teammates, hand-offs, Chief, routines, trunk save points / ship gate, simplify, local-model suggestions (skips without Ollama)). Before that, 2026-10-09: `bun run e2e` 16/16 (local, Claude haiku + Codex) and `bun run e2e:github` against a private sandbox repo (real PRs, CI, issues)._
 
 ## Real vs mock: verification ledger (2026-10-09)
 
