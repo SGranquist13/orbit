@@ -1,3 +1,4 @@
+import { AgentDot } from "./AgentActivity";
 import { ChevronDown, ChevronRight, File, Folder } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";
@@ -225,6 +226,7 @@ export function Explorer() {
             ) : (
               <span className="truncate">{entry.name}</span>
             )}
+            {root && <AgentDot path={root.path} rel={entry.rel} dir={entry.dir} />}
             {root && buffers[bufferKey(root.path, entry.rel)]?.dirty ? (
               <span aria-label="Unsaved" className="ml-auto size-1.5 shrink-0 rounded-full bg-fg" />
             ) : (

@@ -27,3 +27,13 @@ export function fuzzyScore(path: string, query: string): number {
   }
   return score + 1 / (path.length + 1);
 }
+
+export function selectionMessage(selection: { rel: string; from: number; to: number; text: string }, question: string) {
+  const language =
+    ({ tsx: "tsx", ts: "ts", js: "js", jsx: "jsx", py: "python", rs: "rust", md: "markdown" } as Record<string, string>)[
+      selection.rel.split(".").pop() ?? ""
+    ] ?? "";
+  // Use a longer fence if the selected source itself contains backticks.
+  const fence = "`".repeat(Math.max(3, ...[...selection.text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `In \`${selection.rel}\` ${selection.from === selection.to ? `line ${selection.from}` : `lines ${selection.from}-${selection.to}`}:\n\n${fence}${language}\n${selection.text}\n${fence}\n\n${question.trim()}`;
+}

@@ -80,6 +80,7 @@ interface AppState {
   profiles: Profile[];
   pins: string[];
   newWorkspaceOpen: boolean;
+  newWorkspacePrefill: { prompt: string; repoId?: string } | null;
   /** "New ticket" dialog (Issues view). */
   ticketOpen: boolean;
   packsOpen: boolean;
@@ -222,6 +223,7 @@ export const useApp = create<AppState>((set, get) => ({
   profiles: [],
   pins: [],
   newWorkspaceOpen: false,
+  newWorkspacePrefill: null,
   ticketOpen: false,
   packsOpen: false,
   paletteOpen: false,
@@ -560,7 +562,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setPacksOpen: (open) => set({ packsOpen: open }),
-  setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open }),
+  setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open, ...(!open ? { newWorkspacePrefill: null } : {}) }),
   setTicketOpen: (open) => set({ ticketOpen: open }),
   snooze: async (id, until) => {
     try {

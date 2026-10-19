@@ -1,3 +1,4 @@
+import { AgentDot } from "./AgentActivity";
 import { X } from "lucide-react";
 import { bufferKey, useCode } from "../../stores/code";
 import { cn } from "../ui";
@@ -37,6 +38,7 @@ export function EditorTabs() {
           >
             {t.rel.split("/").pop()}
           </button>
+          <AgentDot path={root.path} rel={t.rel} />
           {buffers[bufferKey(root.path, t.rel)]?.dirty && <span aria-label="Unsaved" className="size-1.5 rounded-full bg-fg" />}
           <button
             aria-label={`Close ${t.rel}`}

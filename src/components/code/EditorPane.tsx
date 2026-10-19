@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
-import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Annotation, Compartment, EditorState, Prec, Transaction } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, search, gotoLine, openSearchPanel } from "@codemirror/search";
@@ -7,6 +7,9 @@ import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } fr
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, completeAnyWord } from "@codemirror/autocomplete";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { codeApi } from "../../lib/ipc";
+import { samePath } from "../../lib/code/agentEdits";
+import { agentMarks, setAgentMarks, clearAgentMarks, clearAgentFlash } from "../../lib/code/agentMarks";
+import { AskSelection, editorSelection, type SelectionQuestion } from "./AskSelection";
 import { gitGutter } from "../../lib/code/gitGutter";
 import { DiffView } from "./DiffView";
 import { codeTheme } from "../../lib/code/theme";
@@ -23,6 +26,9 @@ interface CachedEditor {
   settings: Compartment;
   language: Compartment;
   git: Compartment;
+  readonly: Compartment;
+  markEpoch: number;
+  markNonce?: number;
 }
 const states = new Map<string, CachedEditor>();
 const diskReload = Annotation.define<boolean>();
@@ -37,6 +43,16 @@ export function EditorPane() {
     buffer = useCode((s) => s.buffers[key]);
   const revision = useCode((s) => s.diffTabs[key]);
   const jump = useCode((s) => s.jump);
+  const codeRoot = useCode((s) => s.roots.find((r) => r.path === root));
+  const workspace = useApp((s) => s.workspaces.find((w) => w.id === codeRoot?.workspaceId || (!!root && samePath(w.path, root))));
+  const turn = useCode((s) => (workspace ? s.turns[workspace.id] : undefined));
+  const readonly = codeRoot?.mode === "watch" && (turn?.running ?? workspace?.status === "running");
+  const marks = useCode((s) => s.marks[key]);
+  const epoch = useCode((s) => s.markEpoch);
+  const agentDiff = useCode((s) => s.agentDiff);
+  const showingAgentDiff = agentDiff?.root === root && agentDiff?.rel === rel;
+  const [hint, setHint] = useState(false);
+  const [ask, setAsk] = useState<SelectionQuestion | null>(null);
   const settings = useApp((s) => s.settings);
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null),
@@ -44,16 +60,29 @@ export function EditorPane() {
   const fontSize = settings?.editorFontSize ?? 13,
     tabSize = settings?.editorTabSize ?? 2,
     wrap = settings?.editorWordWrap ?? false;
+  const openAsk = () => {
+    const editor = view.current;
+    if (!editor || !root || !rel || !visible) return;
+    setAsk(editorSelection(editor, root, rel));
+  };
   useEffect(() => {
     const action = (e: Event) => {
       if (!view.current || !currentKey.current) return;
+      if ((e as CustomEvent).detail?.selection) {
+        setAsk((e as CustomEvent).detail.selection);
+        return;
+      }
+      if ((e as CustomEvent).detail === "Ask about selection") {
+        openAsk();
+        return;
+      }
       view.current.focus();
       if ((e as CustomEvent).detail === "Go to line") gotoLine(view.current);
       else openSearchPanel(view.current);
     };
     window.addEventListener("orbit-code-editor", action);
     return () => window.removeEventListener("orbit-code-editor", action);
-  }, []);
+  });
   useLayoutEffect(() => {
     if (!host.current) return;
     const editor = new EditorView({ parent: host.current });
@@ -88,18 +117,23 @@ export function EditorPane() {
     if (!entry) {
       const config = new Compartment(),
         language = new Compartment(),
-        git = new Compartment();
+        git = new Compartment(),
+        readonly = new Compartment();
       entry = {
         top: 0,
         left: 0,
         settings: config,
         language,
         git,
+        readonly,
+        markEpoch: -1,
         state: EditorState.create({
           doc: buffer.text,
           extensions: [
             codeTheme,
+            agentMarks,
             git.of([]),
+            readonly.of([]),
             lineNumbers(),
             foldGutter(),
             history(),
@@ -113,6 +147,15 @@ export function EditorPane() {
             config.of([]),
             language.of([]),
             keymap.of([
+              {
+                key: "Mod-k",
+                preventDefault: true,
+                stopPropagation: true,
+                run: () => {
+                  window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" }));
+                  return true;
+                },
+              },
               { key: "Mod-g", run: gotoLine },
               { key: "Mod-h", run: openSearchPanel },
               ...closeBracketsKeymap,
@@ -123,11 +166,38 @@ export function EditorPane() {
               ...completionKeymap,
               indentWithTab,
             ]),
-            EditorView.domEventHandlers({
-              blur: () => {
-                if (useApp.getState().settings?.editorAutosave === "focus") useCode.getState().autosave(root, rel);
-              },
-            }),
+            Prec.highest(
+              EditorView.domEventHandlers({
+                keydown: (event, editor) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.shiftKey && !event.altKey) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" }));
+                    return true;
+                  }
+                  if (
+                    editor.state.readOnly &&
+                    ((event.key.length === 1 && !event.ctrlKey && !event.metaKey) ||
+                      event.key === "Backspace" ||
+                      event.key === "Delete" ||
+                      event.key === "Enter")
+                  )
+                    setHint(true);
+                  return false;
+                },
+                beforeinput: (_event, editor) => {
+                  if (editor.state.readOnly) setHint(true);
+                  return false;
+                },
+                paste: (_event, editor) => {
+                  if (editor.state.readOnly) setHint(true);
+                  return false;
+                },
+                blur: () => {
+                  if (useApp.getState().settings?.editorAutosave === "focus") useCode.getState().autosave(root, rel);
+                },
+              }),
+            ),
             EditorView.updateListener.of((update) => {
               if (update.selectionSet)
                 useCode.setState({
@@ -149,7 +219,12 @@ export function EditorPane() {
       useCode.setState({ selection: entry.state.sliceDoc(entry.state.selection.main.from, entry.state.selection.main.to) });
       editor.scrollDOM.scrollTop = entry.top;
       editor.scrollDOM.scrollLeft = entry.left;
-      editor.focus();
+      const active = document.activeElement;
+      const typingElsewhere =
+        active instanceof HTMLElement &&
+        (active.matches("input, textarea, select") || active.isContentEditable) &&
+        !editor.dom.contains(active);
+      if (useApp.getState().view === "code" && !typingElsewhere) editor.focus();
     }
     void loadLanguage(rel)
       .then((extension) => {
@@ -212,14 +287,65 @@ export function EditorPane() {
     const from = line.from + Math.min(line.length, Math.max(0, jump.target.start));
     const to = Math.max(from, line.from + Math.min(line.length, Math.max(0, jump.target.end)));
     editor.dispatch({ selection: { anchor: from, head: to }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
-    editor.focus();
+    if (!jump.follow) editor.focus();
     useCode.setState({ jump: null });
   }, [key, visible, jump, revision]);
+  useLayoutEffect(() => {
+    const editor = view.current,
+      cached = states.get(key);
+    if (editor && cached && visible)
+      editor.dispatch({ effects: cached.readonly.reconfigure(EditorState.readOnly.of(!!readonly)) });
+    if (!readonly) setHint(false);
+  }, [key, visible, readonly]);
+  useLayoutEffect(() => {
+    const editor = view.current;
+    const cached = states.get(key);
+    if (editor && visible && cached && cached.markEpoch !== epoch) {
+      editor.dispatch({ effects: clearAgentMarks.of(null) });
+      cached.markEpoch = epoch;
+      cached.markNonce = undefined;
+    }
+  }, [key, visible, epoch]);
+  useLayoutEffect(() => {
+    const editor = view.current;
+    const cached = states.get(key);
+    if (!editor || !visible || !marks || !cached || cached.markNonce === marks.nonce) return;
+    cached.markNonce = marks.nonce;
+    editor.dispatch({ effects: setAgentMarks.of({ ranges: marks.ranges, flash: true }) });
+    const timer = setTimeout(() => {
+      if (view.current === editor && currentKey.current === key) editor.dispatch({ effects: clearAgentFlash.of(null) });
+    }, 1250);
+    return () => clearTimeout(timer);
+  }, [key, visible, marks, epoch]);
+  useEffect(() => {
+    setAsk(null);
+  }, [key]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {hint && readonly && (
+        <div role="status" className="flex items-center gap-3 border-b border-line px-4 py-2 text-[12px] text-mute">
+          The agent is working. Switch to Manual to edit.
+          <Button onClick={() => useCode.getState().setMode(root!, "manual")}>Switch to Manual</Button>
+        </div>
+      )}
+      {ask && (
+        <AskSelection
+          selection={ask}
+          close={() => {
+            setAsk(null);
+            view.current?.focus();
+          }}
+        />
+      )}
       {buffer?.diskChanged && buffer.dirty && (
         <div role="status" className="flex items-center gap-3 border-b-[1.5px] border-line bg-panel px-4 py-2 text-[12px]">
-          <span className="text-warn">Changed on disk.</span>
+          <span className="text-warn">
+            Changed on disk
+            {buffer.changedBy
+              ? ` by ${useApp.getState().workspaces.find((w) => w.id === buffer.changedBy)?.name ?? "the agent"}`
+              : ""}
+            .
+          </span>
           <Button onClick={() => void useCode.getState().reloadFromDisk(rel!, root!, true)}>Reload</Button>
           <Button onClick={() => void useCode.getState().keepMine(rel!)}>Keep mine</Button>
           <Button onClick={() => useCode.setState((s) => ({ diffTabs: { ...s.diffTabs, [key]: "disk" } }))}>Compare</Button>
@@ -247,8 +373,16 @@ export function EditorPane() {
           </div>
         </div>
       ) : null}
-      {visible && revision && root && rel && <DiffView key={key} root={root} rel={rel} revision={revision} />}
-      <div ref={host} className={visible && !revision ? "min-h-0 flex-1 overflow-hidden" : "hidden"} />
+      {(visible || showingAgentDiff) && (revision || showingAgentDiff) && root && rel && (
+        <DiffView
+          key={key}
+          root={root}
+          rel={rel}
+          revision={revision ?? "HEAD"}
+          activity={showingAgentDiff ? agentDiff : undefined}
+        />
+      )}
+      <div ref={host} className={visible && !revision && !showingAgentDiff ? "min-h-0 flex-1 overflow-hidden" : "hidden"} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
+  Code2,
   CalendarClock,
   Check,
   ChevronRight,
@@ -32,6 +33,7 @@ const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
 import { activeProfile, api, type Attachment, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
+import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
 import { SchedulePreview, WhenControl } from "./ScheduleControls";
@@ -72,6 +74,7 @@ export function Chat({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />
+        <Button title="Open in Code (Ctrl+Shift+O)" className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
         {focusMode ? (
           <Button onClick={() => useApp.getState().setFocusMode(false)} className="relative shrink-0">
             Exit focus <Kbd>Ctrl \</Kbd>

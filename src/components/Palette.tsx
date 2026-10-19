@@ -1,3 +1,4 @@
+import { isTauri } from "../lib/env";
 import { useCode } from "../stores/code";
 import { openCodeFolder } from "./code/FolderSwitcher";
 import { explorerAction, type ExplorerAction } from "./code/Explorer";
@@ -88,6 +89,7 @@ export function Palette() {
           <Command.Group heading="Code" className={heading}>
             <Command.Item className={item} value="Open Code" onSelect={run(() => useApp.getState().setView("code"))}><FolderSymlink className="size-3.5" />Open Code<span className="ml-auto text-mute">Ctrl Shift O</span></Command.Item>
             <Command.Item className={item} value="Open folder in Code" onSelect={run(() => { void openCodeFolder(); })}><FolderPlus className="size-3.5" />Open folder in Code</Command.Item>
+            {selected && (["Open this workspace in Code", "Watch the agent"] as const).map((title) => <Command.Item key={title} className={item} value={title} onSelect={run(() => { void useCode.getState().openRoot(selected.path, { workspaceId: selected.id }).then(() => { if (title === "Watch the agent") useCode.getState().setMode(useCode.getState().activeRoot!, "watch"); useApp.getState().setView("code"); }); })}>{title}</Command.Item>)}
             {codeView && <>
               <Command.Item className={item} value="Quick open file" onSelect={run(() => useCode.getState().setQuickOpen(true))}>Quick open file<span className="ml-auto text-mute">Ctrl P</span></Command.Item>
               {codeRoot && <>
@@ -96,6 +98,9 @@ export function Palette() {
                   ["Toggle terminal", () => useCode.getState().toggleTerminal()],
                   ["Search in files", () => useCode.getState().openSearch()],
                   ["Toggle diff", () => useCode.getState().toggleDiff()],
+                  ["Toggle Watch / Manual", () => useCode.getState().toggleMode()],
+                  ["Toggle activity", () => useCode.setState((s) => ({ activityOpen: !s.activityOpen }))],
+                  ["Clear marks", () => useCode.getState().clearMarks()],
                 ] as [string, () => void][]).map(([title, action]) => (
                   <Command.Item key={title} className={item} value={title} onSelect={run(action)}>{title}</Command.Item>
                 ))}
@@ -103,7 +108,9 @@ export function Palette() {
                 <Command.Item className={item} value="Close folder in Code" onSelect={run(() => { void useCode.getState().closeRoot(codeRoot.path); })}>Close folder in Code</Command.Item>
                 {([["new-file", "New file"], ["new-folder", "New folder"], ["rename", "Rename entry"], ["delete", "Delete entry"], ["copy-path", "Copy relative path"], ["reveal", "Reveal in Explorer"]] as [ExplorerAction, string][]).map(([action, title]) => <Command.Item key={action} className={item} value={title} onSelect={run(() => explorerAction(action))}>{title}</Command.Item>)}
               </>}
+              {codeRoot && !isTauri() && <Command.Item className={item} value="Simulate agent edit (mock)" onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-simulate-agent-edit")))}>Simulate agent edit (mock)</Command.Item>}
               {codeRel && <>
+                <Command.Item className={item} value="Ask about selection" onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" })))}>Ask about selection<span className="ml-auto text-mute">Ctrl K</span></Command.Item>
                 <Command.Item className={item} value="Save file" onSelect={run(() => { void useCode.getState().save(codeRel); })}>Save file</Command.Item>
                 <Command.Item className={item} value="Close file tab" onSelect={run(() => { void useCode.getState().closeTab(codeRel); })}>Close file tab</Command.Item>
                 <Command.Item className={item} value="Pin preview tab" onSelect={run(() => useCode.getState().pin(codeRel))}>Pin preview tab</Command.Item>
