@@ -42,3 +42,7 @@ video/dist/
 
 # Internal release notes (kept locally)
 RELEASE_AUDIT.md
+
+# Launch video project (kept locally, not published)
+video/
+docs/launch-video/
