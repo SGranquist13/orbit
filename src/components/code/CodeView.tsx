@@ -33,7 +33,7 @@ export function CodeView() {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const s = useCode.getState(),
         rel = s.roots.find((r) => r.path === s.activeRoot)?.activeRel;
-      if (e.code === "Backquote") {
+      if (e.code === "Backquote" || e.key === "`") {
         e.preventDefault();
         s.toggleTerminal();
       } else if (e.shiftKey && e.key.toLowerCase() === "f") {

@@ -21,6 +21,8 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
     let opening = true,
       disposed = false,
       id: string | undefined;
+    // Keystrokes typed before the shell has an id are sent once it does.
+    let earlyInput = "";
     const unlisten: (() => void)[] = [];
     const term = new Terminal({
       fontFamily: '"JetBrains Mono Variable", monospace',
@@ -91,7 +93,9 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
       return true;
     });
     const input = term.onData((data) => {
-      if (id && !disposed) void ptyApi.write(id, data).catch(report);
+      if (disposed) return;
+      if (id) void ptyApi.write(id, data).catch(report);
+      else if (opening) earlyInput += data;
     });
     // Subscribe before spawning: shells may produce output before open returns its id.
     const earlyData: { id: string; data: string }[] = [],
@@ -135,6 +139,8 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
       for (const e of earlyData) if (e.id === id) term.write(e.data);
       for (const e of earlyExit) if (e.id === id) exited(e.code);
       earlyData.length = earlyExit.length = 0;
+      if (earlyInput && id) void ptyApi.write(id, earlyInput).catch(report);
+      earlyInput = "";
       resize();
     })().catch((e) => {
       if (!disposed) {

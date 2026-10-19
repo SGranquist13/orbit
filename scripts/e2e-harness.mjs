@@ -167,10 +167,12 @@ export function createHarness({ scratch, port = 9333, only }) {
     throw new Error(`timed out waiting for: ${desc}${last ? ` (last: ${String(last).slice(0, 160)})` : ""}`);
   }
 
-  async function key(k, { ctrl = false, shift = false } = {}) {
-    const codes = { Enter: 13, Escape: 27, Tab: 9 };
+  async function key(k, { ctrl = false, shift = false, alt = false } = {}) {
+    const codes = { Enter: 13, Escape: 27, Tab: 9, "`": 192 };
+    const named = { "`": "Backquote" };
     const vk = codes[k] ?? k.toUpperCase().charCodeAt(0);
-    const base = { key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k, windowsVirtualKeyCode: vk, modifiers: (ctrl ? 2 : 0) | (shift ? 8 : 0) };
+    const code = named[k] ?? (k.length === 1 ? `Key${k.toUpperCase()}` : k);
+    const base = { key: k, code, windowsVirtualKeyCode: vk, modifiers: (alt ? 1 : 0) | (ctrl ? 2 : 0) | (shift ? 8 : 0) };
     await cdp("Input.dispatchKeyEvent", { type: "keyDown", ...base });
     await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   }
