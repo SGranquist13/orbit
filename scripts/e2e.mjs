@@ -15,6 +15,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import zlib from "node:zlib";
 import path from "node:path";
 import { TURN_ENDS, createHarness, killLeftovers, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
@@ -1627,7 +1628,7 @@ await step("code-live", async () => {
 
 // ── Attachments (images and files in chat) ───────────────────
 /** A solid-colour RGB PNG, built with zlib (no dependencies). */
-function solidPng(rgb, size = 16) {
+function solidPng(rgb, size = 64) {
   const table = Array.from({ length: 256 }, (_, n) => {
     let c = n;
     for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
@@ -1678,7 +1679,7 @@ for (const [name, agent] of [["attachments-image", "claude"], ["attachments-code
     await waitFor("thumbnail in the strip", `return !!document.querySelector('[data-pending-strip] [data-pending-image] img')`, 10_000);
     await waitFor("thumbnail uploaded", STRIP_READY, 20_000);
     const before = await js(turnEnds);
-    await composerSend("What colour is this image? Answer with one word.");
+    await composerSend("Is this image red, green or blue? Answer with one word.");
     await waitFor("strip cleared after send", STRIP_GONE, 15_000);
     await waitFor("turn completed", `${turnEnds} > ${before}`, 180_000);
     const evs = await wsEvents(ws.id);
@@ -1687,6 +1688,14 @@ for (const [name, agent] of [["attachments-image", "claude"], ["attachments-code
     if (!underHomeImages(um.images[0].path)) throw new Error(`image path is not under <home>/images: ${um.images[0].path}`);
     if (!fs.existsSync(um.images[0].path)) throw new Error("stored image is missing on disk");
     if (um.images[0].data) throw new Error("userMessage image carries inline base64");
+    if (agent === "codex") {
+      // Delivery is checked in Codex's own session log, independent of how well the model reads colours.
+      const thread = evs.find((e) => e.type === "sessionStarted")?.sessionId;
+      const sessions = path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), "sessions");
+      const rollout = thread && fs.readdirSync(sessions, { recursive: true }).map(String).find((f) => f.endsWith(`${thread}.jsonl`));
+      if (!rollout) throw new Error(`no Codex session log for thread ${thread}`);
+      if (!fs.readFileSync(path.join(sessions, rollout), "utf8").includes('"type":"input_image"')) throw new Error("Codex never received the image (no input_image in its session log)");
+    }
     await waitFor("image in the user bubble", `return !!document.querySelector('[data-user-message] [data-chat-image] img')`, 10_000);
     const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
     if (!/red/i.test(msg)) {

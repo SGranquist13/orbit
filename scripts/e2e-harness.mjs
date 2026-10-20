@@ -141,6 +141,14 @@ export function createHarness({ scratch, port = 9333, only }) {
     return r.result.value;
   }
 
+  /** Puts local files on an <input type=file> (fires its change event), like a user picking them. */
+  async function setFileInputFiles(selector, files) {
+    const { root } = await cdp("DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdp("DOM.querySelector", { nodeId: root.nodeId, selector });
+    if (!nodeId) throw new Error(`no element matches ${selector}`);
+    await cdp("DOM.setFileInputFiles", { nodeId, files });
+  }
+
   async function waitFor(desc, expr, timeoutMs = 90_000) {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
