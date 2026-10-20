@@ -68,7 +68,7 @@ export function AgentStrip() {
       </div>
     );
   }
-  const running = turn?.running ?? ws.status === "running";
+  const running = turn?.running || ws.status === "running";
   const edit = [...activity].reverse().find((a) => a.root === root.path && a.phase === "editing" && a.turn === turn?.number);
   return (
     <div className="flex min-w-0 flex-1 items-center gap-3 text-[12px]">
@@ -82,7 +82,7 @@ export function AgentStrip() {
             className="max-w-full truncate hover:text-fg"
             onClick={() => void useCode.getState().openFile(edit.rel, {}, root.path)}
           >
-            Editing {edit.rel}
+            {edit.writing ? "Writing" : "Editing"} {edit.rel}
           </button>
         ) : (
           message?.trim() || ws.name

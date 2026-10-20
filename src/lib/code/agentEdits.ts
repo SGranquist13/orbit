@@ -18,13 +18,30 @@ export const samePath = (a: string, b: string) => {
 };
 
 export function editedPaths(event: AgentEvent, cwd: string): string[] {
-  if (event.type !== "toolCall" || !event.input || typeof event.input !== "object") return [];
+  if ((event.type !== "toolCall" && event.type !== "toolDraft") || !event.input || typeof event.input !== "object") return [];
   const input = event.input as Record<string, unknown>;
+  // A lenient JSON parse can expose an unfinished path. A following text field
+  // confirms the path has closed before it is safe to create a tab for it.
+  if (event.type === "toolDraft") {
+    const ready =
+      event.name === "Write"
+        ? typeof input.content === "string"
+        : event.name === "NotebookEdit"
+          ? typeof input.new_source === "string"
+          : event.name === "MultiEdit"
+            ? Array.isArray(input.edits) && input.edits.some((e) => typeof e?.new_string === "string")
+            : event.name === "Edit" &&
+              (typeof input.new_string === "string" ||
+                (Array.isArray(input.changes) &&
+                  input.changes.some((c) => typeof c?.path === "string" && typeof c?.diff === "string")));
+    if (!ready) return [];
+  }
   let paths: unknown[] = [];
   if (["Write", "Edit", "MultiEdit"].includes(event.name)) paths = [input.file_path];
   if (event.name === "NotebookEdit") paths = [input.notebook_path];
   if (event.name === "Edit" && Array.isArray(input.files))
     paths.push(...input.files.map((file) => (typeof file === "string" ? file : file?.path)));
+  if (event.name === "Edit" && Array.isArray(input.changes)) paths.push(...input.changes.map((c) => c?.path));
   const root = normalizePath(cwd);
   return [
     ...new Set(
@@ -47,7 +64,7 @@ export function createEditTracker() {
   return {
     clear: () => pending.clear(),
     accept(event: AgentEvent, cwd: string): { id: string; paths: string[]; phase: "pending" | "landed" | "failed" } | null {
-      if (event.type === "toolCall") {
+      if (event.type === "toolCall" || event.type === "toolDraft") {
         const paths = editedPaths(event, cwd);
         if (!paths.length) return null;
         pending.set(event.id, paths);

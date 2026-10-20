@@ -10,6 +10,7 @@ import { OrbitHero } from "./components/OrbitHero";
 import { installKeybindings } from "./lib/keybindingRuntime";
 import { KeybindingHint } from "./components/KeybindingHint";
 import { useApp } from "./stores/app";
+import { useCode } from "./stores/code";
 
 const CodeView = lazy(() => import("./components/code/CodeView").then((m) => ({ default: m.CodeView })));
 
@@ -44,6 +45,7 @@ export default function App() {
   const teammateEditor = useApp((s) => s.teammateEditor);
 
   useEffect(() => {
+    void useCode.getState().init();
     useApp.getState().init().catch((e) => useApp.getState().setError(String(e)));
   }, []);
 

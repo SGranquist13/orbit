@@ -32,6 +32,7 @@ pub struct Settings {
     pub editor_word_wrap: bool,
     pub editor_autosave: String,
     pub editor_follow_agent: bool,
+    pub editor_live_typing: String,
     pub terminal_shell: String,
     // general
     pub branch_prefix: String,
@@ -113,6 +114,7 @@ impl Default for Settings {
             editor_word_wrap: false,
             editor_autosave: "off".into(),
             editor_follow_agent: true,
+            editor_live_typing: "stream".into(),
             terminal_shell: String::new(),
             branch_prefix: default_branch_prefix(),
             default_agent: "claude".into(),
@@ -285,6 +287,7 @@ impl Settings {
             return Err(format!("invalid routineConcurrency {} (expected 1-8)", self.routine_concurrency));
         }
         check("editorAutosave", &self.editor_autosave, &["off", "delay", "focus"])?;
+        check("editorLiveTyping", &self.editor_live_typing, &["stream", "instant"])?;
         self.editor_font_size = self.editor_font_size.clamp(9, 28);
         self.editor_tab_size = self.editor_tab_size.clamp(1, 8);
         self.branch_prefix = normalize_prefix(&self.branch_prefix);
@@ -436,6 +439,7 @@ mod tests {
         assert_eq!((d.editor_font_size, d.editor_tab_size), (13, 2));
         assert!(!d.editor_word_wrap && d.editor_follow_agent);
         assert_eq!(d.editor_autosave, "off");
+        assert_eq!(d.editor_live_typing, "stream");
         assert!(d.terminal_shell.is_empty());
         let s = d.patched(&json!({"editorFontSize": 100, "editorTabSize": 0, "editorAutosave": "delay", "terminalShell": "pwsh.exe -NoLogo"})).unwrap();
         assert_eq!((s.editor_font_size, s.editor_tab_size), (28, 1));

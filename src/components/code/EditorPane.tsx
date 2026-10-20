@@ -15,6 +15,7 @@ import { gitGutter } from "../../lib/code/gitGutter";
 import { DiffView } from "./DiffView";
 import { codeTheme } from "../../lib/code/theme";
 import { loadLanguage } from "../../lib/code/languages";
+import { setTyping, typingDecorations } from "../../lib/code/typingDecorations";
 import { minimalChange } from "../../lib/code/helpers";
 import { bufferKey, useCode } from "../../stores/code";
 import { useApp } from "../../stores/app";
@@ -42,12 +43,14 @@ export function EditorPane() {
     rel = useCode((s) => s.roots.find((r) => r.path === s.activeRoot)?.activeRel);
   const key = root && rel ? bufferKey(root, rel) : "",
     buffer = useCode((s) => s.buffers[key]);
+  const preview = useCode((s) => s.previews[key]);
+  const shownText = preview?.text ?? buffer?.text;
   const revision = useCode((s) => s.diffTabs[key]);
   const jump = useCode((s) => s.jump);
   const codeRoot = useCode((s) => s.roots.find((r) => r.path === root));
   const workspace = useApp((s) => s.workspaces.find((w) => w.id === codeRoot?.workspaceId || (!!root && samePath(w.path, root))));
   const turn = useCode((s) => (workspace ? s.turns[workspace.id] : undefined));
-  const readonly = codeRoot?.mode === "watch" && (turn?.running ?? workspace?.status === "running");
+  const readonly = !!preview || (codeRoot?.mode === "watch" && (turn?.running || workspace?.status === "running"));
   const marks = useCode((s) => s.marks[key]);
   const epoch = useCode((s) => s.markEpoch);
   const agentDiff = useCode((s) => s.agentDiff);
@@ -58,6 +61,7 @@ export function EditorPane() {
   const host = useRef<HTMLDivElement>(null),
     view = useRef<EditorView | null>(null),
     currentKey = useRef("");
+  const followBottom = useRef(true);
   const fontSize = settings?.editorFontSize ?? 13,
     tabSize = settings?.editorTabSize ?? 2,
     wrap = settings?.editorWordWrap ?? false;
@@ -88,6 +92,27 @@ export function EditorPane() {
     if (!host.current) return;
     const editor = new EditorView({ parent: host.current });
     view.current = editor;
+    let userScroll = false;
+    const scrollIntent = () => {
+      userScroll = true;
+    };
+    const wheel = (event: WheelEvent) => {
+      userScroll = true;
+      if (event.deltaY < 0) followBottom.current = false;
+    };
+    const scrolled = () => {
+      const bottom = editor.scrollDOM.scrollHeight - editor.scrollDOM.scrollTop - editor.scrollDOM.clientHeight < 40;
+      if (bottom) {
+        followBottom.current = true;
+        userScroll = false;
+      } else if (userScroll) followBottom.current = false;
+    };
+    editor.scrollDOM.addEventListener("scroll", scrolled);
+    editor.scrollDOM.addEventListener("wheel", wheel, { passive: true });
+    editor.scrollDOM.addEventListener("pointerdown", scrollIntent);
+    editor.scrollDOM.addEventListener("touchstart", scrollIntent, { passive: true });
+    editor.scrollDOM.addEventListener("keydown", scrollIntent);
+
     return () => {
       const entry = states.get(currentKey.current);
       if (entry) {
@@ -95,6 +120,11 @@ export function EditorPane() {
         entry.top = editor.scrollDOM.scrollTop;
         entry.left = editor.scrollDOM.scrollLeft;
       }
+      editor.scrollDOM.removeEventListener("scroll", scrolled);
+      editor.scrollDOM.removeEventListener("wheel", wheel);
+      editor.scrollDOM.removeEventListener("pointerdown", scrollIntent);
+      editor.scrollDOM.removeEventListener("touchstart", scrollIntent);
+      editor.scrollDOM.removeEventListener("keydown", scrollIntent);
       editor.destroy();
       view.current = null;
       currentKey.current = "";
@@ -129,10 +159,11 @@ export function EditorPane() {
         readonly,
         markEpoch: -1,
         state: EditorState.create({
-          doc: buffer.text,
+          doc: shownText ?? buffer.text,
           extensions: [
             codeTheme,
             agentMarks,
+            typingDecorations,
             git.of([]),
             readonly.of([]),
             lineNumbers(),
@@ -197,6 +228,7 @@ export function EditorPane() {
     }
     if (currentKey.current !== key) {
       currentKey.current = key;
+      followBottom.current = true;
       editor.setState(entry.state);
       useCode.setState({ selection: entry.state.sliceDoc(entry.state.selection.main.from, entry.state.selection.main.to) });
       editor.scrollDOM.scrollTop = entry.top;
@@ -234,16 +266,19 @@ export function EditorPane() {
   }, [key, visible, fontSize, tabSize, wrap, settings?.keybindings]);
   useLayoutEffect(() => {
     const editor = view.current;
-    if (!editor || !buffer || !visible || currentKey.current !== key || editor.state.doc.toString() === buffer.text) return;
+    if (!editor || !buffer || !visible || currentKey.current !== key || shownText === undefined) return;
     const top = editor.scrollDOM.scrollTop,
       left = editor.scrollDOM.scrollLeft;
     editor.dispatch({
-      changes: minimalChange(editor.state.doc.toString(), buffer.text),
+      changes: minimalChange(editor.state.doc.toString(), shownText),
+      effects: setTyping.of(preview ? { ...preview, label: workspace?.agent === "codex" ? "Codex" : "Claude" } : null),
       annotations: [Transaction.addToHistory.of(false), diskReload.of(true)],
     });
-    editor.scrollDOM.scrollTop = top;
+    if (preview && followBottom.current)
+      editor.dispatch({ effects: EditorView.scrollIntoView(Math.min(preview.caret, editor.state.doc.length), { y: "end" }) });
+    else editor.scrollDOM.scrollTop = top;
     editor.scrollDOM.scrollLeft = left;
-  }, [key, buffer?.text, visible]);
+  }, [key, shownText, visible, preview, workspace?.agent]);
   useEffect(() => {
     if (!visible || !root || !rel) return;
     let cancelled = false;
@@ -305,6 +340,11 @@ export function EditorPane() {
   }, [key]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {preview?.virtual && (
+        <div role="status" className="border-b border-line px-4 py-1 text-[11px] text-run">
+          Being written · not yet on disk
+        </div>
+      )}
       {hint && readonly && (
         <div role="status" className="flex items-center gap-3 border-b border-line px-4 py-2 text-[12px] text-mute">
           The agent is working. Switch to Manual to edit.

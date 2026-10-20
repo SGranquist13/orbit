@@ -90,23 +90,54 @@ export async function simulateCodeTurn(root: string, send: (event: AgentEvent) =
   const files = tree(root);
   send({ type: "turnStarted" });
   const started = Date.now();
-  for (const [index, rel] of ["src/auth/session.ts", "src/main.ts", "README.md"].entries()) {
+  const newRel = "agent-example.ts";
+  const content = Array.from({ length: 30 }, (_, i) => `export const example${i + 1} = ${i + 1};`).join("\n") + "\n";
+  const tasks = [
+    { rel: newRel, name: "Write", input: { file_path: `${root}/${newRel}`, content }, text: content, stream: "content" },
+    {
+      rel: "src/auth/session.ts",
+      name: "Edit",
+      input: {
+        file_path: `${root}/src/auth/session.ts`,
+        old_string: "  return session;",
+        new_string:
+          "  // Keep the restored session available to the current workspace.\n  // A future refresh can renew its token before it expires.\n  return session;",
+      },
+      text: "",
+      stream: "new_string",
+    },
+    { rel: "src/auth/session.ts", name: "Bash", input: { command: "bun run format" }, text: "", stream: "" },
+  ];
+  for (const [index, task] of tasks.entries()) {
     if (stopped()) return;
-    const id = `live-${started}-${index}`;
-    send({ type: "toolCall", id, name: "Edit", input: { file_path: `${root}/${rel}` } });
-    await pause(900);
-    if (stopped()) return;
-    const file = files.get(rel);
-    if (file) {
-      const stamp = new Date().toLocaleTimeString();
-      file.text = rel.endsWith(".md")
-        ? file.text.replace(/\n<!-- Agent review:.*? -->\n/g, "\n") + `\n<!-- Agent review: ${stamp} -->\n`
-        : file.text.replace(/^\/\/ Agent review:.*\n/m, "") + `// Agent review: ${stamp}\n`;
-      file.mtime = tick();
-      await emit("code-fs", { root, paths: [rel], kind: "modify" });
+    const id = `live-${started}-${index}`,
+      { rel, name } = task;
+    const input = task.input as Record<string, unknown>;
+    if (task.stream) {
+      const value = input[task.stream] as string;
+      for (let at = 0; at <= value.length; at += 25) {
+        if (stopped()) return;
+        send({ type: "toolDraft", id, name, input: { ...input, [task.stream]: value.slice(0, at) } });
+        await pause(40);
+      }
+      send({ type: "toolDraft", id, name, input });
+      await pause(40);
     }
-    await pause(400);
+    send({ type: "toolCall", id, name, input });
+    await pause(100);
+    if (stopped()) return;
+    const old = files.get(rel);
+    const text =
+      name === "Write"
+        ? task.text
+        : name === "Edit"
+          ? old!.text.replace(input.old_string as string, input.new_string as string)
+          : old!.text + "\n// Formatted by Bash without draft events.\n";
+    files.set(rel, { text, dir: false, binary: false, mtime: tick() });
+    await emit("code-fs", { root, paths: [rel], kind: old ? "modify" : "create" });
+    await pause(100);
     send({ type: "toolResult", id, output: "Updated file", isError: false });
+    await pause(1700);
   }
   send({ type: "message", text: "Updated session handling, the app entry point, and the development notes." });
   send({ type: "turnCompleted", durationMs: Date.now() - started, costUsd: null, isError: false, error: null });

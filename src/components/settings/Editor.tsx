@@ -47,6 +47,17 @@ export function Editor() {
           onChange={(v) => void save({ editorFollowAgent: v })}
         />
       </Row>
+      <Row label="Show agent edits as they are typed" field="editorLiveTyping">
+        <Select
+          label="Show agent edits as they are typed"
+          value={s.editorLiveTyping ?? "stream"}
+          options={[
+            { value: "stream", label: "Live typing" },
+            { value: "instant", label: "Instant" },
+          ]}
+          onChange={(v) => void save({ editorLiveTyping: v })}
+        />
+      </Row>
       <Row label="Terminal shell" field="terminalShell" stacked>
         <TextInput
           label="Terminal shell"

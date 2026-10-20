@@ -1580,22 +1580,31 @@ await step("chief", async () => {
 // Standalone: node scripts/e2e.mjs code-live (one cheap real Haiku edit).
 await step("code-live", async () => {
   const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
-  const filename = "ORBIT_LIVE_E2E.ts";
-  fs.writeFileSync(path.join(ws.path, filename), "export const liveValue = 1;\n");
+  const filename = "COUNT.txt";
+  fs.writeFileSync(path.join(ws.path, filename), "Before streaming\n");
   try {
     await js(`document.querySelector('button[title^="Open in Code"]').click()`);
     await waitFor("linked Code root", `return !!document.querySelector('[data-code-view] [aria-label="Editor mode"]')`, 10000);
     await waitFor("live fixture", `return !!document.getElementById('file-${filename}')`, 10000);
     await js(`document.getElementById('file-${filename}').click()`);
-    await waitFor("initial file", `return document.querySelector('.cm-content')?.innerText.includes('liveValue = 1')`, 10000);
+    await waitFor("initial file", `return document.querySelector('.cm-content')?.innerText.includes('Before streaming')`, 10000);
     await js(`[...document.querySelectorAll('[aria-label="Editor mode"] button')].find(b => b.innerText === 'Watch').click()`);
-    await invoke("send_message", { id: ws.id, text: `Use Edit to replace liveValue = 1 with liveValue = 2 in ${filename}. Reply with just done.` });
+    await invoke("send_message", { id: ws.id, text: `Use the Write tool to create ${filename} with the numbers 1 to 40, one per line. Reply with just done.` });
+    let sawPartial = false;
+    await until("streamed partial document then all 40 lines", async () => {
+      const state = await js(`const content = document.querySelector('.cm-content');
+        const text = content ? Array.from(content.querySelectorAll('.cm-line')).map(l => l.textContent.replace(/Claude|Codex/g, '')).join('\\n') : '';
+        const numbers = text.trim().split(/\\n/).filter(l => /^\\d+$/.test(l));
+        return { count: numbers.length, caret: !!document.querySelector('.cm-agent-caret'), complete: text.trim() === Array.from({length:40}, (_, i) => String(i+1)).join('\\n') };`);
+      if (state.count > 1 && state.count < 40 && state.caret) sawPartial = true;
+      return state.complete;
+    }, 120000, 100);
+    if (!sawPartial) throw new Error("Never observed a partial Write with the agent caret before all 40 lines");
     await waitFor("agent timeline", `return document.querySelector('aside[aria-label="Activity"]')?.innerText.includes('${filename}')`, 120000);
-    await waitFor("agent edit followed", `return document.querySelector('.cm-content')?.innerText.includes('liveValue = 2')`, 120000);
     await until("live turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120000, 500);
     await waitFor("agent gutter", `return !!document.querySelector('.cm-agent-gutter .cm-agent-mark')`, 10000);
     await js(`[...document.querySelectorAll('aside[aria-label="Activity"] button')].find(b => b.innerText.includes('${filename}')).click()`);
-    await waitFor("turn comparison", `return document.querySelector('.code-diff')?.innerText.includes('liveValue = 1') && document.querySelector('.code-diff')?.innerText.includes('liveValue = 2')`, 10000);
+    await waitFor("turn comparison", `return document.querySelector('.code-diff')?.innerText.includes('Before streaming') && document.querySelector('.code-diff')?.innerText.includes('40')`, 10000);
     await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Back to file').click()`);
     await js(`document.querySelector('.cm-content').focus()`);
     await key("i", { ctrl: true });

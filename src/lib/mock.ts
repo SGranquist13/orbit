@@ -299,6 +299,7 @@ let settings: Settings = {
   editorWordWrap: false,
   editorAutosave: "off",
   editorFollowAgent: true,
+  editorLiveTyping: "stream",
   terminalShell: "",
   syncIntervalMinutes: 10,
   staleDays: 3,
@@ -1291,10 +1292,16 @@ export function installMockBackend() {
     { shouldMockEvents: true },
   );
   let liveTurn = false;
-  const simulate = async () => {
+  const simulate = async (force = false) => {
     if (liveTurn || LAUNCH) return;
     const { useCode } = await import("../stores/code");
     const workspace = workspaces.find((w) => w.id === "w1");
+    if (force && workspace) {
+      await useCode.getState().openRoot(workspace.path, { workspaceId: workspace.id });
+      useCode.getState().setMode(workspace.path.replaceAll("\\", "/"), "watch");
+      const { useApp } = await import("../stores/app");
+      useApp.setState({ view: "code" });
+    }
     const root = useCode.getState().roots.find((r) => r.workspaceId === "w1" || r.path === workspace?.path);
     if (!root || !workspace) return;
     liveTurn = true;
@@ -1306,7 +1313,7 @@ export function installMockBackend() {
     } finally { liveTurn = false; }
   };
   if (!LAUNCH) {
-    window.addEventListener("orbit-simulate-agent-edit", () => void simulate());
+    window.addEventListener("orbit-simulate-agent-edit", () => void simulate(true));
     setInterval(() => void simulate(), 12000);
   }
   // Simulate a streaming reply on the running workspace.

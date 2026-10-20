@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { codeApi, codeEvents, events, CONFLICT_PREFIX, type DirEntry, type AgentEventPayload } from "../lib/ipc";
 import { createEditTracker, samePath } from "../lib/code/agentEdits";
 import { agentChanges, type LineRange } from "../lib/code/agentMarks";
+import { draftProjection, draftLineCount, makeReplay, type TypingProjection } from "../lib/code/liveTyping";
 import { confirmAction } from "../lib/confirm";
 import { useApp } from "./app";
 
@@ -91,7 +92,14 @@ export interface FileTarget {
   start: number;
   end: number;
 }
+export interface LivePreview extends TypingProjection {
+  toolId: string;
+  workspaceId: string;
+  replay?: boolean;
+  virtual?: boolean;
+}
 export interface AgentActivity {
+  writing?: boolean;
   removed?: boolean;
   id: string;
   ts: number;
@@ -117,6 +125,7 @@ interface CodeState extends Persisted {
   reopenTab: () => Promise<void>;
   closeAllTabs: () => Promise<void>;
   activity: AgentActivity[];
+  previews: Record<string, LivePreview>;
   turns: Record<string, AgentTurn>;
   agentMessages: Record<string, string>;
   baselines: Record<string, string>;
@@ -184,6 +193,116 @@ export const useCode = create<CodeState>((set, get) => {
     const root = get().roots.find((r) => r.path === path);
     if (root) await Promise.all([get().loadFiles(path), ...root.expanded.map((rel) => get().loadDir(path, rel))]);
   };
+  const frame = (fn: FrameRequestCallback) =>
+    typeof requestAnimationFrame === "function" ? requestAnimationFrame(fn) : setTimeout(() => fn(performance.now()), 16);
+  type DraftJob = {
+    entry: AgentActivity;
+    name: string;
+    input: Record<string, unknown>;
+    cursor: number;
+    base?: string;
+    scheduled?: boolean;
+    cancelled?: boolean;
+  };
+  const drafts = new Map<string, DraftJob>();
+  const editCursors = new Map<string, number>();
+  const replayTokens = new Map<string, object>();
+  const landingTokens = new Map<string, object>();
+  const clearPreview = (key: string) => {
+    replayTokens.delete(key);
+    set((s) => {
+      const previews = { ...s.previews };
+      delete previews[key];
+      return { previews };
+    });
+  };
+  const canType = (path: string, key: string) =>
+    get().roots.find((r) => r.path === path)?.mode === "watch" &&
+    useApp.getState().settings?.editorLiveTyping !== "instant" &&
+    !get().buffers[key]?.dirty;
+  const scheduleDraft = (job: DraftJob) => {
+    if (job.scheduled || job.cancelled) return;
+    job.scheduled = true;
+    frame(() => {
+      job.scheduled = false;
+      const { entry } = job,
+        key = bufferKey(entry.root, entry.rel);
+      if (job.cancelled || job.base === undefined || !get().roots.some((r) => r.path === entry.root)) return;
+      // Activity stores counts only, never the growing content.
+      const row = get().activity.find((a) => a.id === entry.id && a.root === entry.root && a.rel === entry.rel);
+      if (row?.phase === "editing") record({ ...row, writing: true, additions: draftLineCount(job.name, job.input, entry.rel) });
+      const projection = draftProjection(job.base, job.name, job.input, entry.rel, job.cursor);
+      if (!projection) return;
+      if (job.name === "Edit" || job.name === "MultiEdit") editCursors.set(key, projection.caret);
+      if (!canType(entry.root, key)) return;
+      const b = get().buffers[key];
+      if (!b || b.loading || b.error)
+        set((s) => ({ buffers: { ...s.buffers, [key]: { ...emptyBuffer, ...b, loading: false, error: undefined } } }));
+      set((s) => ({
+        previews: {
+          ...s.previews,
+          [key]: { ...projection, toolId: entry.id, workspaceId: entry.workspaceId, virtual: !b || b.mtime === 0 },
+        },
+      }));
+      const from = job.name === "Write" ? 0 : Math.min(projection.caret, ...projection.removed.map((r) => r.at));
+      const first = projection.text.slice(0, from).split("\n").length;
+      const last = projection.text.slice(0, projection.caret).split("\n").length;
+      set((s) => ({ marks: { ...s.marks, [key]: { ranges: [{ from: first, to: Math.max(first, last) }], nonce: Date.now() } } }));
+    });
+  };
+  const acceptDraft = (entry: AgentActivity, name: string, input: Record<string, unknown>) => {
+    const key = bufferKey(entry.root, entry.rel),
+      id = entry.id + "|" + key;
+    let job = drafts.get(id);
+    if (job) {
+      job.input = input;
+      scheduleDraft(job);
+      return;
+    }
+    landingTokens.delete(key);
+    if (get().previews[key]?.replay) clearPreview(key);
+    job = { entry, name, input, cursor: editCursors.get(key) ?? 0 };
+    drafts.set(id, job);
+    const current = job;
+    void (async () => {
+      await capture(entry, true);
+      if (current.cancelled) return;
+      const b = get().buffers[key];
+      current.base = (b && !b.loading && !b.error ? b.savedText : undefined) ?? get().baselines[baselineKey(entry)] ?? "";
+      if (!b || b.loading || b.error) {
+        // A real disk snapshot where possible; virtual files have an empty saved buffer.
+        try {
+          const file = await codeApi.readFile(entry.root, entry.rel);
+          current.base = file.text ?? "";
+          if (canType(entry.root, key) && !get().buffers[key] && !current.cancelled)
+            set((s) => ({
+              buffers: {
+                ...s.buffers,
+                [key]: {
+                  ...emptyBuffer,
+                  ...file,
+                  text: file.text ?? "",
+                  savedText: file.text ?? "",
+                  loading: false,
+                },
+              },
+            }));
+        } catch {
+          /* Write may be creating a file that does not exist yet. */
+        }
+      }
+      scheduleDraft(current);
+    })();
+  };
+  const stopDrafts = (entry: AgentActivity) => {
+    const key = bufferKey(entry.root, entry.rel);
+    for (const [id, job] of drafts)
+      if (job.entry.id === entry.id && job.entry.root === entry.root && job.entry.rel === entry.rel) {
+        job.cancelled = true;
+        drafts.delete(id);
+      }
+    return key;
+  };
   const trackers = new Map<string, ReturnType<typeof createEditTracker>>();
   const baselineRequests = new Map<string, Promise<void>>();
   const capture = (entry: AgentActivity, beforeLanding: boolean) => {
@@ -193,7 +312,7 @@ export const useCode = create<CodeState>((set, get) => {
     if (pending) return pending;
     const buffer = get().buffers[bufferKey(entry.root, entry.rel)];
     const request = (async () => {
-      let text: string | undefined = buffer?.savedText;
+      let text: string | undefined = buffer && !buffer.loading && !buffer.error ? buffer.savedText : undefined;
       if (text === undefined && beforeLanding) {
         try {
           text = (await codeApi.readFile(entry.root, entry.rel)).text ?? undefined;
@@ -221,26 +340,93 @@ export const useCode = create<CodeState>((set, get) => {
       ),
     }));
   const land = async (entry: AgentActivity) => {
+    const key = bufferKey(entry.root, entry.rel),
+      landing = {};
+    landingTokens.set(key, landing);
     await capture(entry, false);
-    const key = bufferKey(entry.root, entry.rel);
     try {
       const file = entry.removed
         ? { text: "", mtime: Date.now(), binary: false, tooLarge: false }
         : await codeApi.readFile(entry.root, entry.rel);
-      if (file.text === null) return;
+      if (file.text === null || landingTokens.get(key) !== landing) return;
       const changes = agentChanges(get().baselines[baselineKey(entry)] ?? "", file.text);
       const latest = get().activity.find((a) => a.id === entry.id && a.root === entry.root && a.rel === entry.rel);
       if (!latest) return;
       record({ ...latest, additions: changes.additions, deletions: changes.deletions });
       const turn = get().turns[entry.workspaceId];
       if (turn?.number !== entry.turn) return;
-      const root = get().roots.find((r) => r.path === entry.root);
+      let root = get().roots.find((r) => r.path === entry.root);
       if (!root) return;
+      if (
+        root.mode === "watch" &&
+        (!root.activeRel ||
+          !get().activity.some(
+            (a) => a.root === entry.root && a.workspaceId === entry.workspaceId && a.turn === entry.turn && a.rel !== entry.rel,
+          ))
+      ) {
+        if (!get().buffers[key]) {
+          const text = get().baselines[baselineKey(entry)] ?? "";
+          set((s) => ({ buffers: { ...s.buffers, [key]: { ...emptyBuffer, text, savedText: text, loading: false } } }));
+        }
+        void get().openFile(entry.rel, { preview: true }, entry.root);
+        root = get().roots.find((r) => r.path === entry.root)!;
+      }
       const previous = get().buffers[key];
+      const hadDraft = get().previews[key]?.toolId === entry.id;
+      stopDrafts(entry);
+      clearPreview(key);
       const watch = root.mode === "watch" && (previous?.userVersion ?? 0) === (turn.userVersions[key] ?? 0);
       const delta = agentChanges(previous?.text ?? get().baselines[baselineKey(entry)] ?? "", file.text);
       set((s) => ({ marks: { ...s.marks, [key]: { ranges: changes.ranges, nonce: Date.now() } } }));
-      if (previous && (!previous.dirty || watch)) {
+      if (previous && !previous.dirty) {
+        const replay = makeReplay(previous.text, file.text);
+        if (
+          !hadDraft &&
+          canType(entry.root, key) &&
+          root.activeRel === entry.rel &&
+          get().activeRoot === root.path &&
+          useApp.getState().view === "code" &&
+          replay.count > 0 &&
+          replay.count <= 20000
+        ) {
+          const token = {},
+            started = performance.now();
+          replayTokens.set(key, token);
+          await new Promise<void>((resolve) => {
+            const tick: FrameRequestCallback = () => {
+              if (
+                landingTokens.get(key) !== landing ||
+                replayTokens.get(key) !== token ||
+                !canType(entry.root, key) ||
+                useApp.getState().view !== "code" ||
+                get().activeRoot !== root!.path ||
+                get().roots.find((r) => r.path === root!.path)?.activeRel !== entry.rel
+              ) {
+                if (replayTokens.get(key) === token) clearPreview(key);
+                resolve();
+                return;
+              }
+              const elapsed = performance.now() - started;
+              set((s) => ({
+                previews: {
+                  ...s.previews,
+                  [key]: { ...replay.frame(elapsed), toolId: entry.id, workspaceId: entry.workspaceId, replay: true },
+                },
+              }));
+              if (elapsed >= replay.duration) {
+                clearPreview(key);
+                resolve();
+              } else frame(tick);
+            };
+            frame(tick);
+          });
+          if (landingTokens.get(key) !== landing || !get().roots.some((r) => r.path === entry.root)) return;
+          // A user may have switched mode and edited while the animation was running.
+          if (get().buffers[key]?.dirty) {
+            set((s) => ({ buffers: { ...s.buffers, [key]: { ...s.buffers[key], diskChanged: true } } }));
+            return;
+          }
+        }
         set((s) => ({
           buffers: {
             ...s.buffers,
@@ -257,7 +443,8 @@ export const useCode = create<CodeState>((set, get) => {
             },
           },
         }));
-        if (watch && root.activeRel === entry.rel && delta.ranges.length) {
+        set((s) => ({ marks: { ...s.marks, [key]: { ranges: changes.ranges, nonce: Date.now() } } }));
+        if (watch && !hadDraft && !replay.count && root.activeRel === entry.rel && delta.ranges.length) {
           // A follow jump scrolls within Code, without moving DOM focus.
           set({ jump: { key, target: { line: delta.ranges[0].from, start: 0, end: 0 }, follow: true, nonce: Date.now() } });
         }
@@ -272,14 +459,18 @@ export const useCode = create<CodeState>((set, get) => {
   return {
     ...restore(),
     activity: [],
+    previews: {},
     turns: {},
     agentMessages: {},
     baselines: {},
     agentDiff: null,
     marks: {},
     markEpoch: 0,
-    setMode: (path, mode, auto) =>
-      rootUpdate(path, (r) => (auto ? (r.modePinned ? r : { ...r, mode }) : { ...r, mode, modePinned: true })),
+    setMode: (path, mode, auto) => {
+      rootUpdate(path, (r) => (auto ? (r.modePinned ? r : { ...r, mode }) : { ...r, mode, modePinned: true }));
+      if (get().roots.find((r) => r.path === path)?.mode === "manual")
+        for (const key of Object.keys(get().previews)) if (key.startsWith(path + "|")) clearPreview(key);
+    },
     toggleMode: () => {
       const root = get().roots.find((r) => r.path === get().activeRoot);
       if (root) get().setMode(root.path, root.mode === "watch" ? "manual" : "watch");
@@ -293,9 +484,15 @@ export const useCode = create<CodeState>((set, get) => {
     onAgentEvent: ({ workspaceId, event, ts }) => {
       const ws = useApp.getState().workspaces.find((w) => w.id === workspaceId);
       const roots = get().roots.filter((r) => r.workspaceId === workspaceId || (ws && samePath(r.path, ws.path)));
-      if (!roots.length) return;
+      if (
+        (event.type === "toolCall" || event.type === "toolDraft") &&
+        (!get().turns[workspaceId]?.running || !get().turns[workspaceId]?.number)
+      ) {
+        get().onAgentEvent({ workspaceId, event: { type: "turnStarted" }, ts, seq: null });
+      }
       if (event.type === "turnStarted") {
         const number = (get().turns[workspaceId]?.number ?? 0) + 1;
+        for (const key of editCursors.keys()) if (roots.some((r) => key.startsWith(r.path + "|"))) editCursors.delete(key);
         for (const [key, tracker] of trackers) if (key.startsWith(`${workspaceId}|`)) tracker.clear();
         set((s) => ({
           turns: {
@@ -336,6 +533,20 @@ export const useCode = create<CodeState>((set, get) => {
         return;
       }
       if (event.type === "turnCompleted" || event.type === "exited") {
+        if (event.type === "exited" || event.isError) {
+          for (const [key, preview] of Object.entries(get().previews))
+            if (preview.workspaceId === workspaceId) {
+              clearPreview(key);
+              const split = key.indexOf("|");
+              void get().reloadFromDisk(key.slice(split + 1), key.slice(0, split));
+            }
+        }
+        for (const job of [...drafts.values()])
+          if (job.entry.workspaceId === workspaceId) {
+            const key = stopDrafts(job.entry);
+            clearPreview(key);
+            void get().reloadFromDisk(job.entry.rel, job.entry.root);
+          }
         const turn = get().turns[workspaceId];
         if (turn)
           set((s) => ({
@@ -346,6 +557,7 @@ export const useCode = create<CodeState>((set, get) => {
           }));
         return;
       }
+      if (!roots.length) return;
       for (const root of roots) {
         const trackerKey = `${workspaceId}|${root.path}`;
         let tracker = trackers.get(trackerKey);
@@ -368,7 +580,13 @@ export const useCode = create<CodeState>((set, get) => {
             additions: 0,
             deletions: 0,
           };
-          record(entry);
+          const previousEntry = get().activity.find((a) => a.id === entry.id && a.root === entry.root && a.rel === entry.rel);
+          record({
+            ...entry,
+            additions: previousEntry?.additions ?? 0,
+            writing: event.type === "toolDraft" || (edit.phase === "pending" && previousEntry?.writing),
+          });
+          if (event.type === "toolDraft") acceptDraft(entry, event.name, event.input);
           if (edit.phase === "pending") {
             void capture(entry, true);
             if (root.mode === "watch") {
@@ -377,9 +595,21 @@ export const useCode = create<CodeState>((set, get) => {
                 delete diffTabs[bufferKey(root.path, rel)];
                 return { diffTabs, agentDiff: s.agentDiff?.root === root.path ? null : s.agentDiff };
               });
-              void get().openFile(rel, { preview: true }, root.path);
+              // Drafts retain tabs for other files so their live dots remain visible.
+              if (event.type === "toolDraft")
+                rootUpdate(root.path, (r) => ({
+                  ...r,
+                  tabs: r.tabs.some((t) => t.rel === rel) ? r.tabs : [...r.tabs, { rel, preview: true }],
+                  activeRel: rel,
+                }));
+              else if (!get().previews[bufferKey(root.path, rel)]) void get().openFile(rel, { preview: true }, root.path);
             }
           } else if (edit.phase === "landed") void land(entry);
+          else if (edit.phase === "failed") {
+            const key = stopDrafts(entry);
+            clearPreview(key);
+            void get().reloadFromDisk(rel, root.path);
+          }
         }
       }
     },
@@ -442,9 +672,10 @@ export const useCode = create<CodeState>((set, get) => {
     },
     autosave: (path, rel) => {
       const root = get().roots.find((r) => r.path === path);
-      if (root?.mode === "watch" && root.workspaceId && get().turns[root.workspaceId]?.running) return;
+      const ws = root && useApp.getState().workspaces.find((w) => w.id === root.workspaceId || samePath(w.path, root.path));
+      if (root?.mode === "watch" && ws && (get().turns[ws.id]?.running || ws.status === "running")) return;
       const b = get().buffers[bufferKey(path, rel)];
-      if (b?.dirty && !b.diskChanged) void get().save(rel, path);
+      if (!get().previews[bufferKey(path, rel)] && b?.dirty && !b.diskChanged) void get().save(rel, path);
     },
     buffers: {},
     dirs: {},
@@ -458,7 +689,9 @@ export const useCode = create<CodeState>((set, get) => {
           const root = get().roots.find((r) => r.path === event.root);
           if (!root) return;
           const ws = useApp.getState().workspaces.find((w) => w.id === root.workspaceId || samePath(w.path, root.path));
-          if (ws && (get().turns[ws.id]?.running ?? ws.status === "running")) {
+          if (ws && (get().turns[ws.id]?.running || ws.status === "running")) {
+            if (!get().turns[ws.id]?.running || !get().turns[ws.id]?.number)
+              get().onAgentEvent({ workspaceId: ws.id, event: { type: "turnStarted" }, ts: Date.now(), seq: null });
             for (const rel of event.paths) {
               const turn = get().turns[ws.id]?.number ?? 0;
               const existing = [...get().activity]
@@ -476,8 +709,13 @@ export const useCode = create<CodeState>((set, get) => {
                 additions: existing?.additions ?? 0,
                 deletions: existing?.deletions ?? 0,
               };
-              record(entry);
-              void land(entry);
+              if (
+                existing?.phase !== "editing" &&
+                ![...drafts.values()].some((j) => j.entry.root === root.path && j.entry.rel === rel)
+              ) {
+                record(entry);
+                void land(entry);
+              }
             }
           }
           for (const dir of root.expanded) {
@@ -506,7 +744,12 @@ export const useCode = create<CodeState>((set, get) => {
                   s.buffers[key] ? { buffers: { ...s.buffers, [key]: { ...s.buffers[key], diskChanged: true } } } : {},
                 );
               })();
-            else void get().reloadFromDisk(rel, root.path);
+            else if (
+              !get().previews[key] &&
+              !get().activity.some((a) => a.root === root.path && a.rel === rel && a.phase === "editing") &&
+              !(ws && (get().turns[ws.id]?.running || ws.status === "running"))
+            )
+              void get().reloadFromDisk(rel, root.path);
           }
         });
         await Promise.all(
@@ -570,7 +813,7 @@ export const useCode = create<CodeState>((set, get) => {
           turns: {
             ...s.turns,
             [ws.id]: {
-              number: 0,
+              number: ws.status === "running" ? 1 : 0,
               running: ws.status === "running",
               userVersions: Object.fromEntries(Object.entries(s.buffers).map(([key, b]) => [key, b.userVersion ?? 0])),
             },
@@ -583,6 +826,13 @@ export const useCode = create<CodeState>((set, get) => {
         !(await confirmAction("Discard unsaved changes in this folder?", "Discard"))
       )
         return;
+      for (const job of [...drafts.values()]) if (job.entry.root === path) stopDrafts(job.entry);
+      for (const key of trackers.keys()) if (key.endsWith("|" + path)) trackers.delete(key);
+      for (const key of Object.keys(get().previews))
+        if (key.startsWith(path + "|")) {
+          clearPreview(key);
+          landingTokens.delete(key);
+        }
       try {
         await codeApi.unwatch(path);
       } catch (e) {
@@ -594,6 +844,7 @@ export const useCode = create<CodeState>((set, get) => {
           roots,
           activeRoot: s.activeRoot === path ? (roots[0]?.path ?? null) : s.activeRoot,
           buffers: Object.fromEntries(Object.entries(s.buffers).filter(([k]) => !k.startsWith(`${path}|`))),
+          previews: Object.fromEntries(Object.entries(s.previews).filter(([k]) => !k.startsWith(`${path}|`))),
         };
       });
     },
@@ -698,7 +949,7 @@ export const useCode = create<CodeState>((set, get) => {
     updateText: (path, rel, text) => {
       const key = bufferKey(path, rel),
         b = get().buffers[key];
-      if (!b) return;
+      if (!b || get().previews[key]) return;
       clearTimeout(autosaveTimers.get(key));
       if (useApp.getState().settings?.editorAutosave === "delay") {
         autosaveTimers.set(
@@ -721,7 +972,7 @@ export const useCode = create<CodeState>((set, get) => {
       const task = (async () => {
         const key = bufferKey(path, rel),
           b = get().buffers[key];
-        if (!b || !b.dirty || b.loading || b.binary || b.tooLarge) return;
+        if (get().previews[key] || !b || !b.dirty || b.loading || b.binary || b.tooLarge) return;
         try {
           const mtime = await codeApi.writeFile(path, rel, b.text, b.overwrite ? null : b.mtime);
           set((s) => {
@@ -764,6 +1015,7 @@ export const useCode = create<CodeState>((set, get) => {
     reloadFromDisk: async (rel, path = get().activeRoot ?? "", discard = false) => {
       const key = bufferKey(path, rel),
         before = get().buffers[key];
+      if (get().previews[key] && !discard) return;
       if (discard && before?.dirty && !(await confirmAction(`Reload ${rel} and discard your changes?`, "Reload"))) return;
       if (!before) set((s) => ({ buffers: { ...s.buffers, [key]: { ...emptyBuffer } } }));
       try {

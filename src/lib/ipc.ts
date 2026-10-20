@@ -388,6 +388,7 @@ export interface Settings {
   editorAutosave: "off" | "delay" | "focus";
   /** Open a running workspace's folder in Watch mode (the editor follows the agent). */
   editorFollowAgent: boolean;
+  editorLiveTyping: "stream" | "instant";
   /** Empty = auto (pwsh, then powershell, then cmd on Windows; $SHELL elsewhere). */
   terminalShell: string;
 }

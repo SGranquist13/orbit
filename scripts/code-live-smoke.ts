@@ -68,6 +68,17 @@ useApp.setState({
 await s().openRoot(root, { workspaceId: "live" });
 await s().init(); // repeated init must not subscribe twice
 assert.equal(s().roots[0].mode, "watch");
+// Regression: subscribe/open mid-turn, with no turnStarted and no tabs.
+await emit("agent-event", {
+  workspaceId: "live",
+  seq: null,
+  ts: Date.now(),
+  event: call("Edit", { file_path: "src/main.ts" }, "implicit"),
+});
+await pause();
+assert.equal(s().roots[0].activeRel, "src/main.ts");
+assert(s().activity.at(-1)!.turn > 0, "implicit turn is numbered");
+useCode.setState({ activity: [] });
 await s().openFile("src/main.ts");
 const key = bufferKey(root, "src/main.ts"),
   before = s().buffers[key].text;
@@ -118,6 +129,7 @@ await s().openFile("src/main.ts");
 await agent(call("Edit", { file_path: "README.md" }, "manual-edit"));
 assert.equal(s().roots[0].activeRel, "src/main.ts");
 await codeApi.writeFile(root, "README.md", "# Updated by a shell command\n", null);
+await agent({ type: "toolResult", id: "manual-edit", output: "", isError: false });
 await pause();
 assert.equal(s().roots[0].activeRel, "src/main.ts");
 assert(s().activity.some((a) => a.rel === "README.md" && a.phase === "done"));

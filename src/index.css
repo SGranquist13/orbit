@@ -371,3 +371,15 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .cm-agent-flash::before { animation: none; opacity: 0.12; }
 }
+
+/* Live agent cursor: run colour denotes work; texture is confined to a 2px bar. */
+.cm-agent-caret { display: inline-block; position: relative; width: 2px; height: 1.15em; vertical-align: text-bottom; background: var(--run); animation: agent-caret-blink 1s step-end infinite; }
+.cm-agent-caret-label { position: absolute; left: 2px; bottom: 100%; padding: 1px 4px; border-radius: 3px 3px 3px 0; background: var(--run); color: var(--bg); font: 10px/1.4 Inter, sans-serif; white-space: nowrap; pointer-events: none; }
+.cm-agent-removed { opacity: .45; text-decoration: line-through; white-space: pre-wrap; }
+.cm-agent-writing-line { position: relative; }
+.cm-agent-writing-line::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--run); mask-image: var(--dither-comet); mask-size: 100% 200%; animation: agent-writing-sweep 1s linear infinite; }
+@keyframes agent-caret-blink { 50% { background: transparent; } }
+@keyframes agent-writing-sweep { to { mask-position: 0 200%; } }
+@media (prefers-reduced-motion: reduce) {
+  .cm-agent-caret, .cm-agent-writing-line::before { animation: none; }
+}
