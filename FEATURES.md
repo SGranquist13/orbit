@@ -58,7 +58,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Follow-ups, interrupt (Esc), resume after restart | ✅ | |
 | Steer Codex mid-turn; Claude queues messages sent mid-turn | ✅ | |
 | Model picker per workspace | ✅ | |
-| Model lists from the agent CLIs | 🧪 | Codex catalog, Claude aliases, custom model ids; refresh in Settings > Agents or the palette |
+| Model lists from the agent CLIs | ✅ | Codex catalog, Claude aliases, custom model ids; refresh in Settings > Agents or the palette |
 | Workspace context in the agent's system prompt (branch, base, linked issue) | ✅ | |
 | **Profiles**: Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer | ✅ | Switch mid-session; the agent is told its new role |
 | Read-only profiles enforced by the agent's sandbox and tool allowlist, not just by the prompt | ✅ | |
