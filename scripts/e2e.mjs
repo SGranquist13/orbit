@@ -1811,6 +1811,50 @@ await step("code-live", async () => {
   }
 });
 
+const wsEvents = async (id) => (await invoke("load_events", { id })).map((e) => e.event);
+
+// Standalone: node scripts/e2e.mjs diff-comments (one cheap real Haiku turn: the review message is a plain chat send).
+await step("diff-comments", async () => {
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  const filename = "REVIEW.txt";
+  fs.writeFileSync(path.join(ws.path, filename), "alpha\nbeta\ngamma\n");
+  try {
+    await js(`document.querySelector('button[title^="Open in Code"]').click()`);
+    await waitFor("linked Code root", `return !!document.querySelector('[data-code-view] [aria-label="Editor mode"]')`, 10000);
+    await waitFor("fixture file", `return !!document.getElementById('file-${filename}')`, 10000);
+    await js(`document.getElementById('file-${filename}').click()`);
+    await waitFor("file open", `return document.querySelector('.cm-content')?.innerText.includes('beta')`, 10000);
+    await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Diff').click()`);
+    await waitFor("merge editors", `return document.querySelectorAll('.code-diff .cm-editor').length === 2`, 10000);
+    // Gutter mousedown (CodeMirror listens for mousedown on the gutter); falls back to the dev hook if the gutter is not there.
+    const viaGutter = await js(`const els = [...document.querySelectorAll('.code-diff .cm-review-gutter .cm-gutterElement')].filter(e => e.querySelector('.cm-review-plus'));
+      if (els.length < 2) return false;
+      els[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      return true;`);
+    if (viaGutter) {
+      await waitFor("comment box", `return !!document.querySelector('textarea[aria-label="Review comment"]')`, 5000);
+      await js(`const t = document.querySelector('textarea[aria-label="Review comment"]'); t.focus();`);
+      await type("Rename this to delta.");
+      await key("Enter");
+    } else {
+      await js(`window.__ORBIT_REVIEW__.add(${JSON.stringify(ws.id)}, { path: ${JSON.stringify(filename)}, startLine: 2, endLine: 2, text: "Rename this to delta.", excerpt: "beta" })`);
+    }
+    await waitFor("review bar", `return document.querySelector('[aria-label="Review"]')?.innerText.includes('Review (1)')`, 5000);
+    await waitFor("comment card", `return !!document.querySelector('.code-diff .cm-review-card')`, 5000);
+    await shot("diff-comments");
+    await js(`[...document.querySelectorAll('[aria-label="Review"] button')].find(b => b.innerText === 'Send to agent').click()`);
+    const um = await until("review message sent", async () => {
+      const evs = await wsEvents(ws.id);
+      return evs.find((e) => e.type === "userMessage" && e.text?.includes("Review comments on your changes"));
+    }, 30_000, 500);
+    if (!um.text.includes(`${filename}:2`) || !um.text.includes("Rename this to delta.")) throw new Error(`review message lacks path or comment: ${um.text}`);
+    if (await js(`return !!document.querySelector('[aria-label="Review"]')`)) throw new Error("review bar should clear after sending");
+    await until("turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120000, 500);
+  } finally {
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
+  }
+});
+
 // ── Attachments (images and files in chat) ───────────────────
 /** A solid-colour RGB PNG, built with zlib (no dependencies). */
 function solidPng(rgb, size = 64) {
@@ -1842,7 +1886,6 @@ fs.mkdirSync(attachDir, { recursive: true });
 const norm = (p) => String(p).replaceAll("\\", "/").toLowerCase();
 const underHomeImages = (p) => norm(p).startsWith(norm(path.join(home, "images")) + "/");
 const underHomeFiles = (p) => norm(p).startsWith(norm(path.join(home, "files")) + "/");
-const wsEvents = async (id) => (await invoke("load_events", { id })).map((e) => e.event);
 const STRIP_READY = `const s = document.querySelector('[data-pending-strip]'); return !!s && s.children.length > 0 && !s.querySelector('.animate-spin') && ![...s.querySelectorAll('img')].some(i => i.classList.contains('opacity-50'))`;
 const STRIP_GONE = `return !document.querySelector('[data-pending-strip]')`;
 

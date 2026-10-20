@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Preview: comment on lines in the diff and send them to the agent as one message.
 
 - Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains
 - Preview: Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a warning near the limit.

@@ -5,6 +5,7 @@ import { useTheme } from "./theme";
 import { registerHandler, createDispatcher, normalizeEvent } from "./keybindings";
 import { explorerAction } from "../components/code/Explorer";
 import { openCodeFolder } from "../components/code/FolderSwitcher";
+import { discardReview, reviewTarget, sendReview } from "../stores/review";
 
 export let recordingKeys = false;
 export function setRecordingKeys(value: boolean) {
@@ -40,6 +41,16 @@ export function installKeybindings(hint: (message: string) => void) {
       s.select(ws.id);
     });
   }
+  add("review.send", () => {
+    const id = reviewTarget();
+    if (id) void sendReview(id);
+    return !!id;
+  });
+  add("review.discard", () => {
+    const id = reviewTarget();
+    if (id) void discardReview(id);
+    return !!id;
+  });
   add("workbench.settings", () => useApp.getState().openSettings());
   add("workbench.keyboardShortcuts", () => {
     useApp.getState().openSettings();

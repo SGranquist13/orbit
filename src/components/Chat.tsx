@@ -45,6 +45,7 @@ import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
 import { LimitsBadge } from "./LimitsBadge";
+import { discardReview, sendReview, useReviewComments } from "../stores/review";
 import { SchedulePreview, WhenControl } from "./ScheduleControls";
 import { TeammateLabel } from "./TeammateAvatar";
 import { RunButton, SetupRow } from "./WorktreeScripts";
@@ -883,6 +884,23 @@ function RemoveX({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
+/** Drafted diff comments waiting to be sent, shown next to the context meter. */
+function ReviewChip({ wsId }: { wsId: string }) {
+  const drafts = useReviewComments(wsId);
+  if (!drafts.length) return null;
+  return (
+    <span data-review-chip className="flex items-center gap-1.5 text-[11px] text-mute">
+      <span className="font-medium text-dim">Review ({drafts.length})</span>
+      <button type="button" onClick={() => void sendReview(wsId)} className="rounded-[3px] border border-line px-1.5 py-0.5 text-fg hover:bg-hover">
+        Send
+      </button>
+      <button type="button" onClick={() => void discardReview(wsId)} className="rounded-[3px] border border-line px-1.5 py-0.5 hover:bg-hover hover:text-fg">
+        Discard
+      </button>
+    </span>
+  );
+}
+
 function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<Pending[]>([]);
@@ -1102,6 +1120,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
           </span>
           <span className="flex-1" />
           <LimitsBadge />
+          <ReviewChip wsId={ws.id} />
           <ContextMeter ws={ws} running={running} />
           {running && (
             <span className="flex items-center gap-1.5 text-[11px] text-mute">
