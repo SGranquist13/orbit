@@ -172,6 +172,8 @@ await step("keybindings", async () => {
       await js(`document.getElementById('file-${name}').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
       await js(`document.getElementById('file-${name}').click()`);
       await waitFor("active fixture", `return [...document.querySelectorAll('[role="tab"][aria-selected="true"]')].some(t => t.innerText.includes('${name}'))`, 5000);
+      // The tab activates before the file loads; until then the hidden editor still holds the previous file.
+      await waitFor("fixture loaded", `const c = document.querySelector('[data-code-view] .cm-content'); return !!c?.offsetParent && c.innerText.trim() === 'export const value = 1;'`, 5000);
       await js(`document.querySelector('[data-code-view] .cm-content').focus()`);
       await key("End", { ctrl: true });
       await type("\n// keybindings save all\n");
