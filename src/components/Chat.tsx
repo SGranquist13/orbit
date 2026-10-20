@@ -43,6 +43,7 @@ import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
 import { SchedulePreview, WhenControl } from "./ScheduleControls";
 import { TeammateLabel } from "./TeammateAvatar";
+import { RunButton, SetupRow } from "./WorktreeScripts";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -91,6 +92,7 @@ export function Chat({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />
+        <RunButton ws={ws} />
         <Button title={"Open in Code" + (keyLabel("views.code") ? ` (${keyLabel("views.code")})` : "")} className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
         {focusMode ? (
           <Button onClick={() => useApp.getState().setFocusMode(false)} className="relative shrink-0">
@@ -344,6 +346,7 @@ function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[];
   return (
     <div ref={ref} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[880px] space-y-5 px-6 py-8">
+        <SetupRow wsId={wsId} />
         {loading && loadError && (
           <div className="flex items-start gap-3 rounded-[4px] border-[1.5px] border-bad px-3.5 py-2.5">
             <p className="selectable flex-1 whitespace-pre-wrap text-[12px] font-medium text-bad">Couldn't load this conversation: {loadError}</p>

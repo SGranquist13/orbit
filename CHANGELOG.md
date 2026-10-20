@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: per-repo setup and run scripts; `.env` and other ignored files are copied into new worktrees.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.
