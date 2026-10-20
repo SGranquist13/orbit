@@ -10,6 +10,20 @@ export interface EditorInfo {
   command: string;
 }
 
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: "stdio" | "http";
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  url: string | null;
+  headers: Record<string, string>;
+  enabled: boolean;
+}
+
+export interface McpServerInfo { name: string; version: string }
+
 export interface ModelInfo {
   id: string;
   label: string;
@@ -44,6 +58,7 @@ export interface Workspace {
   profile: string | null;
   /** Pack directory names disabled only in this workspace. */
   disabledPacks: string[];
+  disabledMcpServers: string[];
   /** Hidden from the inbox until this time (ms epoch); 0 = not snoozed. */
   snoozedUntil: number;
   /** The last Ship gate / check run failed (cleared by a pass or a new message). */
@@ -784,6 +799,12 @@ export const api = {
   runSkill: (id: string, skillId: string, args: string) => invoke<void>("run_skill", { id, skillId, args }),
   getPins: () => invoke<string[]>("get_pins"),
   setPins: (pins: string[]) => invoke<void>("set_pins", { pins }),
+  listMcpServers: () => invoke<McpServer[]>("list_mcp_servers"),
+  saveMcpServer: (server: McpServer) => invoke<McpServer>("save_mcp_server", { server }),
+  deleteMcpServer: (id: string) => invoke<void>("delete_mcp_server", { id }),
+  testMcpServer: (server: McpServer) => invoke<McpServerInfo>("test_mcp_server", { server }),
+  importClaudeMcp: () => invoke<McpServer[]>("import_claude_mcp"),
+  setWorkspaceMcpServers: (id: string, disabled: string[]) => invoke<Workspace>("set_workspace_mcp_servers", { id, disabled }),
   listPacks: () => invoke<Pack[]>("list_packs"),
   listSkills: () => invoke<Skill[]>("list_skills"),
   listProfiles: (workspaceId?: string) => invoke<Profile[]>("list_profiles", { workspaceId }),

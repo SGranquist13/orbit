@@ -43,6 +43,9 @@ pub fn args(cfg: &SessionConfig) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
+    if let Some(path) = &cfg.mcp_config {
+        a.extend(["--mcp-config".into(), path.display().to_string()]);
+    }
     if let Some(model) = &cfg.model {
         a.extend(["--model".into(), super::local_model(model).unwrap_or(model).to_string()]);
     }
@@ -832,7 +835,7 @@ mod tests {
             readonly: false,
             permission_mode: "bypassPermissions".into(),
             sandbox: "danger-full-access".into(),
-            local_url: None,
+            mcp_servers: vec![], mcp_config: None, local_url: None,
         };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| {
             let _ = tx.send(ev);
@@ -867,7 +870,7 @@ mod tests {
         let png = dir.join("red.png");
         std::fs::write(&png, base64::engine::general_purpose::STANDARD.decode(crate::images::RED_PNG_B64).unwrap()).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let cfg = SessionConfig { kind: super::super::AgentKind::Claude, cwd: dir, model: Some("haiku".into()), resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
+        let cfg = SessionConfig { kind: super::super::AgentKind::Claude, cwd: dir, model: Some("haiku".into()), resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), mcp_servers: vec![], mcp_config: None, local_url: None };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
         handle.send(Command::User {
             text: "What colour is this image? One word.".into(),
@@ -990,7 +993,7 @@ mod tests {
             readonly: false,
             permission_mode: "bypassPermissions".into(),
             sandbox: "danger-full-access".into(),
-            local_url: None,
+            mcp_servers: vec![], mcp_config: Some("/mcp/workspace.json".into()), local_url: None,
         };
         let rw = args(&cfg).join(" ");
         assert!(!rw.contains("--disallowedTools") && rw.contains("--permission-mode bypassPermissions"));
@@ -1002,6 +1005,8 @@ mod tests {
         assert!(a.contains("--permission-mode default") && !a.contains("bypassPermissions"));
         assert!(args(&cfg).iter().any(|x| x == READONLY_ALLOW), "allowlist must be one argv entry");
         assert!(a.contains("--disallowedTools NotebookEdit --append-system-prompt"));
+        assert!(a.contains("--mcp-config /mcp/workspace.json"));
+        assert!(!a.contains("--strict-mcp-config"));
         assert!(a.contains("--model opus"));
         assert!(a.contains("--resume abc"));
         assert!(a.contains("--plugin-dir /packs/ecc"));

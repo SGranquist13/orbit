@@ -150,6 +150,10 @@ impl AgentEvent {
 }
 
 pub struct SessionConfig {
+    /// Effective MCP server snapshot, including for read-only profiles.
+    pub mcp_servers: Vec<crate::mcp::McpServer>,
+    /// Generated Claude config file (Codex uses the snapshot as CLI overrides).
+    pub mcp_config: Option<PathBuf>,
     pub kind: AgentKind,
     pub cwd: PathBuf,
     pub model: Option<String>,
