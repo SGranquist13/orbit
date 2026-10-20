@@ -1108,13 +1108,13 @@ await step("packs-install-lifecycle", async () => {
 
 await step("workspace-pack-toggles", async () => {
   await withPack(async () => {
-    const ws = await mkWs("workspace packs");
-    const other = await mkWs("other workspace packs", { agent: "codex", model: null });
+    const ws = await mkWs("pack switch claude");
+    const other = await mkWs("pack switch codex", { agent: "codex", model: null });
     const pins = await invoke("get_pins");
     try {
       await invoke("set_pins", { pins: [...pins, "e2epack:hello"] });
       await reloadUi();
-      await selectWsInSidebar("workspace packs");
+      await selectWsInSidebar("pack switch claude");
       await paletteRun("Skill packs for this workspace", "Skill packs for this workspace");
       const toggle = `document.querySelector('[role="switch"][aria-label="Enable e2e-pack in this workspace"]')`;
       await waitFor("workspace switch", `return !!(${toggle})`, 5000);
@@ -1136,7 +1136,7 @@ await step("workspace-pack-toggles", async () => {
       try { await invoke("run_skill", { id: ws.id, skillId: "e2epack:hello", args: "" }); }
       catch (e) { rejected = String(e).includes("disabled"); }
       if (!rejected) throw new Error("disabled Claude skill was not rejected");
-      await selectWsInSidebar("other workspace packs");
+      await selectWsInSidebar("pack switch codex");
       await setComposer("/e2epack");
       await waitFor("other workspace still offers skill", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
       await setComposer("");
@@ -1150,7 +1150,7 @@ await step("workspace-pack-toggles", async () => {
       await invoke("set_workspace_packs", { id: other.id, disabled: [] });
       if (await hasSkill("e2epack:hello")) throw new Error("workspace override enabled a globally disabled pack");
       await invoke("set_pack_enabled", { name: "e2e-pack", enabled: true });
-      await selectWsInSidebar("workspace packs");
+      await selectWsInSidebar("pack switch claude");
       await openPacksDialog();
       await js(`(${toggle}).click()`);
       await until("workspace override cleared", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.disabledPacks.length === 0, 5000, 100);
