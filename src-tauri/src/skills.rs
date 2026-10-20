@@ -183,6 +183,12 @@ pub fn list_packs(home: &Path, disabled: &[String]) -> anyhow::Result<Vec<Pack>>
     Ok(out)
 }
 
+/// Workspace overrides can only narrow the globally enabled packs. Match stable directory
+/// names, not plugin namespaces (which may differ from the directory name).
+pub fn effective_packs(packs: &[Pack], workspace_disabled: &[String]) -> Vec<Pack> {
+    packs.iter().filter(|p| p.enabled && !workspace_disabled.contains(&p.name)).cloned().collect()
+}
+
 pub fn list_skills(packs: &[Pack]) -> Vec<Skill> {
     packs
         .iter()
@@ -378,6 +384,22 @@ pub fn expand(skill: &Skill, args: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_packs_only_narrow_global_selection() {
+        let pack = |name: &str, enabled| Pack {
+            name: name.into(), plugin: format!("namespace-{name}"), enabled,
+            description: None, path: String::new(), source: None, builtin: false,
+            skill_count: 0, command_count: 0,
+        };
+        let packs = vec![pack("a", true), pack("b", false), pack("c", true)];
+        let names = |disabled: &[String]| effective_packs(&packs, disabled).into_iter().map(|p| p.name).collect::<Vec<_>>();
+        assert_eq!(names(&[]), vec!["a", "c"]);
+        assert_eq!(names(&["a".into(), "a".into(), "missing".into()]), vec!["c"]);
+        assert_eq!(names(&["namespace-a".into()]), vec!["a", "c"]);
+        assert!(names(&["a".into(), "c".into()]).is_empty());
+        assert!(packs[0].enabled); // Filtering never mutates the global configuration.
+    }
 
     #[test]
     fn frontmatter_variants() {

@@ -30,6 +30,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   seenSeq: 0,
   dismissedSeq: 0,
   profile: null,
+  disabledPacks: [],
   snoozedUntil: 0,
   checksFailed: false,
   checksCommand: null,
@@ -965,13 +966,25 @@ export function installMockBackend() {
             }
           }
           return null;
-        case "run_skill":
+        case "run_skill": {
+          const skill = skills.find((s) => s.id === (args as { skillId: string }).skillId);
+          const w = workspaces.find((x) => x.id === id);
+          if (!skill || !packs.some((p) => p.name === skill.pack && p.enabled) || w?.disabledPacks.includes(skill.pack)) {
+            throw "Skill is unavailable: it was not found or its pack is disabled globally or in this workspace";
+          }
           if (LAUNCH) launchSend(id, (args as { args: string }).args, emitAgentEvent, setLaunchStatus, (args as { skillId: string }).skillId);
           return null;
+        }
         case "list_packs":
           return packs;
+        case "set_pack_enabled": {
+          const { name, enabled } = args as { name: string; enabled: boolean };
+          const pack = packs.find((p) => p.name === name);
+          if (pack) pack.enabled = enabled;
+          return null;
+        }
         case "list_skills":
-          return skills;
+          return skills.filter((s) => packs.some((p) => p.name === s.pack && p.enabled));
         case "list_teammates":
           return tmDefs().map(tmView);
         case "get_teammate":
@@ -1035,8 +1048,17 @@ export function installMockBackend() {
         case "set_teammate_memory":
           tmMemory[a.slug!] = (args as { text: string }).text;
           return null;
-        case "list_profiles":
-          return profiles;
+        case "list_profiles": {
+          const w = workspaces.find((x) => x.id === (args as { workspaceId?: string }).workspaceId);
+          return profiles.filter((p) => packs.some((pack) => pack.name === p.pack && pack.enabled) && !w?.disabledPacks.includes(p.pack));
+        }
+        case "set_workspace_packs": {
+          const w = workspaces.find((x) => x.id === id);
+          if (!w) throw "Workspace not found";
+          w.disabledPacks = [...new Set((args as { disabled: string[] }).disabled)].sort();
+          void emit("workspace", { ...w });
+          return { ...w };
+        }
         case "set_workspace_profile": {
           const w = workspaces.find((x) => x.id === id)!;
           w.profile = (args as { profile: string }).profile;

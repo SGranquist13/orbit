@@ -2,7 +2,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { LoaderCircle, Package, Pin, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { confirmAction } from "../lib/confirm";
-import { api, type Pack } from "../lib/ipc";
+import { api, type Pack, type Workspace } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { Button, cn } from "./ui";
 
@@ -10,6 +10,7 @@ export function Packs() {
   const packs = useApp((s) => s.packs);
   const skills = useApp((s) => s.skills);
   const pins = useApp((s) => s.pins);
+  const workspace = useApp((s) => s.workspaces.find((w) => w.id === s.selectedId));
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -57,8 +58,14 @@ export function Packs() {
           </header>
 
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+            {workspace && (
+              <div className="px-1 pb-2 text-[11.5px] leading-relaxed text-mute">
+                <p className="truncate text-fg" title={workspace.name}>{workspace.name}</p>
+                <p>Turn packs off for this workspace only. Applies from your next message.</p>
+              </div>
+            )}
             {packs.map((p) => (
-              <PackRow key={p.name} pack={p} busy={busy} act={act} />
+              <PackRow key={p.name} pack={p} workspace={workspace} busy={busy} act={act} />
             ))}
 
             <p className="label px-1 pt-3 text-mute">Install a pack from git</p>
@@ -136,7 +143,7 @@ export function Packs() {
   );
 }
 
-function PackRow({ pack, busy, act }: { pack: Pack; busy: string | null; act: (key: string, fn: () => Promise<unknown>) => Promise<void> }) {
+function PackRow({ pack, workspace, busy, act }: { pack: Pack; workspace?: Workspace; busy: string | null; act: (key: string, fn: () => Promise<unknown>) => Promise<void> }) {
   const key = (k: string) => `${k}:${pack.name}`;
   return (
     <div className={cn("rounded-[4px] border-[1.5px] border-line-strong bg-bg p-3", !pack.enabled && "opacity-60")}>
@@ -161,8 +168,26 @@ function PackRow({ pack, busy, act }: { pack: Pack; busy: string | null; act: (k
             </IconBtn>
           </>
         )}
-        <Toggle on={pack.enabled} onChange={(on) => void act(key("toggle"), () => api.setPackEnabled(pack.name, on))} />
+        <Toggle label={`Enable ${pack.name} globally`} disabled={!!busy} on={pack.enabled} onChange={(on) => void act(key("toggle"), () => api.setPackEnabled(pack.name, on))} />
       </div>
+      {workspace && (
+        <div className="mt-2 flex items-center justify-between border-t border-line pt-2 text-[11.5px] text-mute">
+          <span>This workspace</span>
+          {pack.enabled ? (
+            <Toggle
+              label={`Enable ${pack.name} in this workspace`}
+              title={workspace.status === "running" ? "Wait for the current turn to finish" : undefined}
+              disabled={!!busy || workspace.status === "running"}
+              on={!workspace.disabledPacks.includes(pack.name)}
+              onChange={(on) => void act(key("workspace"), async () => {
+                const disabled = workspace.disabledPacks.filter((name) => name !== pack.name);
+                if (!on) disabled.push(pack.name);
+                useApp.getState().upsertWorkspace(await api.setWorkspacePacks(workspace.id, disabled));
+              })}
+            />
+          ) : <span>Off globally</span>}
+        </div>
+      )}
       {pack.description && <p className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-mute">{pack.description}</p>}
       <div className="mt-1.5 flex items-center gap-3 text-[10.5px] text-mute">
         <span>{pack.skillCount} skills</span>
@@ -182,13 +207,16 @@ function IconBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button {...props} className="grid size-6 place-items-center rounded-md text-mute hover:bg-hover hover:text-fg" />;
 }
 
-function Toggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+function Toggle({ on, onChange, label, title, disabled }: { on: boolean; onChange: (on: boolean) => void; label: string; title?: string; disabled?: boolean }) {
   return (
     <button
       role="switch"
+      aria-label={label}
+      title={title}
       aria-checked={on}
+      disabled={disabled}
       onClick={() => onChange(!on)}
-      className={cn("relative h-4 w-7 rounded-[3px] transition-colors", on ? "bg-accent" : "bg-line-strong")}
+      className={cn("relative h-4 w-7 shrink-0 rounded-[3px] transition-colors disabled:opacity-40", on ? "bg-accent" : "bg-line-strong")}
     >
       <span className={cn("absolute top-0.5 size-3 rounded-[2px] bg-paper transition-all", on ? "left-3.5" : "left-0.5")} />
     </button>
