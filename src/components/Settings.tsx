@@ -7,6 +7,7 @@ import { Section } from "./settings/controls";
 import { Data } from "./settings/Data";
 import { General } from "./settings/General";
 import { Models } from "./settings/Models";
+import { Mcp } from "./settings/Mcp";
 import { Mobile } from "./settings/Mobile";
 import { About, Git, GitHub, InboxSettings, Shortcuts } from "./settings/sections";
 import { Skills } from "./settings/Skills";
@@ -19,6 +20,7 @@ const SECTIONS = [
   { id: "git", title: "Git", body: <Git />, description: "How Orbit handles commits, checks, syncing and merging. Defaults follow trunk-based practice; every piece can be changed or switched off." },
   { id: "github", title: "GitHub", body: <GitHub /> },
   { id: "skills", title: "Skills & profiles", body: <Skills /> },
+  { id: "mcp", title: "MCP servers", body: <Mcp />, description: "Tools and data sources your agents can call, added once for Claude and Codex." },
   { id: "inbox", title: "Inbox", body: <InboxSettings /> },
   { id: "models", title: "Models", body: <Models />, description: "Which model runs Orbit's small background tasks, and the optional local server." },
   { id: "mobile", title: "Mobile", body: <Mobile />, description: "Watch and steer your workspaces from the Orbit phone app." },

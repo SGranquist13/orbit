@@ -1892,4 +1892,33 @@ await step("attachments-tool-image", async () => {
   await shot("attachments-tool-image");
 });
 
+// Standalone: node scripts/e2e.mjs mcp-servers (one cheap real Haiku turn).
+await step("mcp-servers", async () => {
+  const stub = path.join(scratch, "orbit-mcp-stub.cjs");
+  fs.writeFileSync(stub, [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\\n');",
+    "rl.on('line', (line) => {",
+    "  let r; try { r = JSON.parse(line); } catch { return; }",
+    "  if (r.method === 'initialize') send({ id: r.id, result: { protocolVersion: r.params?.protocolVersion ?? '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'orbit-stub', version: '1.0.0' } } });",
+    "  else if (r.method === 'tools/list') send({ id: r.id, result: { tools: [{ name: 'orbit_ping', description: 'Returns pong', inputSchema: { type: 'object', properties: {} } }] } });",
+    "  else if (r.method === 'tools/call') send({ id: r.id, result: { content: [{ type: 'text', text: 'pong' }] } });",
+    "  else if (r.id !== undefined) send({ id: r.id, result: {} });",
+    "});",
+  ].join("\n"));
+  const saved = await invoke("save_mcp_server", { server: { id: "", name: "orbitstub", transport: "stdio", command: process.execPath, args: [stub], env: {}, url: null, headers: {}, enabled: true } });
+  try {
+    const info = await invoke("test_mcp_server", { server: saved });
+    if (info.name !== "orbit-stub") throw new Error(`probe returned ${JSON.stringify(info)}`);
+    const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+    const before = await js(turnEnds);
+    await composerSend("Call the orbit_ping tool and reply with its result.");
+    await waitFor("turn completed", `${turnEnds} > ${before}`, 180_000);
+    const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+    if (!/pong/i.test(msg)) throw new Error(`claude answered: ${msg.slice(0, 160)} (workspace ${ws.id})`);
+  } finally {
+    await invoke("delete_mcp_server", { id: saved.id });
+  }
+});
+
 await h.finish();

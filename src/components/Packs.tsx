@@ -1,8 +1,8 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { LoaderCircle, Package, Pin, RefreshCw, Search, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { confirmAction } from "../lib/confirm";
-import { api, type Pack, type Workspace } from "../lib/ipc";
+import { api, type McpServer, type Pack, type Workspace } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { Button, cn } from "./ui";
 
@@ -14,6 +14,8 @@ export function Packs() {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  useEffect(() => { void api.listMcpServers().then(setMcpServers).catch(() => {}); }, []);
   const close = () => useApp.getState().setPacksOpen(false);
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
@@ -67,6 +69,28 @@ export function Packs() {
             {packs.map((p) => (
               <PackRow key={p.name} pack={p} workspace={workspace} busy={busy} act={act} />
             ))}
+
+            {workspace && mcpServers.some((m) => m.enabled) && (
+              <>
+                <p className="label px-1 pt-3 text-mute">MCP servers</p>
+                <p className="px-1 text-[11.5px] leading-relaxed text-mute">Turn servers off for this workspace only. Applies to new sessions.</p>
+                {mcpServers.filter((m) => m.enabled).map((m) => (
+                  <div key={m.id} className="flex items-center justify-between rounded-[4px] border-[1.5px] border-line-strong bg-bg p-3">
+                    <span className="text-[13px] font-semibold">{m.name}</span>
+                    <Toggle
+                      label={`Enable ${m.name} in this workspace`}
+                      disabled={!!busy}
+                      on={!workspace.disabledMcpServers.includes(m.id)}
+                      onChange={(on) => void act(`mcp:${m.id}`, async () => {
+                        const disabled = workspace.disabledMcpServers.filter((x) => x !== m.id);
+                        if (!on) disabled.push(m.id);
+                        useApp.getState().upsertWorkspace(await api.setWorkspaceMcpServers(workspace.id, disabled));
+                      })}
+                    />
+                  </div>
+                ))}
+              </>
+            )}
 
             <p className="label px-1 pt-3 text-mute">Install a pack from git</p>
             <form

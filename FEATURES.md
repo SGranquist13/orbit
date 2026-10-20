@@ -14,7 +14,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 - Per-repo setup and run scripts, with `.env` and other ignored files copied into new worktrees
 - Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
 - Claude and Codex plan limits (5-hour and weekly windows) in Usage
-- MCP servers added once for both agents
 - Comment on diff lines and send them to the agent
 - Rewind a workspace to any earlier turn
 - Linked pull requests across repositories (ship an attached project's changes alongside the main PR)
@@ -87,6 +86,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Claude runs pack skills natively; Orbit inlines them for Codex | ✅ | |
 | Install any skill pack by git URL; enable, disable, update, remove | ✅ | |
 | Per-workspace skill pack toggles | 🧪 | Turn off globally enabled packs for a workspace; skills and profiles follow the workspace selection |
+| **MCP servers** added once for Claude and Codex | 🧪 | Settings > MCP servers: stdio or HTTP, test, import from Claude; per-workspace toggles apply to new sessions |
 | **Attach folders** to a workspace so agents can read related projects | ✅ | Read-only by default |
 | Make an attached project editable (its own worktree and branch) | ✅ | Shipping it as a linked PR is on the roadmap |
 | Related-project discovery (package.json, Cargo.toml, pyproject, go.mod) with one-click attach | ✅ | |
