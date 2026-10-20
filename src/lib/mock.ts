@@ -1128,6 +1128,16 @@ export function installMockBackend() {
           w.snoozedUntil = (args as { until: number }).until;
           return { ...w };
         }
+        case "get_rate_limits":
+          return [
+            { agent: "claude", windows: [
+              { kind: "fiveHour", usedPercent: 62, resetsAt: Math.floor(now / 1000) + 7200 },
+              { kind: "weekly", usedPercent: 31, resetsAt: Math.floor(now / 1000) + 259200 },
+            ], status: "allowed" },
+            { agent: "codex", windows: [
+              { kind: "fiveHour", usedPercent: 88, resetsAt: Math.floor(now / 1000) + 3600 },
+            ], status: null },
+          ];
         case "all_workspace_usage":
           return Object.values(usageByWs);
         case "workspace_usage":
