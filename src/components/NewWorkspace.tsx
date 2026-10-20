@@ -44,6 +44,16 @@ export function NewWorkspace() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Best of N: attempt A is the agent/model chosen below; each extra attempt picks its own.
+  const [count, setCount] = useState(() => useApp.getState().newWorkspaceAttempts);
+  const [extras, setExtras] = useState<{ agent: AgentKind; model: string }[]>(() => {
+    const first = settings?.defaultAgent ?? "claude";
+    const other: AgentKind = first === "claude" ? "codex" : "claude";
+    return [other, first, other].map((a) => ({ agent: a, model: defaultModelFor(a, settings) }));
+  });
+  const patchExtra = (i: number, patch: Partial<{ agent: AgentKind; model: string }>) =>
+    setExtras((list) => list.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+  const attempts = count > 1 && !!prompt.trim();
 
   useEffect(() => {
     if (!repos.some((r) => r.id === repoId)) setRepoId(selectedRepo ?? repos[0]?.id ?? "");
@@ -66,6 +76,18 @@ export function NewWorkspace() {
     setBusy(true);
     localStorage.setItem("lastRepo", repoId);
     try {
+      if (attempts) {
+        const group = await api.startAttempts({
+          repoId,
+          prompt,
+          attempts: [{ agent, model: model || null }, ...extras.slice(0, count - 1).map((x) => ({ agent: x.agent, model: x.model || null }))],
+          profile: profile?.id ?? null,
+        });
+        useApp.getState().upsertAttemptGroup(group);
+        close();
+        useApp.getState().openAttempts(group.id);
+        return;
+      }
       // No prompt = set the workspace up first: the worktree exists, the agent starts with your first message.
       const ws = await api.createWorkspace({
         repoId,
@@ -148,6 +170,56 @@ export function NewWorkspace() {
           </div>
         )}
 
+        <div data-testid="attempts-control" className="border-t border-line px-3 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="label text-mute">Attempts</span>
+            <div className="flex rounded-[4px] border-[1.5px] border-line-strong p-0.5">
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  data-attempts={n}
+                  onClick={() => setCount(n)}
+                  className={cn("h-6 w-7 rounded-[2px] text-[12px] font-medium tabular-nums transition-colors", count === n ? "bg-fg text-bg" : "text-mute hover:text-dim")}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11.5px] text-mute">
+              {count === 1 ? "Run the task once." : prompt.trim() ? "Same prompt, separate worktrees; compare and keep the best." : "Write a task to run it as several attempts."}
+            </span>
+          </div>
+          {count > 1 &&
+            extras.slice(0, count - 1).map((x, i) => (
+              <div key={i} className="mt-1.5 flex items-center gap-2" data-extra-attempt={i}>
+                <span className="w-14 text-[12px] font-medium text-dim">Attempt {"BCD"[i]}</span>
+                <div className="flex rounded-[4px] border-[1.5px] border-line-strong p-0.5">
+                  {(["claude", "codex"] as const).map((a) => (
+                    <button
+                      key={a}
+                      onClick={() => patchExtra(i, { agent: a, model: defaultModelFor(a, settings) })}
+                      className={cn("flex h-6 items-center gap-1.5 rounded-[2px] px-2 text-[12px] font-medium transition-colors", x.agent === a ? "bg-fg text-bg [&_svg]:text-bg" : "text-mute hover:text-dim")}
+                    >
+                      <AgentIcon agent={a} className="size-3" />
+                      {agentLabel[a]}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={x.model}
+                  onChange={(e) => patchExtra(i, { model: e.target.value })}
+                  className="h-7 rounded-[4px] border-[1.5px] border-line-strong bg-bg px-2 text-[12px] font-medium text-fg focus:outline-none"
+                >
+                  {[...new Set([...modelsFor(x.agent, settings, modelLists), x.model])].map((m) => (
+                    <option key={m} value={m}>
+                      {modelLabelFor(x.agent, m, modelLists) || "default model"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2.5">
           {repos.length > 0 ? (
             <select
@@ -214,7 +286,7 @@ export function NewWorkspace() {
           </span>
           <Button variant="primary" onClick={() => void create()} disabled={!repoId || busy}>
             {busy && <LoaderCircle className="size-3.5 animate-spin" />}
-            {prompt.trim() ? "Start" : "Create"}
+            {attempts ? `Start ${count} attempts` : prompt.trim() ? "Start" : "Create"}
           </Button>
         </div>
       </div>

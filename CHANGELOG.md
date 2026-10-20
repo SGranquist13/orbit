@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: Best of N: run one prompt as several attempts side by side and keep the best.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.

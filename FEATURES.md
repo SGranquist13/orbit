@@ -41,6 +41,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | New workspace dialog (prompt, repo, agent, model, profile); the agent starts at once | ✅ | Ctrl+N, Ctrl+Enter |
 | Create a workspace without a task | 🧪 | Empty prompt = **Create** (idle worktree, composer focused); optional name |
 | Many workspaces running in parallel, Claude and Codex side by side | ✅ | |
+| Best of N: run one prompt as 2-4 attempts (different agents or models) and keep the best | 🧪 | Compare view with checks, diff size, cost and time per attempt; keep one, the rest are archived |
 | Sidebar: repos → workspaces with status, diff stats and agent icon | ✅ | Collapses to an icon rail (Ctrl+B) |
 | Rename a workspace; right-click menu (rename, reveal in Explorer, archive) | 🧪 | |
 | Unread marker when a background workspace finishes | 🧪 | |

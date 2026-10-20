@@ -2,6 +2,7 @@ import { archiveWithWorktree } from "../lib/archive";
 import { create } from "zustand";
 import {
   api,
+  type AttemptGroup,
   type AgentKind,
   type ModelInfo,
   events,
@@ -29,7 +30,7 @@ import { confirmAction } from "../lib/confirm";
 import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
 
-export type View = "code" | "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate";
+export type View = "code" | "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate" | "attempts";
 
 interface AppState {
   repos: Repo[];
@@ -86,6 +87,13 @@ interface AppState {
   profiles: Profile[];
   pins: string[];
   newWorkspaceOpen: boolean;
+  /** Best of N: attempt groups by id, the one open in the compare view, and the dialog's starting attempt count. */
+  attemptGroups: Record<string, AttemptGroup>;
+  selectedAttemptGroup: string | null;
+  newWorkspaceAttempts: number;
+  openAttempts: (id: string) => void;
+  upsertAttemptGroup: (g: AttemptGroup) => void;
+  newWorkspaceWithAttempts: () => void;
   newWorkspacePrefill: { prompt: string; repoId?: string } | null;
   /** "New ticket" dialog (Issues view). */
   ticketOpen: boolean;
@@ -232,6 +240,9 @@ export const useApp = create<AppState>((set, get) => ({
   profiles: [],
   pins: [],
   newWorkspaceOpen: false,
+  attemptGroups: {},
+  selectedAttemptGroup: null,
+  newWorkspaceAttempts: 1,
   newWorkspacePrefill: null,
   ticketOpen: false,
   packsOpen: false,
@@ -322,6 +333,10 @@ export const useApp = create<AppState>((set, get) => ({
       await events.onTeammateChanged(() => void get().refreshTeammates());
       void get().refreshTeammates();
       await events.onSimplify(onSimplify);
+      await events.onAttempts((g) => get().upsertAttemptGroup(g));
+      for (const id of new Set(workspaces.map((w) => w.attemptGroup).filter((g): g is string => !!g))) {
+        api.attemptGroup(id).then((g) => get().upsertAttemptGroup(g), () => {});
+      }
       for (const ws of workspaces) void get().refreshChanges(ws.id);
       void get().loadSkills();
       void get().loadSettings();
@@ -591,7 +606,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setPacksOpen: (open) => set({ packsOpen: open }),
-  setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open, ...(!open ? { newWorkspacePrefill: null } : {}) }),
+  setNewWorkspaceOpen: (open) => set({ newWorkspaceOpen: open, ...(!open ? { newWorkspacePrefill: null, newWorkspaceAttempts: 1 } : {}) }),
+  newWorkspaceWithAttempts: () => set({ newWorkspaceOpen: true, newWorkspaceAttempts: 2, paletteOpen: false }),
+  openAttempts: (id) => set((s) => ({ selectedAttemptGroup: id, view: "attempts", previousView: "attempts", paletteOpen: false, selectedId: s.selectedId })),
+  upsertAttemptGroup: (g) => set((s) => ({ attemptGroups: { ...s.attemptGroups, [g.id]: g } })),
   setTicketOpen: (open) => set({ ticketOpen: open }),
   snooze: async (id, until) => {
     try {

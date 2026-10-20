@@ -26,6 +26,7 @@ export function Palette() {
   const skills = useApp((s) => s.skills);
   const profiles = useApp((s) => s.profiles);
   const teammates = useApp((s) => s.teammates);
+  const attemptGroups = useApp((s) => s.attemptGroups);
   // "Ask a teammate" narrows the palette to teammates; the scope can come from the store (openPalette("teammates")) or the entry.
   const [scope, setScope] = useState(useApp.getState().paletteScope);
   const [search, setSearch] = useState("");
@@ -89,6 +90,15 @@ export function Palette() {
               // Restore the editor after the palette unmounts before invoking editor commands.
               window.setTimeout(() => executeCommand(c.id), 0);
             })}><span className="min-w-0 flex-1">{c.title}</span><span className="text-[11px] text-mute">{keyLabel(c.id)}</span></Command.Item>)}
+          </Command.Group>
+          <Command.Group heading="Attempts" className={heading}>
+            <Command.Item className={item} value="New workspace with attempts… (Best of N)" onSelect={run(() => useApp.getState().newWorkspaceWithAttempts())}>New workspace with attempts…</Command.Item>
+            {Object.values(attemptGroups).filter((g) => g.status === "running").map((g) => (
+              <Command.Item key={g.id} className={item} value={`Compare attempts ${g.prompt}`} onSelect={run(() => useApp.getState().openAttempts(g.id))}>
+                <span className="shrink-0">Compare attempts</span>
+                <span className="min-w-0 flex-1 truncate text-[11.5px] text-mute">{g.prompt.split("\n")[0]}</span>
+              </Command.Item>
+            ))}
           </Command.Group>
           <Command.Group heading="Code" className={heading}>
             {selected && (["Open this workspace in Code", "Watch the agent"] as const).map((title) => <Command.Item key={title} className={item} value={title} onSelect={run(() => { void useCode.getState().openRoot(selected.path, { workspaceId: selected.id }).then(() => { if (title === "Watch the agent") useCode.getState().setMode(useCode.getState().activeRoot!, "watch"); useApp.getState().setView("code"); }); })}>{title}</Command.Item>)}

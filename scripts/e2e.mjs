@@ -817,6 +817,32 @@ await step("roles-opt-in", async () => {
   if (cleared.profile) throw new Error(`profile not cleared: ${cleared.profile}`);
 });
 
+await step("best-of-n", async () => {
+  // One prompt, two Claude attempts side by side; both finish, summaries land, picking A archives B.
+  const repoId = (await invoke("list_repos"))[0].id;
+  await h.autoConfirm(true);
+  const started = await invoke("start_attempts", {
+    repoId,
+    prompt: "Create hello.txt containing hi.",
+    attempts: [{ agent: "claude", model: "haiku" }, { agent: "claude", model: "haiku" }],
+  });
+  if (started.workspaceIds.length !== 2) throw new Error("expected two attempt workspaces");
+  await until("both attempts summarised", async () => {
+    const g = await invoke("attempt_group", { id: started.id });
+    return g.attempts.length === 2 && g.attempts.every((a) => a.finished && a.summary);
+  }, 240_000, 3000);
+  const group = await invoke("attempt_group", { id: started.id });
+  if (group.attempts.some((a) => a.summary.filesChanged < 1)) throw new Error(`an attempt changed no files: ${JSON.stringify(group.attempts.map((a) => a.summary))}`);
+  const [a, b] = started.workspaceIds;
+  const all = await invoke("list_workspaces");
+  if (!all.find((w) => w.id === a)?.name.endsWith("A") || !all.find((w) => w.id === b)?.name.endsWith("B")) throw new Error("attempt workspaces are not named A and B");
+  const picked = await invoke("pick_attempt", { groupId: started.id, workspaceId: a });
+  if (picked.status !== "picked" || picked.winnerWorkspaceId !== a) throw new Error("group not marked picked");
+  const after = await invoke("list_workspaces");
+  if (!after.some((w) => w.id === a)) throw new Error("kept attempt disappeared");
+  if (after.some((w) => w.id === b)) throw new Error("the other attempt was not archived");
+});
+
 await step("settings-accept-edits", async () => {
   // Accept edits allows file edits but denies shell commands. (A bare `echo > file` is auto-approved by the
   // Claude CLI in this mode as a "file edit", so the denied command is a node one-liner.)

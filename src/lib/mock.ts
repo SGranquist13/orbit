@@ -58,7 +58,7 @@ const attemptGroups: AttemptGroup[] = [{
   status: "running", winnerWorkspaceId: null,
   workspaceIds: ["attempt-a", "attempt-b", "attempt-c"],
   attempts: ["attempt-a", "attempt-b", "attempt-c"].map((id, i) => {
-    const w = ws(id, "r1", `add-retry-handling � ${"ABC"[i]}`, i === 1 ? "codex" : "claude", "done");
+    const w = ws(id, "r1", `add-retry-handling · ${"ABC"[i]}`, i === 1 ? "codex" : "claude", "done");
     w.attemptGroup = "attempt-demo";
     w.branch = `you/add-retry-handling-${"abc"[i]}`;
     workspaces.push(w);
@@ -978,11 +978,11 @@ export function installMockBackend() {
         }
         case "start_attempts": {
           const input = args as unknown as StartAttemptsArgs;
-          if (input.attempts.length < 2 || input.attempts.length > 4 || !input.prompt.trim()) throw new Error("Choose 2�4 attempts and a prompt");
+          if (input.attempts.length < 2 || input.attempts.length > 4 || !input.prompt.trim()) throw new Error("x4 attempts and a prompt");
           if (!repos.some((r) => r.id === input.repoId) || input.attempts.some((a) => a.agent !== "claude" && a.agent !== "codex")) throw new Error("Unknown repository or agent");
           const group: AttemptGroup = { id: `attempt-${Date.now()}`, prompt: input.prompt, repoId: input.repoId, createdAt: Date.now(), status: "running", winnerWorkspaceId: null, workspaceIds: [], attempts: [] };
           input.attempts.forEach((a, i) => {
-            const w = ws(`${group.id}-${i}`, input.repoId, `${input.prompt.slice(0, 40)} � ${"ABCD"[i]}`, a.agent, "done");
+            const w = ws(`${group.id}-${i}`, input.repoId, `${input.prompt.slice(0, 40)} - ${"ABCD"[i]}`, a.agent, "done");
             w.model = a.model ?? null;
             w.profile = input.profile ?? null;
             w.attemptGroup = group.id;
