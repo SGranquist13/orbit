@@ -1,0 +1,50 @@
+name: Release
+
+# Pushing a version tag (v0.3.0) builds the Windows installer and attaches it to a draft
+# GitHub release whose notes are that version's CHANGELOG.md section. Publish the draft by hand
+# after the installer smoke test.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Tag matches the app version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} != package.json $version" }
+          "VERSION=$version" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $text = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($text, "(?ms)^## $([regex]::Escape($env:VERSION)) - [^\n]*\n(.*?)(?=^## |\z)")
+          if (-not $m.Success) { throw "no CHANGELOG.md section for $env:VERSION" }
+          $install = "**Install:** download ``Orbit_$($env:VERSION)_x64-setup.exe`` below. The installer is not code-signed yet, so Windows SmartScreen shows a warning: click **More info → Run anyway**. Requires Claude Code and/or Codex CLI (logged in), git, and ``gh`` for the GitHub features."
+          "$install`n`n$($m.Groups[1].Value.Trim())" | Out-File -Encoding utf8 notes.md
+
+      - run: bun install --frozen-lockfile
+      # scripts/tauri.cmd loads MSVC and strips the builder's home path from the binary.
+      - run: bun run app:build
+
+      - name: Draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = "src-tauri/target/release/bundle/nsis/Orbit_$($env:VERSION)_x64-setup.exe"
+          gh release create "${{ github.ref_name }}" $exe --draft --title "Orbit $env:VERSION" --notes-file notes.md
