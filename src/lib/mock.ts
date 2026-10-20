@@ -8,6 +8,20 @@ import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
 import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 import type { McpServer, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, Review, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+
+const mockReviews = new Map<string, Review>();
+function fakeReview(workspaceId: string): Review {
+  return {
+    workspaceId, prNumber: 827, headSha: "abc123mockhead", createdAt: Date.now(),
+    summary: "Found one bug, one risk, and one small cleanup.",
+    findings: [
+      { path: "src/auth/session.ts", line: 24, severity: "bug", title: "Handle expired sessions", body: "An expired session currently passes the guard and fails on the next request." },
+      { path: "src/lib/slug.ts", line: 12, severity: "risk", title: "Keep the fallback unique", body: "Two empty names produce the same slug and may overwrite an existing entry." },
+      { path: "src/lib/slug.ts", line: 18, severity: "nit", title: "Name the fallback", body: "A named constant would explain the fallback value." },
+    ],
+  };
+}
 
 const repoScripts: Record<string, RepoScripts> = { r1: { setupScript: "bun install", runScript: "bun run dev -- --port $PORT", copyGlobs: [".env*"] } };
 const workspaceRuns: Record<string, WorkspaceRunStatus> = {};
@@ -356,6 +370,9 @@ let settings: Settings = {
   setupTimeoutMinutes: 10,
   installBeforeChecks: true,
   syncMode: "auto",
+  reviewOnShip: "off",
+  reviewModel: "sonnet",
+  reviewMaxFindings: 8,
   simplifyModel: "sonnet",
   simplifyMaxCandidates: 12,
   simplifyLowRiskButton: true,
@@ -406,6 +423,8 @@ const ENUMS: Record<string, string[]> = {
   checksMode: ["off", "warn", "block"],
   commitMessages: ["prompt", "model"],
   syncMode: ["off", "suggest", "auto"],
+  reviewOnShip: ["off", "draft", "post"],
+  reviewModel: ["haiku", "sonnet", "opus"],
   simplifyModel: ["haiku", "sonnet", "opus"],
 };
 const checkOverrides: Record<string, string | null> = {};
@@ -1409,6 +1428,33 @@ export function installMockBackend() {
           return null;
         case "workspace_overlaps":
           return [{ a: "w1", b: "w3", files: ["src/auth/session.ts", "src/lib/slug.ts"] }];
+        case "run_review": {
+          const workspaceId = a.workspaceId!;
+          void emit("review", { workspaceId, status: "running" });
+          const review = mockReviews.get(workspaceId) ?? fakeReview(workspaceId);
+          mockReviews.set(workspaceId, review);
+          void emit("review", { workspaceId, status: "done", review });
+          return review;
+        }
+        case "latest_review":
+          return mockReviews.get(a.workspaceId!) ?? null;
+        case "post_review":
+          if (!mockReviews.has(a.workspaceId!)) throw new Error("No review to post");
+          return null;
+        case "send_findings_to_agent": {
+          const { workspaceId, indices } = args as { workspaceId: string; indices: number[] };
+          const review = mockReviews.get(workspaceId);
+          if (!review || !indices.length) throw new Error("Select review findings first");
+          const findings = [...new Set(indices)].map((i) => {
+            const finding = review.findings[i];
+            if (!finding) throw new Error("Invalid finding index");
+            return `${finding.path}:${finding.line}  -  ${finding.title}\n${finding.body}`;
+          });
+          const text = `Please address these review findings:\n\n${findings.join("\n\n")}`;
+          if (LAUNCH) launchSend(workspaceId, text, emitAgentEvent, setLaunchStatus);
+          else emitAgentEvent(workspaceId, { type: "userMessage", text });
+          return null;
+        }
         case "simplify_state":
           return mockSimplify(a.workspaceId!);
         case "simplify_find":

@@ -12,13 +12,15 @@ import {
   GitPullRequestDraft,
   LoaderCircle,
   RefreshCw,
+  ScanSearch,
   Rocket,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { reviewBugCount } from "../lib/attention";
 import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
-import type { PrStatus, Workspace } from "../lib/ipc";
+import type { PrStatus, ReviewFinding, Workspace } from "../lib/ipc";
 import { api } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
 import { Button, DiffStat, cn } from "./ui";
@@ -68,6 +70,7 @@ export function RightPanel({ ws }: { ws: Workspace }) {
 
       <div className="dither-rule bg-line-strong" />
       <ShipSection ws={ws} />
+      <ReviewSection ws={ws} />
 
       <div className="dither-rule bg-line-strong" />
       <div className="flex items-center gap-2 px-4 pb-2 pt-3">
@@ -262,5 +265,133 @@ function Action({
       {busy ? <LoaderCircle className="size-3.5 animate-spin" /> : icon}
       {label}
     </Button>
+  );
+}
+
+const SEVERITY_TONE: Record<ReviewFinding["severity"], string> = { bug: "text-bad", risk: "text-warn", nit: "text-mute" };
+
+/** The AI review of the shipped branch: findings to send back to the agent or post on the PR. */
+function ReviewSection({ ws }: { ws: Workspace }) {
+  const pr = useApp((s) => s.prs[ws.id]);
+  const state = useApp((s) => s.reviews[ws.id]);
+  const mode = useApp((s) => s.settings?.reviewOnShip ?? "off");
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const review = state?.review ?? null;
+  const running = state?.status === "running";
+  const openPr = pr?.state === "OPEN";
+  const stale = !!review && !!pr && review.prNumber !== pr.number;
+
+  useEffect(() => {
+    setPicked(new Set(review?.findings.flatMap((f, i) => (f.severity === "bug" ? [i] : [])) ?? []));
+  }, [review?.headSha, review?.createdAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!openPr && !review) return null;
+
+  const act = async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    try {
+      await fn();
+    } catch (e) {
+      useApp.getState().setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const openAt = async (f: ReviewFinding) => {
+    await useCode.getState().openRoot(ws.path, { workspaceId: ws.id });
+    const root = useCode.getState().activeRoot;
+    if (!root) return;
+    await useCode.getState().openFileAt(f.path, { line: f.line, start: 0, end: 0 }, root);
+    useApp.getState().setView("code");
+  };
+  const toggle = (i: number) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (!n.delete(i)) n.add(i);
+      return n;
+    });
+  const bugs = reviewBugCount(review);
+
+  return (
+    <>
+      <div className="dither-rule bg-line-strong" />
+      <section className="max-h-[42%] shrink-0 space-y-2.5 overflow-y-auto px-4 py-3.5" aria-label="Review">
+        <div className="flex items-center gap-2">
+          <span className="label text-fg">Review</span>
+          {review && <span className="text-[11px] text-mute">{review.findings.length}</span>}
+          {bugs > 0 && <span className="text-[11px] font-medium text-bad">{bugs} bug{bugs === 1 ? "" : "s"}</span>}
+          <span className="flex-1" />
+          <Button
+            variant="outline"
+            className="px-2 text-[11.5px]"
+            disabled={running || ws.status === "running" || !openPr}
+            title={openPr ? "Read-only AI review of this branch against its base" : "Needs an open pull request"}
+            onClick={() => void useApp.getState().runReview(ws.id)}
+          >
+            {running ? <LoaderCircle className="size-3.5 animate-spin" /> : <ScanSearch className="size-3.5" />}
+            {running ? "Reviewing…" : review ? "Run again" : "Run review"}
+          </Button>
+        </div>
+        {running && <div className="dither-march h-2 w-full bg-run" />}
+        {state?.status === "failed" && state.error && <p className="text-[11.5px] text-bad">{state.error}</p>}
+        {!review && !running && state?.status !== "failed" && (
+          <p className="text-[12px] text-mute">
+            {mode === "off" ? "Run a review on demand, or turn on Review after Ship in Settings > Git." : "Runs automatically after Ship."}
+          </p>
+        )}
+        {review && (
+          <>
+            <p className="text-[12px] leading-snug text-dim">{review.summary}</p>
+            {stale && <p className="text-[11px] text-warn">This review is for an earlier pull request.</p>}
+            {review.findings.length === 0 && <p className="text-[12px] text-mute">No findings.</p>}
+            <ul className="space-y-2">
+              {review.findings.map((f, i) => (
+                <li key={`${f.path}:${f.line}:${i}`} className="flex gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1 shrink-0"
+                    aria-label={`Select finding: ${f.title}`}
+                    checked={picked.has(i)}
+                    onChange={() => toggle(i)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className={cn("label shrink-0", SEVERITY_TONE[f.severity])}>{f.severity}</span>
+                      <span className="min-w-0 text-[12px] font-medium text-fg">{f.title}</span>
+                    </div>
+                    <button
+                      className="block max-w-full truncate font-mono text-[11px] text-mute hover:text-fg hover:underline"
+                      title="Open in the Code view"
+                      onClick={() => void openAt(f)}
+                    >
+                      {f.path}:{f.line}
+                    </button>
+                    <p className="mt-0.5 text-[11.5px] leading-snug text-dim">{f.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            {review.findings.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5">
+                <Action
+                  label={`Send to agent${picked.size ? ` (${picked.size})` : ""}`}
+                  disabled={picked.size === 0 || ws.status === "running" || !!busy}
+                  busy={busy === "send"}
+                  onClick={() => void act("send", () => api.sendFindingsToAgent(ws.id, [...picked].sort((a, b) => a - b)))}
+                />
+                <Action
+                  label="Post to PR"
+                  disabled={!openPr || stale || !!busy}
+                  busy={busy === "post"}
+                  title="Posts the summary and every finding as a review comment on the pull request"
+                  onClick={() => void act("post", () => api.postReview(ws.id))}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </section>
+    </>
   );
 }

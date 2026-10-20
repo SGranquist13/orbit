@@ -529,6 +529,38 @@ fn commit_step(wt: &Path, pre: &str, title: &str) -> anyhow::Result<(String, i64
 
 // ---- find ----
 
+/// Shared one-shot analysis runner. Tool availability and permissions enforce read-only access.
+pub(crate) async fn readonly_analysis(wt: &Path, model: &str, prompt: &str, schema: &str) -> Result<String, String> {
+    // Enforced read-only: the built-in tool set itself is limited to Read/Grep/Glob (no Edit, Write or Bash
+    // exists for this process), on top of the default permission mode and an explicit allowlist. The prompt
+    // goes through stdin because a big diff would not fit a Windows command line.
+    let args: Vec<String> = [
+        "-p", "--model", model, "--output-format", "json", "--no-session-persistence",
+        "--setting-sources", "local", "--permission-mode", "default",
+        "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
+        "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
+        "--json-schema", schema,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let mut cmd = crate::agent::process::command("claude", &args, wt).map_err(err)?;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = crate::agent::process::spawn(&mut cmd).map_err(err)?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).await.map_err(err)?;
+    }
+    let out = tokio::time::timeout(FIND_LIMIT, child.wait_with_output())
+        .await
+        .map_err(|_| "the analysis timed out".to_string())?
+        .map_err(err)?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !out.status.success() {
+        return Err(format!("Claude analysis failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(stdout.into_owned())
+}
+
 async fn run_find(ws: &Workspace, base: String, kind: Scope, model: String, max: usize) -> Result<(Vec<Candidate>, usize, Option<String>), String> {
     let wt = PathBuf::from(&ws.path);
     let (wt2, base2) = (wt.clone(), base.clone());
@@ -543,35 +575,8 @@ async fn run_find(ws: &Workspace, base: String, kind: Scope, model: String, max:
         return Ok((vec![], 0, None));
     }
     let prompt = find_prompt(kind, &base, &scope.text, max);
-    // Enforced read-only: the built-in tool set itself is limited to Read/Grep/Glob (no Edit, Write or Bash
-    // exists for this process), on top of the default permission mode and an explicit allowlist. The prompt
-    // goes through stdin because a big diff would not fit a Windows command line.
-    let args: Vec<String> = [
-        "-p", "--model", model.as_str(), "--output-format", "json", "--no-session-persistence",
-        "--setting-sources", "local", "--permission-mode", "default",
-        "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
-        "--disallowedTools", "Edit,Write,MultiEdit,NotebookEdit,Bash",
-        "--json-schema", FIND_SCHEMA,
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
-    let mut cmd = crate::agent::process::command("claude", &args, &wt).map_err(err)?;
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = crate::agent::process::spawn(&mut cmd).map_err(err)?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(prompt.as_bytes()).await.map_err(err)?;
-    }
-    let out = tokio::time::timeout(FIND_LIMIT, child.wait_with_output())
-        .await
-        .map_err(|_| "the analysis timed out".to_string())?
-        .map_err(err)?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let candidates = parse_find_output(&stdout, max).map_err(|e| {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let hint = stderr.trim().lines().last().unwrap_or("");
-        if hint.is_empty() { e } else { format!("{e} ({hint})") }
-    })?;
+    let stdout = readonly_analysis(&wt, &model, &prompt, FIND_SCHEMA).await?;
+    let candidates = parse_find_output(&stdout, max)?;
     let note = (scope.omitted > 0).then(|| {
         format!("The change is large: {} of {} files were too big to include whole, so the analysis read them itself.", scope.omitted, scope.files)
     });

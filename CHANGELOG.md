@@ -10,6 +10,7 @@
 - Preview: add MCP servers once and both Claude and Codex get them, with per-workspace toggles.
 
 - Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
+- Preview: an AI review after Ship, shown in Orbit or posted to the PR, with findings you can send to the agent.
 
 ## 0.2.0 - 2026-10-20
 

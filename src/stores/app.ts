@@ -28,6 +28,7 @@ import {
   type Workspace,
   type WorkspaceUsage,
 } from "../lib/ipc";
+import type { ReviewState } from "../lib/ipc";
 import { confirmAction } from "../lib/confirm";
 import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
@@ -105,6 +106,10 @@ interface AppState {
   simplifyOpen: boolean;
   /** Simplify state per workspace, mirrored from the backend's `simplify` events. */
   simplify: Record<string, SimplifyState>;
+  /** AI review per workspace, mirrored from `review` events and `latest_review`. */
+  reviews: Record<string, ReviewState>;
+  loadReview: (id: string) => Promise<void>;
+  runReview: (id: string) => Promise<void>;
   sidebarCollapsed: boolean;
   /** Chat only: hides the sidebar and Ship panel. Not persisted. */
   focusMode: boolean;
@@ -261,6 +266,7 @@ export const useApp = create<AppState>((set, get) => ({
   shipOpen: readFlag("shipOpen"),
   simplifyOpen: false,
   simplify: {},
+  reviews: {},
   sidebarCollapsed: readFlag("sidebarCollapsed"),
   focusMode: false,
   error: null,
@@ -350,6 +356,14 @@ export const useApp = create<AppState>((set, get) => ({
       void get().refreshTeammates();
       await events.onSimplify(onSimplify);
       startScriptEvents();
+      await events.onReview((e) =>
+        set((s) => ({
+          reviews: {
+            ...s.reviews,
+            [e.workspaceId]: { status: e.status, review: e.review ?? s.reviews[e.workspaceId]?.review ?? null, error: e.error ?? null },
+          },
+        })),
+      );
       for (const ws of workspaces) void get().refreshChanges(ws.id);
       void get().loadSkills();
       void get().loadSettings();
@@ -373,6 +387,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
     void get().refreshChanges(id);
     void get().refreshPr(id);
+    void get().loadReview(id);
     void get().refreshAttachments(id);
     void get().refreshRelated(id);
     const repoId = get().workspaces.find((w) => w.id === id)?.repoId;
@@ -472,6 +487,22 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  loadReview: async (id) => {
+    try {
+      const review = await api.latestReview(id);
+      set((s) => (s.reviews[id]?.status === "running" ? s : { reviews: { ...s.reviews, [id]: { status: "idle", review, error: null } } }));
+    } catch {
+      /* no review yet */
+    }
+  },
+  runReview: async (id) => {
+    set((s) => ({ reviews: { ...s.reviews, [id]: { status: "running", review: s.reviews[id]?.review ?? null, error: null } } }));
+    try {
+      await api.runReview(id);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
   refreshPr: async (id) => {
     try {
       const pr = await api.prStatus(id);

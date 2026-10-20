@@ -117,6 +117,43 @@ export function Git() {
       {repos.length === 0 && <p className="py-3 text-[12px] text-mute">Add a repository to set its check command.</p>}
 
       <WorktreeSetup />
+      <SubHeading>Review</SubHeading>
+      <Row
+        label="Review after Ship"
+        field="reviewOnShip"
+        description="After a successful Ship, a read-only Claude pass reviews the pull request's diff once per pushed commit. Show in Orbit lists the findings in the Ship panel (and the inbox for bugs). Also post to the PR adds them as a review comment on GitHub."
+      >
+        <Segmented<Settings["reviewOnShip"]>
+          label="Review after Ship"
+          value={s.reviewOnShip}
+          options={[
+            { value: "off", label: "Off" },
+            { value: "draft", label: "Show in Orbit" },
+            { value: "post", label: "Also post to the PR" },
+          ]}
+          onChange={(v) => void save({ reviewOnShip: v })}
+        />
+      </Row>
+      <Row label="Review model" field="reviewModel" description="Always runs through Claude, whichever agent the workspace uses.">
+        <Segmented<Settings["reviewModel"]>
+          label="Review model"
+          value={s.reviewModel}
+          options={[
+            { value: "haiku", label: "Haiku" },
+            { value: "sonnet", label: "Sonnet" },
+            { value: "opus", label: "Opus" },
+          ]}
+          onChange={(v) => void save({ reviewModel: v })}
+        />
+      </Row>
+      <Row label="Most findings to list" field="reviewMaxFindings" description="Caps one review, most important first.">
+        <Select
+          label="Most findings to list"
+          value={String(s.reviewMaxFindings)}
+          options={numberOptions(s.reviewMaxFindings, [3, 5, 8, 12, 20], (n) => String(n))}
+          onChange={(v) => void save({ reviewMaxFindings: Number(v) })}
+        />
+      </Row>
 
       <SubHeading>Simplify</SubHeading>
       <Row
