@@ -11,6 +11,53 @@ Raw ideas, as they come. Unsorted, unfiltered.
 
 ## Shaping
 
+### 13. VS Code keybindings, rebindable (decided 2026-10-19, building)
+
+The Code view's Orbit-specific keys (Ctrl+Shift+O to open it, Ctrl+Alt+W, Ctrl+K meaning palette *and* Ask, Ctrl+Shift+S = save all) were too complicated. Decided with the user:
+
+- **Whole app follows VS Code defaults.** Inside the Code view every VS Code default wins; Orbit-only views move to keys VS Code doesn't use.
+- **Ctrl+K is the VS Code chord prefix** (Ctrl+K S save all, Ctrl+K Ctrl+W close all, Ctrl+K Ctrl+T theme). While a chord is pending the status line says "(Ctrl+K) was pressed. Waiting for second key of chord…"; Esc cancels. **Ctrl+I = Ask the agent about the selection** (VS Code's inline chat key). **Command palette = Ctrl+Shift+P** (also F1).
+- **Rebindable:** Settings > Keyboard shortcuts becomes a VS Code-like editor (search, record a new key or chord, conflicts shown, reset to default, remove). Stored as `keybindings` overrides in settings; every binding in the app comes from one registry (`src/lib/keybindings.ts`), including the editor's text commands.
+- **The agent strip shows on every folder:** a plain folder (not a workspace worktree) gets a "Watch an agent" picker in that spot instead of nothing, so the live view is findable.
+
+Default map (Orbit-only commands marked *):
+
+| Command | Key |
+|---|---|
+| Command palette | Ctrl+Shift+P, F1 |
+| Quick open file (opens the Code view if needed) | Ctrl+P |
+| Code view + focus explorer* | Ctrl+Shift+E |
+| Toggle sidebar (Orbit sidebar; in the Code view, the explorer) | Ctrl+B |
+| Toggle Activity column (secondary side bar) | Ctrl+Alt+B |
+| Ship panel* (VS Code's source control key) | Ctrl+Shift+G |
+| Inbox* / Code* / Routines* / Teammates* / Issues* | Alt+1 / Alt+2 / Alt+3 / Alt+4 / Alt+5 |
+| New workspace* (outside the Code view) | Ctrl+N |
+| Jump to the nth workspace* (outside the Code view) | Ctrl+1…9 |
+| Settings | Ctrl+, |
+| Keyboard shortcuts | Ctrl+K Ctrl+S |
+| Switch theme | Ctrl+K Ctrl+T |
+| Focus mode* | Ctrl+K Z (VS Code's Zen mode) |
+| Open workspace chat* (VS Code's chat key) | Ctrl+Alt+I |
+| Ask the agent about the selection* | Ctrl+I |
+| New file / Open folder (Code view) | Ctrl+N / Ctrl+K Ctrl+O |
+| Save / Save all | Ctrl+S / Ctrl+K S |
+| Close tab / Close all / Reopen closed tab | Ctrl+W (Ctrl+F4) / Ctrl+K Ctrl+W / Ctrl+Shift+T |
+| Next / previous tab | Ctrl+Tab, Ctrl+PageDown / Ctrl+Shift+Tab, Ctrl+PageUp |
+| Toggle terminal / New terminal / Toggle panel | Ctrl+\` / Ctrl+Shift+\` / Ctrl+J |
+| Search in files | Ctrl+Shift+F |
+| Find / Replace / Go to line / Next, previous match | Ctrl+F / Ctrl+H / Ctrl+G / F3, Shift+F3 |
+| Toggle comment / Block comment | Ctrl+/ / Shift+Alt+A |
+| Move line / Copy line / Delete line | Alt+↑↓ / Shift+Alt+↑↓ / Ctrl+Shift+K |
+| Insert line below / above | Ctrl+Enter / Ctrl+Shift+Enter |
+| Select line / Next occurrence / All occurrences | Ctrl+L / Ctrl+D / Ctrl+Shift+L |
+| Add cursor above / below / Undo cursor | Ctrl+Alt+↑ / Ctrl+Alt+↓ / Ctrl+U |
+| Indent / Outdent / Jump to bracket | Ctrl+] / Ctrl+[ / Ctrl+Shift+\\ |
+| Fold / Unfold / Fold all / Unfold all | Ctrl+Shift+[ / Ctrl+Shift+] / Ctrl+K Ctrl+0 / Ctrl+K Ctrl+J |
+| Toggle word wrap / Trigger suggest | Alt+Z / Ctrl+Space |
+| Watch / Manual*, Toggle diff* | no default (palette, rebindable) |
+
+Dropped: Ctrl+Shift+O (open Code), Ctrl+Alt+W, Ctrl+K palette, Ctrl+Shift+S save all, Ctrl+Shift+L theme, Ctrl+I inbox, Ctrl+. Ship, Ctrl+\\ focus mode, Ctrl+Shift+T Teammates, Ctrl+Shift+G Issues, Ctrl+Shift+E Routines. Ctrl+Shift+I stays unused (WebView2 DevTools).
+
 ### 12. Orbit Code: a built-in IDE with a live view of the agent (built 2026-10-18)
 
 An almost-complete IDE inside Orbit for building and playing by hand, and above all a **live view of the agent changing your files**.
@@ -303,6 +350,7 @@ Agreed ideas, each with a line on where it landed in FEATURES.md.
 - **#6 Routines, #7 Trunk-based git handling, #8 Simplify, #9 Local models**: decided 2026-10-10 (routines only while Orbit is open; all proposed defaults accepted) and built the same day, then connected (Simplify as a routine action, routine summaries / save-point messages / PR drafts through `llm.rs`). All 🟢: none has had a real-app e2e run yet. FEATURES.md: Routines, git flow, simplify; Local models.
 - **#1 Focus on the main workspace**: built (Ship button + hidden panel, slimmer collapsible sidebar, wider chat, focus mode).
 - **#12 Orbit Code**: decided 2026-10-18 (CodeMirror 6, global Code view, Watch/Manual modes); built the same day, real-app e2e for the shell, panels and live view. FEATURES.md: Code view.
+- **#13 VS Code keybindings**: decided 2026-10-19 (whole app, Ctrl+K chords, Ctrl+I ask, rebindable in Settings); building.
 
 ## Parked
 
