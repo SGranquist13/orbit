@@ -18,7 +18,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 **Later**
 - Change the agent or model of an existing workspace
-- Image and file attachments in the composer
 - Repo-local `.claude/skills` and `.claude/commands` in autocomplete
 - Responsive layout for narrow windows
 - Setup options (attach folders) right in the New workspace dialog
@@ -177,7 +176,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 | Feature | Status | Notes |
 |---|---|---|
-| Windows 10/11 desktop app (Tauri 2) with installer | ✅ | v0.1.0 |
+| Windows 10/11 desktop app (Tauri 2) with installer | ✅ | Latest: v0.2.0 ([changelog](CHANGELOG.md)) |
 | Content-security-policy in every build | ✅ | |
 | Continuous integration (licence checks, typecheck, Rust tests and lints) | ✅ | |
 | Tested with an end-to-end suite that drives the real app with real agents and real GitHub | ✅ | |
