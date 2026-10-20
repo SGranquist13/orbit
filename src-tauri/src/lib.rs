@@ -13,6 +13,7 @@ mod llm;
 mod mcp;
 mod maintenance;
 mod related;
+mod rewind;
 mod remote;
 mod routines;
 mod settings;
@@ -184,7 +185,13 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
             on_agent_event(app, state, ws_id, AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: true, error: Some(error), interrupted: false });
         }
     }
-    simplify::on_event(ws_id, &ev);
+    let completion_guard = matches!(ev, AgentEvent::TurnCompleted { .. }).then(rewind::operation_lock);
+    let commit_sha = if completion_guard.is_some() {
+        // The model message helper may block_on: run it outside the agent's Tokio task.
+        std::thread::scope(|scope| scope.spawn(|| trunk::save_point(app, state, ws_id)).join().unwrap_or(None))
+    } else {
+        None
+    };
     let mut seq = None;
     let mut ts = db::now();
     let mut updated = None;
@@ -192,6 +199,9 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
         let db = state.db();
         if ev.is_persistent() {
             if let Ok(stored) = db.append_event(ws_id, &ev) {
+                if let Some(sha) = &commit_sha {
+                    let _ = db.set_turn_commit(ws_id, stored.seq, sha);
+                }
                 seq = Some(stored.seq);
                 ts = stored.ts;
             }
@@ -218,6 +228,8 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
             _ => {}
         }
     }
+    drop(completion_guard);
+    simplify::on_event(ws_id, &ev);
     if let AgentEvent::UserMessage { text, .. } = &ev {
         teammates::on_user_message(app, state, ws_id, text);
     }
@@ -233,11 +245,6 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     }
     if let AgentEvent::Exited { .. } = &ev {
         routines::finish_exited(app, state, ws_id);
-    }
-    // Save point + sync bookkeeping happen off the event thread (and after the status update above).
-    if matches!(ev, AgentEvent::TurnCompleted { .. }) {
-        let (app2, state2, id) = (app.clone(), state.clone(), ws_id.to_string());
-        tauri::async_runtime::spawn_blocking(move || trunk::save_point(&app2, &state2, &id));
     }
     let payload = AgentEventPayload { workspace_id: ws_id.to_string(), seq, ts, event: ev };
     remote::publish_event(&payload);
@@ -374,6 +381,9 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
         cfg,
         generation,
         Arc::new(move |ev| {
+            if rewind::retired(generation) {
+                return;
+            }
             let exited = matches!(ev, AgentEvent::Exited { .. });
             on_agent_event(&app2, &state2, &id, ev);
             if exited {
@@ -783,12 +793,26 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
 
 #[allow(clippy::too_many_arguments)]
 fn send_with_images(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Option<String>, payload: String, images: Vec<ImageRef>, files: Vec<FileRef>) -> anyhow::Result<()> {
+    let result = {
+        let _operation = rewind::operation_lock();
+        send_with_images_inner(app, state, id, display, skill, payload, images, files)
+    };
+    if let Err(e) = &result {
+        on_agent_event(app, state, id, AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: true, error: Some(e.to_string()), interrupted: false });
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_with_images_inner(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Option<String>, payload: String, images: Vec<ImageRef>, files: Vec<FileRef>) -> anyhow::Result<()> {
     let ws = state.db().workspace(id)?;
     on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill, images: images.clone(), files: files.clone() });
     // Attached files are read by the agent with its own tools, so it gets their paths.
     let payload = format!("{payload}{}", images::files_block(&files));
     // Pending role hand-over note from a profile switch goes to the agent, not the transcript.
     let note = state.notices_lock().remove(id);
+    let rewind_note = state.db().setting(&format!("rewind_note:{id}"))?.unwrap_or_default();
+    let payload = format!("{rewind_note}{payload}");
     let payload = match note {
         Some(note) => format!("{note}{payload}"),
         None => payload,
@@ -820,7 +844,13 @@ fn deliver_message(app: &AppHandle, state: &AppState, ws: &Workspace, payload: S
         // Session died between lookup and send: drop it and retry once with a fresh process.
         state.sessions_lock().remove(id);
         ensure_session(app, state, ws).map_err(fail)?.send(Command::User { text: payload, images });
+    let handle = ensure_session(app, state, &ws)?;
+    if !handle.send(Command::User { text: payload.clone(), images: images.clone() }) {
+        // Session died between lookup and send: drop it and retry once with a fresh process.
+        state.sessions_lock().remove(id);
+        ensure_session(app, state, &ws)?.send(Command::User { text: payload, images });
     }
+    state.db().set_setting(&format!("rewind_note:{id}"), "")?;
     let ws = state.db().set_status(id, "running")?;
     emit_workspace(app, &ws);
     Ok(())
@@ -1560,6 +1590,10 @@ pub fn run() {
             usage_report,
             load_events,
             latest_plan,
+            rewind::workspace_turn_points,
+            rewind::rewind_preview,
+            rewind::rewind_workspace,
+            rewind::branch_from_turn,
             workspace_changes,
             archive_workspace,
             get_setting,

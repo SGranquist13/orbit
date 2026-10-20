@@ -992,6 +992,19 @@ function mockSimplifyApply(workspaceId: string, ids: string[]): SimplifyState {
   return start;
 }
 
+const rewoundMockEvents = new Map<string, StoredEvent[]>();
+
+function mockTurnPoints(id: string) {
+  const rows = rewoundMockEvents.get(id) ?? (LAUNCH ? launchEvents(id, transcript) : transcript);
+  let userTextPreview = "";
+  let turnIndex = 0;
+  return rows.flatMap((r) => {
+    if (r.event.type === "userMessage") userTextPreview = r.event.text.replace(/\s+/g, " ").slice(0, 160);
+    if (r.event.type !== "turnCompleted") return [];
+    return [{ seq: r.seq, turnIndex: ++turnIndex, sha: r.commitSha ?? r.seq.toString(16).padStart(40, "0"), userTextPreview }];
+  });
+}
+
 export function installMockBackend() {
   if (LAUNCH) launchTeammates(workspaces);
   mockIPC(
@@ -1016,6 +1029,30 @@ export function installMockBackend() {
             if (event.type === "sessionReset" || event.type === "turnStarted") break;
           }
           return null;
+          return rewoundMockEvents.get(id) ?? (LAUNCH ? launchEvents(id, transcript) : transcript);
+        case "workspace_turn_points":
+          return mockTurnPoints(a.workspaceId ?? "");
+        case "rewind_preview":
+        case "rewind_workspace":
+        case "branch_from_turn": {
+          const n = args as { workspaceId: string; seq: number; name?: string };
+          const source = workspaces.find((w) => w.id === n.workspaceId);
+          const points = mockTurnPoints(n.workspaceId);
+          const target = points.find((p) => p.seq === n.seq);
+          if (!source || !target) throw new Error("This turn has no saved checkpoint");
+          if (cmd === "rewind_preview") return { target, files: [], droppedTurns: points.filter((p) => p.seq > n.seq) };
+          if (cmd === "branch_from_turn") {
+            const branch = ws(`w${workspaces.length + 1}`, source.repoId, n.name ?? `${source.name} from turn ${target.turnIndex}`, source.agent, "idle");
+            workspaces.unshift(branch);
+            return { ...branch };
+          }
+          if (source.status === "running") throw new Error("Stop the workspace before rewinding it");
+          const rows = rewoundMockEvents.get(source.id) ?? (LAUNCH ? launchEvents(source.id, transcript) : transcript);
+          rewoundMockEvents.set(source.id, rows.filter((r) => r.seq <= n.seq));
+          source.agentSessionId = null;
+          source.status = "idle";
+          void emit("workspace", { ...source });
+          return { ...source };
         }
         case "workspace_changes":
           return LAUNCH ? launchChanges(id) : changes;

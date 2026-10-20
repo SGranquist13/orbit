@@ -126,6 +126,7 @@ pub struct Attachment {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredEvent {
+    pub commit_sha: Option<String>,
     pub seq: i64,
     pub ts: i64,
     pub event: AgentEvent,
@@ -417,6 +418,8 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         }
     }
     for (table, col, ddl) in [
+        ("events", "commit_sha", "ALTER TABLE events ADD COLUMN commit_sha TEXT"),
+        ("events", "rewound", "ALTER TABLE events ADD COLUMN rewound INTEGER NOT NULL DEFAULT 0"),
         ("teammate_messages", "meta", "ALTER TABLE teammate_messages ADD COLUMN meta TEXT"),
         ("teammate_tasks", "parent_task_id", "ALTER TABLE teammate_tasks ADD COLUMN parent_task_id TEXT"),
         ("teammate_tasks", "origin_kind", "ALTER TABLE teammate_tasks ADD COLUMN origin_kind TEXT"),
@@ -683,7 +686,7 @@ impl Db {
     fn last_seq(&self, id: &str) -> anyhow::Result<i64> {
         Ok(self
             .conn
-            .query_row("SELECT COALESCE(MAX(seq), 0) FROM events WHERE workspace_id = ?1", [id], |r| r.get(0))?)
+            .query_row("SELECT COALESCE(MAX(seq), 0) FROM events WHERE workspace_id = ?1 AND rewound = 0", [id], |r| r.get(0))?)
     }
 
     /// Marks everything up to the latest event as seen. Returns the new seen seq.
@@ -708,19 +711,19 @@ impl Db {
         let row = self
             .conn
             .query_row(
-                "SELECT seq, ts, payload FROM events WHERE workspace_id = ?1 AND payload LIKE ?2 ORDER BY seq DESC LIMIT 1",
+                "SELECT seq, ts, payload FROM events WHERE workspace_id = ?1 AND rewound = 0 AND payload LIKE ?2 ORDER BY seq DESC LIMIT 1",
                 params![id, prefix],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
             )
             .optional()?;
-        Ok(row.and_then(|(seq, ts, payload)| serde_json::from_str(&payload).ok().map(|event| StoredEvent { seq, ts, event })))
+        Ok(row.and_then(|(seq, ts, payload)| serde_json::from_str(&payload).ok().map(|event| StoredEvent { seq, ts, event, commit_sha: None })))
     }
 
     pub fn summary(&self, id: &str) -> anyhow::Result<Summary> {
         let (last_seq, last_activity_ts) = self
             .conn
             .query_row(
-                "SELECT COALESCE(MAX(seq), 0), COALESCE(MAX(ts), 0) FROM events WHERE workspace_id = ?1",
+                "SELECT COALESCE(MAX(seq), 0), COALESCE(MAX(ts), 0) FROM events WHERE workspace_id = ?1 AND rewound = 0",
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
@@ -1098,7 +1101,22 @@ impl Db {
             "INSERT INTO events (workspace_id, ts, payload) VALUES (?1, ?2, ?3)",
             params![workspace_id, ts, serde_json::to_string(ev)?],
         )?;
-        Ok(StoredEvent { seq: self.conn.last_insert_rowid(), ts, event: ev.clone() })
+        Ok(StoredEvent { seq: self.conn.last_insert_rowid(), ts, event: ev.clone(), commit_sha: None })
+    }
+
+    pub fn set_turn_commit(&self, workspace_id: &str, seq: i64, sha: &str) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE events SET commit_sha = ?3 WHERE workspace_id = ?1 AND seq = ?2 AND rewound = 0", params![workspace_id, seq, sha])?;
+        Ok(())
+    }
+
+    /// Keep the audit history and the next-session context in one SQLite transaction.
+    pub fn rewind_events(&self, workspace_id: &str, seq: i64, note: &str) -> anyhow::Result<Workspace> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("UPDATE events SET rewound = 1 WHERE workspace_id = ?1 AND seq > ?2", params![workspace_id, seq])?;
+        tx.execute("UPDATE workspaces SET agent_session_id = NULL, status = 'idle', seen_seq = MIN(seen_seq, ?2), dismissed_seq = MIN(dismissed_seq, ?2), checks_failed = 0, checks_command = NULL, checks_output = NULL, sync_conflicts = NULL, updated_at = ?3 WHERE id = ?1", params![workspace_id, seq, now()])?;
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)", params![format!("rewind_note:{workspace_id}"), note])?;
+        tx.commit()?;
+        self.workspace(workspace_id)
     }
 
     /// Last plan in the current turn, retained after completion until the next turn/session.
@@ -1120,16 +1138,16 @@ impl Db {
     pub fn events(&self, workspace_id: &str) -> anyhow::Result<Vec<StoredEvent>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT seq, ts, payload FROM events WHERE workspace_id = ?1 ORDER BY seq")?;
+            .prepare("SELECT seq, ts, payload, commit_sha FROM events WHERE workspace_id = ?1 AND rewound = 0 ORDER BY seq")?;
         let rows = stmt.query_map([workspace_id], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (seq, ts, payload) = row?;
+            let (seq, ts, payload, commit_sha) = row?;
             // Skip rows from older event schemas rather than failing the whole transcript.
             if let Ok(event) = serde_json::from_str(&payload) {
-                out.push(StoredEvent { seq, ts, event });
+                out.push(StoredEvent { seq, ts, event, commit_sha });
             }
         }
         Ok(out)

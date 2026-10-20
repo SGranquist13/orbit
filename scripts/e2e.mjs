@@ -2025,6 +2025,33 @@ await step("mcp-servers", async () => {
   } finally {
     await invoke("delete_mcp_server", { id: saved.id });
   }
+await step("rewind", async () => {
+  // Two cheap turns that each create a file; rewind to after turn 1, then branch from it.
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Create a file REWIND_ONE.md containing the word one. Don't commit it." });
+  await waitFor("rewind turn 1", `${turnEnds} >= 1`, 120_000);
+  await composerSend("Now create a file REWIND_TWO.md containing the word two. Don't commit it.");
+  await waitFor("rewind turn 2", `${turnEnds} >= 2`, 120_000);
+  const f1 = path.join(ws.path, "REWIND_ONE.md");
+  const f2 = path.join(ws.path, "REWIND_TWO.md");
+  let points = [];
+  await h.until("two checkpoints", async () => (points = await invoke("workspace_turn_points", { workspaceId: ws.id })).length >= 2, 30_000, 500);
+  if (!fs.existsSync(f1) || !fs.existsSync(f2)) throw new Error("both files should exist before the rewind");
+  const pv = await invoke("rewind_preview", { workspaceId: ws.id, seq: points[0].seq });
+  if (pv.droppedTurns.length !== 1 || !pv.files.includes("REWIND_TWO.md")) throw new Error(`bad preview: ${JSON.stringify(pv)}`);
+
+  // Branch first (the original stays untouched), then rewind.
+  const branch = await invoke("branch_from_turn", { workspaceId: ws.id, seq: points[0].seq });
+  if (!fs.existsSync(path.join(branch.path, "REWIND_ONE.md"))) throw new Error("branch is missing file 1");
+  if (fs.existsSync(path.join(branch.path, "REWIND_TWO.md"))) throw new Error("branch should not have file 2");
+  if (!fs.existsSync(f2)) throw new Error("branching changed the original workspace");
+
+  await invoke("rewind_workspace", { workspaceId: ws.id, seq: points[0].seq });
+  if (fs.existsSync(f2)) throw new Error("rewind did not remove file 2");
+  if (!fs.existsSync(f1)) throw new Error("rewind removed file 1");
+  const evs = await invoke("load_events", { id: ws.id });
+  const turns = evs.filter((e) => e.event.type === "turnCompleted").length;
+  if (turns !== 1) throw new Error(`transcript should have 1 turn after the rewind, has ${turns}`);
+  await shot("rewind");
 });
 
 await h.finish();

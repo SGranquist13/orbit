@@ -11,7 +11,7 @@ export interface ToolCallView {
 }
 
 export type Block =
-  | { kind: "user"; key: string; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[] }
+  | { kind: "user"; key: string; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[]; rewindSeq?: number }
   | { kind: "assistant"; key: string; text: string }
   | { kind: "tools"; key: string; calls: ToolCallView[] }
   | {
@@ -32,6 +32,7 @@ export function fold(events: StoredEvent[]): Block[] {
   const blocks: Block[] = [];
   const calls = new Map<string, ToolCallView>();
   let turnTokens: number | null = null;
+  let lastTurnSeq: number | undefined;
 
   for (const { seq, event: ev } of events) {
     const key = String(seq);
@@ -41,7 +42,7 @@ export function fold(events: StoredEvent[]): Block[] {
         if (ev.items.length) blocks.push({ kind: "plan", key, done: ev.items.filter((i) => i.status === "done").length, total: ev.items.length });
         break;
       case "userMessage":
-        blocks.push({ kind: "user", key, text: ev.text, skill: ev.skill, images: ev.images, files: ev.files });
+        blocks.push({ kind: "user", key, text: ev.text, skill: ev.skill, images: ev.images, files: ev.files, rewindSeq: lastTurnSeq });
         break;
       case "message":
         if (ev.text.trim()) blocks.push({ kind: "assistant", key, text: ev.text });
@@ -70,6 +71,7 @@ export function fold(events: StoredEvent[]): Block[] {
         blocks.push({ kind: "sessionReset", key });
         break;
       case "turnCompleted":
+        lastTurnSeq = seq;
         blocks.push({
           kind: "turnEnd",
           key,

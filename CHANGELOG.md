@@ -9,6 +9,8 @@
 - Preview: the agent's own plan pinned above the chat with live progress.
 - Preview: add MCP servers once and both Claude and Codex get them, with per-workspace toggles.
 
+- Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.
