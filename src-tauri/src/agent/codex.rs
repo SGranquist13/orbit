@@ -1,7 +1,7 @@
 //! Codex adapter: `codex app-server` speaks JSON-RPC over stdio. One process per session,
 //! one thread per workspace. Messages sent mid-turn use `turn/steer`.
 
-use super::{process, push_tail, AgentEvent, Command, EventSink, SessionConfig};
+use super::{process, push_tail, AgentEvent, Command, EventSink, ImageRef, SessionConfig};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -123,6 +123,8 @@ fn item_started(item: &Value) -> Option<AgentEvent> {
             item["arguments"].clone(),
         ),
         "webSearch" => ("WebSearch".to_string(), json!({ "query": item["query"] })),
+        "imageView" => ("ViewImage".to_string(), json!({ "path": item["path"] })),
+        "imageGeneration" => ("GenerateImage".to_string(), json!({ "prompt": item["revisedPrompt"] })),
         _ => return None,
     };
     Some(AgentEvent::ToolCall { id, name, input })
@@ -136,11 +138,13 @@ fn item_completed(item: &Value) -> Option<AgentEvent> {
             id,
             output: item["aggregatedOutput"].as_str().unwrap_or_default().to_string(),
             is_error: item["exitCode"].as_i64().is_some_and(|c| c != 0) || item["status"] == "failed",
+            images: vec![],
         }),
         "fileChange" => Some(AgentEvent::ToolResult {
             id,
             output: change_paths(item).join("\n"),
             is_error: item["status"] != "completed",
+            images: vec![],
         }),
         "mcpToolCall" => Some(AgentEvent::ToolResult {
             id,
@@ -150,10 +154,31 @@ fn item_completed(item: &Value) -> Option<AgentEvent> {
                 error_message(&item["error"])
             },
             is_error: !item["error"].is_null(),
+            images: vec![],
         }),
-        "webSearch" => Some(AgentEvent::ToolResult { id, output: String::new(), is_error: false }),
+        "webSearch" => Some(AgentEvent::ToolResult { id, output: String::new(), is_error: false, images: vec![] }),
+        "imageView" => {
+            let path = item["path"].as_str()?;
+            Some(AgentEvent::ToolResult { id, output: path.to_string(), is_error: false, images: image_refs(Some(path)) })
+        }
+        "imageGeneration" => Some(AgentEvent::ToolResult {
+            id,
+            output: item["revisedPrompt"].as_str().unwrap_or_default().to_string(),
+            is_error: item["status"] == "failed" || !item["failure"].is_null(),
+            images: image_refs(item["savedPath"].as_str()),
+        }),
         _ => None,
     }
+}
+
+/// An image on disk as an `ImageRef`, if the extension is a supported image type.
+fn image_refs(path: Option<&str>) -> Vec<ImageRef> {
+    path.and_then(|p| {
+        let media_type = crate::images::media_type_for_path(std::path::Path::new(p))?;
+        Some(ImageRef { path: p.to_string(), media_type: media_type.to_string(), data: None })
+    })
+    .into_iter()
+    .collect()
 }
 
 fn change_paths(item: &Value) -> Vec<String> {
@@ -172,8 +197,15 @@ fn error_message(err: &Value) -> String {
         .unwrap_or_else(|| msg.to_string())
 }
 
-fn text_input(text: &str) -> Value {
-    json!([{ "type": "text", "text": text, "text_elements": [] }])
+/// Codex `UserInput[]`: a text item (omitted when empty and there are images) plus one
+/// `localImage` item per image.
+fn user_input(text: &str, images: &[ImageRef]) -> Value {
+    let mut items = Vec::new();
+    if !text.is_empty() || images.is_empty() {
+        items.push(json!({ "type": "text", "text": text, "text_elements": [] }));
+    }
+    items.extend(images.iter().map(|i| json!({ "type": "localImage", "path": i.path })));
+    Value::Array(items)
 }
 
 #[derive(Clone, Copy)]
@@ -209,7 +241,7 @@ struct State {
     turn_id: Option<String>,
     /// A turn/start was sent but its id is not known yet.
     turn_starting: bool,
-    queued: Vec<String>,
+    queued: Vec<(String, Vec<ImageRef>)>,
     parser: CodexParser,
 }
 
@@ -269,7 +301,7 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
                     handle_message(&mut rpc, &mut st, &sink, msg).await;
                 }
                 cmd = rx.recv() => match cmd {
-                    Some(Command::User(text)) => send_user(&mut rpc, &mut st, text).await,
+                    Some(Command::User { text, images }) => send_user(&mut rpc, &mut st, text, images).await,
                     Some(Command::Compact) => {
                         if let Some(thread) = &st.thread_id {
                             rpc.request("thread/compact/start", json!({ "threadId": thread }), Pending::Other).await;
@@ -297,20 +329,20 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
     Ok(())
 }
 
-async fn send_user(rpc: &mut Rpc, st: &mut State, text: String) {
+async fn send_user(rpc: &mut Rpc, st: &mut State, text: String, images: Vec<ImageRef>) {
     let Some(thread) = st.thread_id.clone() else {
-        st.queued.push(text);
+        st.queued.push((text, images));
         return;
     };
     match (&st.turn_id, st.turn_starting) {
         (Some(turn), _) => {
-            let params = json!({ "threadId": thread, "input": text_input(&text), "expectedTurnId": turn });
+            let params = json!({ "threadId": thread, "input": user_input(&text, &images), "expectedTurnId": turn });
             rpc.request("turn/steer", params, Pending::Other).await;
         }
-        (None, true) => st.queued.push(text),
+        (None, true) => st.queued.push((text, images)),
         (None, false) => {
             st.turn_starting = true;
-            let params = json!({ "threadId": thread, "input": text_input(&text) });
+            let params = json!({ "threadId": thread, "input": user_input(&text, &images) });
             rpc.request("turn/start", params, Pending::Turn).await;
         }
     }
@@ -396,14 +428,37 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
 /// Sends queued messages: the first starts a turn, the rest steer it once its id is known.
 async fn flush_queue(rpc: &mut Rpc, st: &mut State) {
     while !st.queued.is_empty() && !st.turn_starting {
-        let text = st.queued.remove(0);
-        send_user(rpc, st, text).await;
+        let (text, images) = st.queued.remove(0);
+        send_user(rpc, st, text, images).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_input_has_local_images() {
+        let img = ImageRef { path: "/h/images/w/ab.png".into(), media_type: "image/png".into(), data: None };
+        assert_eq!(
+            user_input("look", &[img.clone()]),
+            json!([{"type":"text","text":"look","text_elements":[]},{"type":"localImage","path":"/h/images/w/ab.png"}])
+        );
+        assert_eq!(user_input("", &[img]), json!([{"type":"localImage","path":"/h/images/w/ab.png"}]));
+        assert_eq!(user_input("hi", &[]), json!([{"type":"text","text":"hi","text_elements":[]}]));
+    }
+
+    #[test]
+    fn image_view_item_maps_to_tool_call_and_result() {
+        let item = json!({ "type": "imageView", "id": "iv1", "path": "/w/shot.png" });
+        assert_eq!(item_started(&item), Some(AgentEvent::ToolCall { id: "iv1".into(), name: "ViewImage".into(), input: json!({"path":"/w/shot.png"}) }));
+        assert_eq!(item_completed(&item), Some(AgentEvent::ToolResult {
+            id: "iv1".into(),
+            output: "/w/shot.png".into(),
+            is_error: false,
+            images: vec![ImageRef { path: "/w/shot.png".into(), media_type: "image/png".into(), data: None }],
+        }));
+    }
 
     #[test]
     fn file_change_patch_updated_draft() {
@@ -501,7 +556,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
-        handle.send(Command::User("Reply with the single word: pong".into()));
+        handle.send(Command::User { text: "Reply with the single word: pong".into(), images: vec![] });
         let mut seen = Vec::new();
         let done = tokio::time::timeout(std::time::Duration::from_secs(120), async {
             while let Some(ev) = rx.recv().await {
@@ -540,8 +595,8 @@ mod tests {
             name: "Bash".into(),
             input: json!({ "command": "cat a.txt" })
         }));
-        assert!(evs.contains(&AgentEvent::ToolResult { id: "call_1".into(), output: "hello world\n".into(), is_error: false }));
-        assert!(evs.contains(&AgentEvent::ToolResult { id: "patch_1".into(), output: "b.txt".into(), is_error: false }));
+        assert!(evs.contains(&AgentEvent::ToolResult { id: "call_1".into(), output: "hello world\n".into(), is_error: false, images: vec![] }));
+        assert!(evs.contains(&AgentEvent::ToolResult { id: "patch_1".into(), output: "b.txt".into(), is_error: false, images: vec![] }));
         assert!(evs.contains(&AgentEvent::TextDelta { text: "Done".into() }));
         assert!(evs.contains(&AgentEvent::Message { text: "Done: read a.txt and created b.txt.".into() }));
         assert!(matches!(evs.last(), Some(AgentEvent::TurnCompleted { is_error: false, .. })));

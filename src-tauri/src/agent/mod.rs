@@ -29,6 +29,28 @@ impl AgentKind {
     }
 }
 
+/// An image attached to a message or produced by a tool. `path` is an absolute file path.
+/// `data` (base64) is transient: parsers fill it for images that arrive inline, and
+/// `images::externalize` writes the file and drops it before an event is stored or emitted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRef {
+    pub path: String,
+    pub media_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+}
+
+/// A non-image file the user attached; `path` is absolute, under `<orbit home>/files/`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FileRef {
+    pub path: String,
+    pub name: String,
+    pub media_type: String,
+    pub size: u64,
+}
+
 /// Normalized event stream shared by all agents. Persisted (except deltas) and sent to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -39,6 +61,10 @@ pub enum AgentEvent {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         skill: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        files: Vec<FileRef>,
     },
     TurnStarted,
     TextDelta { text: String },
@@ -46,7 +72,14 @@ pub enum AgentEvent {
     ToolCall { id: String, name: String, input: Value },
     /// Live tool input; the final ToolCall replaces it in history.
     ToolDraft { id: String, name: String, input: Value },
-    ToolResult { id: String, output: String, is_error: bool },
+    ToolResult {
+        id: String,
+        output: String,
+        is_error: bool,
+        /// Images the tool returned (or the agent viewed/generated).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageRef>,
+    },
     TurnCompleted {
         duration_ms: Option<u64>,
         cost_usd: Option<f64>,
@@ -113,7 +146,7 @@ pub fn local_model(model: &str) -> Option<&str> {
 }
 
 pub enum Command {
-    User(String),
+    User { text: String, images: Vec<ImageRef> },
     /// Summarise the conversation to free context. Claude takes the `/compact` slash command
     /// as a user message; Codex has a dedicated JSON-RPC method.
     Compact,

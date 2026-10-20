@@ -1121,7 +1121,7 @@ mod tests {
         let mut rx = register(ws);
         // Other workspaces' turns and non-terminal events leave the waiter alone.
         on_event(other, &completed(false, false));
-        on_event(ws, &AgentEvent::UserMessage { text: "x".into(), skill: None });
+        on_event(ws, &AgentEvent::UserMessage { text: "x".into(), skill: None, images: vec![], files: vec![] });
         assert!(rx.try_recv().is_err());
         on_event(ws, &completed(false, false));
         let end = rx.try_recv().expect("TurnCompleted wakes the step");
