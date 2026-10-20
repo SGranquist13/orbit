@@ -72,8 +72,45 @@ export interface Workspace {
   ahead: number;
   /** The routine that started this workspace, if any. */
   routineId: string | null;
+  attemptGroup: string | null;
   /** Slug of the teammate that created this workspace, if any. */
   teammate: string | null;
+}
+
+export interface AttemptSummary {
+  checks: "pass" | "fail" | "timedOut" | "none";
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  durationMs: number | null;
+  costUsd: number | null;
+}
+
+export interface Attempt {
+  workspaceId: string;
+  finished: boolean;
+  durationMs: number | null;
+  costUsd: number | null;
+  summary: AttemptSummary | null;
+}
+
+export interface AttemptGroup {
+  id: string;
+  prompt: string;
+  repoId: string;
+  createdAt: number;
+  status: "running" | "picked" | "cancelled";
+  winnerWorkspaceId: string | null;
+  workspaceIds: string[];
+  attempts: Attempt[];
+}
+
+export interface StartAttemptsArgs {
+  repoId: string;
+  prompt: string;
+  attempts: { agent: AgentKind; model?: string | null }[];
+  profile?: string | null;
+  images?: ImageRef[];
 }
 
 /** Result of a check run (src-tauri/src/checks.rs). */
@@ -736,6 +773,11 @@ export interface TeammateInput {
 // workspace_usage) are still registered in Rust: the e2e scripts call workspace_summary via raw invoke and the
 // mobile bridge calls the others directly.
 export const api = {
+  startAttempts: (args: StartAttemptsArgs) => invoke<AttemptGroup>("start_attempts", { ...args }),
+  attemptGroup: (id: string) => invoke<AttemptGroup>("attempt_group", { id }),
+  compareAttempts: (aWs: string, bWs: string, path?: string) => invoke<string>("compare_attempts", { aWs, bWs, path }),
+  pickAttempt: (groupId: string, workspaceId: string) => invoke<AttemptGroup>("pick_attempt", { groupId, workspaceId }),
+  cancelAttempts: (groupId: string) => invoke<AttemptGroup>("cancel_attempts", { groupId }),
   agentModels: (agent: AgentKind, refresh = false) => invoke<ModelInfo[]>("agent_models", { agent, refresh }),
   listTeammates: () => invoke<TeammateView[]>("list_teammates"),
   saveTeammate: (input: TeammateInput) => invoke<TeammateView>("save_teammate", { input }),
@@ -915,6 +957,7 @@ export interface ReviewState {
 export const events = {
   onRateLimits: (cb: (limits: RateLimits) => void): Promise<UnlistenFn> =>
     listen<RateLimits>("rate-limits", (e) => cb(e.payload)),
+  onAttempts: (cb: (group: AttemptGroup) => void): Promise<UnlistenFn> => listen<AttemptGroup>("attempts", (e) => cb(e.payload)),
   onAgentEvent: (cb: (p: AgentEventPayload) => void): Promise<UnlistenFn> =>
     listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),
   onWorkspace: (cb: (w: Workspace) => void): Promise<UnlistenFn> =>

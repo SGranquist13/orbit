@@ -2,7 +2,7 @@ import { useKeybindingLabels } from "../lib/useKeybinding";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, Code2, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
@@ -266,6 +266,21 @@ function NavItem({
 
 function RepoGroup({ repo, workspaces }: { repo: Repo; workspaces: Workspace[] }) {
   const [collapsed, setCollapsed] = useState(false);
+  const groups = useApp((s) => s.attemptGroups);
+  // Best of N attempts collapse into one row (at the position of their first member) with A/B/C children.
+  const items = useMemo(() => {
+    const out: ({ kind: "ws"; ws: Workspace } | { kind: "group"; id: string; members: Workspace[] })[] = [];
+    const seen = new Set<string>();
+    for (const ws of workspaces) {
+      // A decided group (kept or cancelled) is just a workspace again.
+      if (!ws.attemptGroup || (groups[ws.attemptGroup] && groups[ws.attemptGroup].status !== "running")) out.push({ kind: "ws", ws });
+      else if (!seen.has(ws.attemptGroup)) {
+        seen.add(ws.attemptGroup);
+        out.push({ kind: "group", id: ws.attemptGroup, members: workspaces.filter((w) => w.attemptGroup === ws.attemptGroup) });
+      }
+    }
+    return out;
+  }, [workspaces, groups]);
   return (
     <section className="mt-3">
       <button
@@ -278,12 +293,40 @@ function RepoGroup({ repo, workspaces }: { repo: Repo; workspaces: Workspace[] }
       </button>
       {!collapsed && (
         <ul className="mt-0.5 space-y-px">
-          {workspaces.map((ws) => (
-            <WorkspaceRow key={ws.id} ws={ws} />
-          ))}
+          {items.map((it) => (it.kind === "ws" ? <WorkspaceRow key={it.ws.id} ws={it.ws} /> : <AttemptGroupRow key={it.id} id={it.id} members={it.members} />))}
         </ul>
       )}
     </section>
+  );
+}
+
+function AttemptGroupRow({ id, members }: { id: string; members: Workspace[] }) {
+  const [open, setOpen] = useState(true);
+  const group = useApp((s) => s.attemptGroups[id]);
+  const selected = useApp((s) => s.view === "attempts" && s.selectedAttemptGroup === id);
+  const running = members.some((w) => w.status === "running");
+  const title = group?.prompt.split("\n")[0] || members[0].name.replace(/\s·\s[A-D]$/, "");
+  return (
+    <li>
+      <div className={cn("relative flex h-8 items-center rounded-[4px] pr-2 text-[12px] font-medium transition-colors", selected ? "bg-raised text-fg" : "text-dim hover:bg-hover/70 hover:text-fg")}>
+        <button onClick={() => setOpen((o) => !o)} aria-label={open ? "Collapse attempts" : "Expand attempts"} className="grid h-8 w-6 shrink-0 place-items-center text-mute hover:text-dim">
+          {open ? <ChevronDown className="size-3" strokeWidth={3} /> : <ChevronRight className="size-3" strokeWidth={3} />}
+        </button>
+        <button data-attempt-group={id} onClick={() => useApp.getState().openAttempts(id)} className="relative flex min-w-0 flex-1 items-center gap-2 text-left">
+          {selected && <span className="absolute inset-y-0 -left-6 w-[3px] bg-accent" />}
+          {running && <span className="dither-sweep bg-run opacity-30" />}
+          <span className="relative min-w-0 flex-1 truncate">{title}</span>
+          <span className="relative shrink-0 text-[11px] text-mute">Best of {members.length}</span>
+        </button>
+      </div>
+      {open && (
+        <ul className="ml-4 space-y-px border-l border-line pl-1">
+          {members.map((w, i) => (
+            <WorkspaceRow key={w.id} ws={w} label={`Attempt ${"ABCD"[i]}`} />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -370,7 +413,7 @@ The branch ${ws.branch} is kept.`, "Archive");
   );
 }
 
-function WorkspaceRow({ ws }: { ws: Workspace }) {
+function WorkspaceRow({ ws, label }: { ws: Workspace; label?: string }) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(ws.name);
@@ -436,7 +479,7 @@ function WorkspaceRow({ ws }: { ws: Workspace }) {
         )}
         {running && <span className="dither-sweep bg-run opacity-30" />}
         <StatusDot status={ws.status} unread={unread} />
-        <span className={cn("relative min-w-0 flex-1 truncate", unread && "text-fg")}>{ws.name}</span>
+        <span className={cn("relative min-w-0 flex-1 truncate", unread && "text-fg")}>{label ?? ws.name}</span>
         {ws.teammate && <TeammateLabel slug={ws.teammate} className="relative max-w-[72px] truncate" />}
         {ws.routineId && (
           <span title="Started by a routine" className="relative shrink-0 text-mute">

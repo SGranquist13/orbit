@@ -12,6 +12,8 @@
 - Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
 - Preview: an AI review after Ship, shown in Orbit or posted to the PR, with findings you can send to the agent.
 
+- Preview: Best of N: run one prompt as several attempts side by side and keep the best.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.

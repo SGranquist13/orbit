@@ -827,6 +827,30 @@ await step("agent-plan", async () => {
   const plan = await invoke("latest_plan", { workspaceId: ws.id });
   if (!plan || plan.items.length < 1) throw new Error(`no plan recorded: ${JSON.stringify(plan)}`);
   await waitFor("plan card", `return !!document.querySelector('[data-testid=plan-card]') && /Plan · \d+\/\d+/.test(document.querySelector('[data-testid=plan-card]').innerText)`, 10_000);
+await step("best-of-n", async () => {
+  // One prompt, two Claude attempts side by side; both finish, summaries land, picking A archives B.
+  const repoId = (await invoke("list_repos"))[0].id;
+  await h.autoConfirm(true);
+  const started = await invoke("start_attempts", {
+    repoId,
+    prompt: "Create hello.txt containing hi.",
+    attempts: [{ agent: "claude", model: "haiku" }, { agent: "claude", model: "haiku" }],
+  });
+  if (started.workspaceIds.length !== 2) throw new Error("expected two attempt workspaces");
+  await until("both attempts summarised", async () => {
+    const g = await invoke("attempt_group", { id: started.id });
+    return g.attempts.length === 2 && g.attempts.every((a) => a.finished && a.summary);
+  }, 240_000, 3000);
+  const group = await invoke("attempt_group", { id: started.id });
+  if (group.attempts.some((a) => a.summary.filesChanged < 1)) throw new Error(`an attempt changed no files: ${JSON.stringify(group.attempts.map((a) => a.summary))}`);
+  const [a, b] = started.workspaceIds;
+  const all = await invoke("list_workspaces");
+  if (!all.find((w) => w.id === a)?.name.endsWith("A") || !all.find((w) => w.id === b)?.name.endsWith("B")) throw new Error("attempt workspaces are not named A and B");
+  const picked = await invoke("pick_attempt", { groupId: started.id, workspaceId: a });
+  if (picked.status !== "picked" || picked.winnerWorkspaceId !== a) throw new Error("group not marked picked");
+  const after = await invoke("list_workspaces");
+  if (!after.some((w) => w.id === a)) throw new Error("kept attempt disappeared");
+  if (after.some((w) => w.id === b)) throw new Error("the other attempt was not archived");
 });
 
 await step("settings-accept-edits", async () => {

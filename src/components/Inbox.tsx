@@ -1,5 +1,6 @@
 import { Clock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { attemptsReady, attemptLetter } from "../lib/attempts";
 import { activeProfile } from "../lib/ipc";
 import { attentionReason, formatSnooze, isSnoozed, reasonMeta, reviewBugCount, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
 import { api, type Summary, type TeammateView, type Workspace } from "../lib/ipc";
@@ -36,6 +37,7 @@ export function Inbox() {
     [settings?.staleDays, settings?.staleBehind], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const teammates = useApp((s) => s.teammates);
+  const attemptGroups = useApp((s) => s.attemptGroups);
   const [tab, setTab] = useState<Tab>("needs");
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [, bump] = useState(0);
@@ -63,6 +65,15 @@ export function Inbox() {
         .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits, reviews[ws.id]?.review) }))
         .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
     [workspaces, summaries, prs, staleLimits, reviews],
+        .filter((ws) => !(ws.attemptGroup && attemptGroups[ws.attemptGroup]?.status === "running"))
+        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits) }))
+        .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
+    [workspaces, summaries, prs, staleLimits, attemptGroups],
+  );
+  // Best of N groups whose attempts all finished and have their check results: ready to compare.
+  const readyGroups = useMemo(
+    () => Object.values(attemptGroups).filter((g) => g.status === "running" && attemptsReady(g.attempts)).sort((a, b) => b.createdAt - a.createdAt),
+    [attemptGroups],
   );
   const needs = useMemo(() => all.filter((r) => r.reason), [all]);
   const rows = tab === "needs" ? needs : all;
@@ -159,7 +170,7 @@ export function Inbox() {
         <div className="flex items-center gap-1">
           <TabButton active={tab === "needs"} onClick={() => setTab("needs")}>
             Needs you
-            <span className="tabular-nums text-mute">{needs.length + needsTeammates.length}</span>
+            <span className="tabular-nums text-mute">{needs.length + needsTeammates.length + readyGroups.length}</span>
           </TabButton>
           <TabButton active={tab === "all"} onClick={() => setTab("all")}>
             All
@@ -169,7 +180,7 @@ export function Inbox() {
       <div className="border-t-[1.5px] border-line" />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {rows.length === 0 && teammateRows.length === 0 ? (
+        {rows.length === 0 && teammateRows.length === 0 && readyGroups.length === 0 ? (
           <div className="grid h-full place-items-center">
             <div className="text-center">
               <p className="label text-mute">Nothing needs you</p>
@@ -178,6 +189,25 @@ export function Inbox() {
           </div>
         ) : (
           <>
+          {readyGroups.length > 0 && (
+            <ul className="mx-auto max-w-[880px] space-y-1 px-6 pt-4" data-inbox-attempts>
+              {readyGroups.map((g) => (
+                <li key={g.id}>
+                  <button
+                    onClick={() => useApp.getState().openAttempts(g.id)}
+                    className="block w-full rounded-[5px] border-[1.5px] border-transparent px-4 py-3 text-left transition-colors hover:border-line-strong hover:bg-panel"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="truncate text-[13px] font-medium">{g.prompt.split("\n")[0]}</span>
+                      <span className="truncate text-[12px] text-mute">Best of {g.workspaceIds.length}</span>
+                      <span className="ml-auto shrink-0 text-[11.5px] font-medium text-ok">Attempts ready to compare</span>
+                    </div>
+                    <p className="mt-1 truncate text-[12.5px] text-dim">{g.attempts.map((a, i) => `${attemptLetter(i)} ${a.summary?.checks === "pass" ? "passed" : a.summary?.checks === "none" ? "no checks" : "failed"}`).join(" · ")}</p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {teammateRows.length > 0 && (
             <ul className="mx-auto max-w-[880px] space-y-1 px-6 pt-4" data-inbox-teammates>
               {teammateRows.map((t) => (
