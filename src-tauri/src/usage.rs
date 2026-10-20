@@ -1,10 +1,54 @@
 //! Token/cost aggregation over persisted `Usage` events. Pure functions over event rows, so the
 //! maths is unit-tested without a database.
 
-use crate::agent::AgentEvent;
+use crate::agent::{AgentEvent, RateLimits};
 use chrono::{Duration, Local, TimeZone};
 use serde::Serialize;
 use std::collections::BTreeMap;
+
+/// Account-wide snapshots, independent of workspaces. Owned by AppState and loaded at startup.
+#[derive(Default)]
+pub struct RateLimitStore {
+    latest: Vec<RateLimits>,
+}
+
+impl RateLimitStore {
+    pub fn load(db: &crate::db::Db) -> Self {
+        let latest = db.setting("rate_limits").ok().flatten()
+            .and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        Self { latest }
+    }
+
+    pub fn snapshots(&self) -> Vec<RateLimits> {
+        self.latest.clone()
+    }
+
+    /// Rolling updates can omit windows; preserve the last known values for those windows.
+    /// Persist before publishing the new in-memory snapshot, so a failed write can be retried.
+    pub fn update(&mut self, db: &crate::db::Db, limits: &RateLimits) -> anyhow::Result<Option<RateLimits>> {
+        let mut next = self.latest.clone();
+        if let Some(old) = next.iter_mut().find(|l| l.agent == limits.agent) {
+            for window in &limits.windows {
+                if let Some(existing) = old.windows.iter_mut().find(|w| w.kind == window.kind) {
+                    *existing = window.clone();
+                } else {
+                    old.windows.push(window.clone());
+                }
+            }
+            if limits.status.is_some() {
+                old.status = limits.status.clone();
+            }
+        } else {
+            next.push(limits.clone());
+        }
+        if next == self.latest {
+            return Ok(None);
+        }
+        db.set_setting("rate_limits", &serde_json::to_string(&next)?)?;
+        self.latest = next;
+        Ok(self.latest.iter().find(|l| l.agent == limits.agent).cloned())
+    }
+}
 
 /// One persisted `Usage` or `SessionReset` event.
 pub struct Row {
@@ -189,6 +233,44 @@ pub fn report(rows: &[Row], workspaces: &[WorkspaceInfo], since_ms: Option<i64>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limits_are_global_deduplicated_and_survive_reload() {
+        use crate::agent::{AgentKind, LimitWindow};
+        let db = crate::db::Db::memory();
+        let mut store = RateLimitStore::load(&db);
+        assert!(store.snapshots().is_empty());
+        let mut claude = RateLimits {
+            agent: AgentKind::Claude,
+            windows: vec![
+                LimitWindow { kind: "fiveHour".into(), used_percent: 62.0, resets_at: Some(123) },
+                LimitWindow { kind: "weekly".into(), used_percent: 31.0, resets_at: None },
+            ],
+            status: Some("allowed".into()),
+        };
+        assert_eq!(store.update(&db, &claude).unwrap(), Some(claude.clone()));
+        assert_eq!(store.update(&db, &claude).unwrap(), None);
+        let codex = RateLimits { agent: AgentKind::Codex, windows: vec![
+            LimitWindow { kind: "fiveHour".into(), used_percent: 88.0, resets_at: None },
+        ], status: None };
+        store.update(&db, &codex).unwrap();
+        let patch = RateLimits { agent: AgentKind::Claude, windows: vec![
+            LimitWindow { kind: "weekly".into(), used_percent: 32.0, resets_at: None },
+        ], status: None };
+        claude.windows[1].used_percent = 32.0;
+        assert_eq!(store.update(&db, &patch).unwrap(), Some(claude.clone()));
+        assert_eq!(store.update(&db, &patch).unwrap(), None);
+        let restored = RateLimitStore::load(&db).snapshots();
+        assert_eq!(restored, vec![claude, codex]);
+        let ev = AgentEvent::RateLimits(restored[0].clone());
+        assert!(!ev.is_persistent());
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["type"], "rateLimits");
+        assert_eq!(json["agent"], "claude");
+        assert_eq!(json["windows"][0]["usedPercent"], 62.0);
+        assert_eq!(json["windows"][0]["resetsAt"], 123);
+        assert_eq!(serde_json::from_value::<AgentEvent>(json).unwrap(), ev);
+    }
 
     fn usage(ctx: Option<u64>, input: u64, cost: Option<f64>) -> AgentEvent {
         AgentEvent::Usage {

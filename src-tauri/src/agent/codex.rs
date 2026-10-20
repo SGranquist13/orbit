@@ -1,7 +1,7 @@
 //! Codex adapter: `codex app-server` speaks JSON-RPC over stdio. One process per session,
 //! one thread per workspace. Messages sent mid-turn use `turn/steer`.
 
-use super::{process, push_tail, AgentEvent, Command, EventSink, ImageRef, SessionConfig};
+use super::{process, push_tail, AgentEvent, AgentKind, Command, EventSink, ImageRef, LimitWindow, RateLimits, SessionConfig};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -16,6 +16,7 @@ const SANDBOX_READONLY: &str = "read-only";
 /// Maps one server notification to normalized events. Pure, so it is fixture-testable.
 pub fn parse_notification(method: &str, p: &Value) -> Vec<AgentEvent> {
     match method {
+        "account/rateLimits/updated" => parse_rate_limits(p).into_iter().map(AgentEvent::RateLimits).collect(),
         "turn/started" => vec![AgentEvent::TurnStarted],
         "item/agentMessage/delta" => vec![AgentEvent::TextDelta {
             text: p["delta"].as_str().unwrap_or_default().to_string(),
@@ -43,6 +44,26 @@ pub fn parse_notification(method: &str, p: &Value) -> Vec<AgentEvent> {
         }],
         _ => vec![],
     }
+}
+
+/// Shared by the account notification and the initial account/rateLimits/read response.
+fn parse_rate_limits(p: &Value) -> Option<RateLimits> {
+    let limits = p.get("rateLimits")?.as_object()?;
+    let windows = ["primary", "secondary"].into_iter().filter_map(|slot| {
+        let window = limits.get(slot)?;
+        let kind = match window["windowDurationMins"].as_i64() {
+            Some(300) => "fiveHour".into(),
+            Some(10080) => "weekly".into(),
+            Some(mins) => format!("{mins}Minutes"),
+            None => slot.into(),
+        };
+        Some(LimitWindow {
+            kind,
+            used_percent: window["usedPercent"].as_f64()?.clamp(0.0, 100.0),
+            resets_at: window["resetsAt"].as_i64(),
+        })
+    }).collect();
+    Some(RateLimits { agent: AgentKind::Codex, windows, status: None })
 }
 
 /// Stateful wrapper over `parse_notification` that adds `Usage`. Codex streams
@@ -213,6 +234,7 @@ enum Pending {
     Initialize,
     Thread,
     Turn,
+    RateLimits,
     Other,
 }
 
@@ -394,6 +416,7 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                     st.thread_id = Some(id.clone());
                     st.parser.model = result["model"].as_str().map(String::from);
                     sink(AgentEvent::SessionStarted { session_id: id, model: result["model"].as_str().map(String::from) });
+                    rpc.request("account/rateLimits/read", json!({}), Pending::RateLimits).await;
                     flush_queue(rpc, st).await;
                 }
                 Pending::Turn => {
@@ -402,6 +425,11 @@ async fn handle_message(rpc: &mut Rpc, st: &mut State, sink: &EventSink, msg: Va
                         st.turn_id = Some(id.to_string());
                     }
                     flush_queue(rpc, st).await;
+                }
+                Pending::RateLimits => {
+                    if let Some(limits) = parse_rate_limits(result) {
+                        sink(AgentEvent::RateLimits(limits));
+                    }
                 }
                 Pending::Other => {}
             }
@@ -495,6 +523,43 @@ mod tests {
             .filter(|m| m.get("id").is_none())
             .flat_map(|m| parser.parse(m["method"].as_str().unwrap_or_default(), &m["params"]))
             .collect()
+    }
+
+    #[test]
+    fn account_rate_limits_from_generated_protocol_fixture() {
+        // Synthetic, not a real recording: built strictly from codex-cli 0.163.0
+        // `codex app-server generate-ts` v2 AccountRateLimitsUpdatedNotification,
+        // GetAccountRateLimitsResponse, RateLimitSnapshot and RateLimitWindow types.
+        let source = include_str!("../../tests/fixtures/codex_rate_limits.jsonl");
+        let messages: Vec<Value> = source.lines().map(|s| serde_json::from_str(s).unwrap()).collect();
+        let events = parse_fixture("codex_rate_limits.jsonl");
+        assert_eq!(events.len(), 2);
+        let AgentEvent::RateLimits(limits) = &events[0] else { panic!("rate limits"); };
+        assert_eq!(limits, &RateLimits {
+            agent: AgentKind::Codex,
+            windows: vec![
+                LimitWindow { kind: "fiveHour".into(), used_percent: 88.0, resets_at: Some(1791520200) },
+                LimitWindow { kind: "weekly".into(), used_percent: 31.0, resets_at: Some(1791594000) },
+            ],
+            status: None,
+        });
+        // The read response passes through exactly the same normalization path.
+        assert_eq!(parse_rate_limits(&messages[2]["result"]).as_ref(), Some(limits));
+        let AgentEvent::RateLimits(sparse) = &events[1] else { panic!("rate limits"); };
+        assert_eq!(sparse.windows, vec![LimitWindow { kind: "weekly".into(), used_percent: 32.0, resets_at: None }]);
+        assert!(parse_rate_limits(&json!({})).is_none());
+    }
+
+    #[test]
+    fn rate_limit_unknown_durations_and_bounds() {
+        let limits = parse_rate_limits(&json!({ "rateLimits": {
+            "primary": { "usedPercent": 120, "windowDurationMins": 60, "resetsAt": null },
+            "secondary": { "usedPercent": -3, "windowDurationMins": null, "resetsAt": null },
+        }})).unwrap();
+        assert_eq!(limits.windows, vec![
+            LimitWindow { kind: "60Minutes".into(), used_percent: 100.0, resets_at: None },
+            LimitWindow { kind: "secondary".into(), used_percent: 0.0, resets_at: None },
+        ]);
     }
 
     #[test]

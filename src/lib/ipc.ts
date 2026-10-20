@@ -158,7 +158,21 @@ export interface FileRef {
   size: number;
 }
 
+export interface LimitWindow {
+  kind: "fiveHour" | "weekly" | (string & {});
+  usedPercent: number;
+  /** Unix seconds. */
+  resetsAt: number | null;
+}
+
+export interface RateLimits {
+  agent: AgentKind;
+  windows: LimitWindow[];
+  status: string | null;
+}
+
 export type AgentEvent =
+  | ({ type: "rateLimits" } & RateLimits)
   | { type: "sessionStarted"; sessionId: string; model: string | null }
   | { type: "userMessage"; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[] }
   | { type: "turnStarted" }
@@ -741,6 +755,7 @@ export const api = {
   /** Fresh agent session in the same worktree; the old context is dropped. */
   newSession: (id: string) => invoke<void>("new_session", { id }),
   allWorkspaceUsage: () => invoke<WorkspaceUsage[]>("all_workspace_usage"),
+  getRateLimits: () => invoke<RateLimits[]>("get_rate_limits"),
   usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
@@ -800,6 +815,8 @@ export const api = {
 };
 
 export const events = {
+  onRateLimits: (cb: (limits: RateLimits) => void): Promise<UnlistenFn> =>
+    listen<RateLimits>("rate-limits", (e) => cb(e.payload)),
   onAgentEvent: (cb: (p: AgentEventPayload) => void): Promise<UnlistenFn> =>
     listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),
   onWorkspace: (cb: (w: Workspace) => void): Promise<UnlistenFn> =>

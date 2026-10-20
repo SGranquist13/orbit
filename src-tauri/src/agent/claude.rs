@@ -1,7 +1,7 @@
 //! Claude Code adapter: one long-lived `claude -p` process per session speaking
 //! stream-json on stdin/stdout.
 
-use super::{process, push_tail, AgentEvent, Command, EventSink, ImageRef, SessionConfig};
+use super::{process, push_tail, AgentEvent, AgentKind, Command, EventSink, ImageRef, LimitWindow, RateLimits, SessionConfig};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -166,6 +166,32 @@ impl ClaudeParser {
             return vec![];
         }
         match v["type"].as_str() {
+            Some("rate_limit_event") => {
+                let info = &v["rate_limit_info"];
+                let kind = |s: &str| match s {
+                    "five_hour" => "fiveHour".to_string(),
+                    "seven_day" => "weekly".to_string(),
+                    other => other.to_string(),
+                };
+                let windows = if let Some(unified) = info["unifiedWindows"].as_object() {
+                    unified.iter().filter_map(|(name, window)| Some(LimitWindow {
+                        kind: kind(name),
+                        used_percent: (window["utilization"].as_f64()? * 100.0).clamp(0.0, 100.0),
+                        resets_at: window["resetsAt"].as_i64(),
+                    })).collect()
+                } else {
+                    info["rateLimitType"].as_str().map(|name| LimitWindow {
+                        kind: kind(name),
+                        // Older events provide only the active limit and status, not utilization.
+                        used_percent: info["utilization"].as_f64().map(|u| u * 100.0)
+                            .unwrap_or(if info["status"] == "rejected" { 100.0 } else { 0.0 }).clamp(0.0, 100.0),
+                        resets_at: info["resetsAt"].as_i64(),
+                    }).into_iter().collect()
+                };
+                vec![AgentEvent::RateLimits(RateLimits {
+                    agent: AgentKind::Claude, windows, status: info["status"].as_str().map(String::from),
+                })]
+            }
             Some("system") if v["subtype"] == "init" => {
                 self.model = v["model"].as_str().map(String::from);
                 vec![AgentEvent::SessionStarted {
@@ -666,6 +692,40 @@ mod tests {
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         let mut parser = ClaudeParser::default();
         std::fs::read_to_string(path).unwrap().lines().flat_map(|l| parser.parse(l)).collect()
+    }
+
+    #[test]
+    fn real_turn_reports_plan_rate_limits() {
+        let events = parse_fixture("claude_real_turn.jsonl");
+        let limits: Vec<_> = events.iter().filter_map(|ev| match ev {
+            AgentEvent::RateLimits(limits) => Some(limits),
+            _ => None,
+        }).collect();
+        assert_eq!(limits.len(), 1);
+        assert_eq!(limits[0], &RateLimits {
+            agent: AgentKind::Claude,
+            windows: vec![
+                LimitWindow { kind: "fiveHour".into(), used_percent: 13.0, resets_at: Some(1791520200) },
+                LimitWindow { kind: "weekly".into(), used_percent: 6.0, resets_at: Some(1791594000) },
+            ],
+            status: Some("allowed".into()),
+        });
+    }
+
+    #[test]
+    fn rate_limits_fallback_unknown_windows_and_bounds() {
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day","resetsAt":123}}"#;
+        let ev = parse_line(line).remove(0);
+        assert!(matches!(ev, AgentEvent::RateLimits(RateLimits { windows, .. })
+            if windows == vec![LimitWindow { kind: "weekly".into(), used_percent: 100.0, resets_at: Some(123) }]));
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"extra":{"utilization":1.2},"bad":{},"five_hour":{"utilization":-0.1}}}}"#;
+        let events = parse_line(line);
+        let AgentEvent::RateLimits(limits) = &events[0] else { panic!("rate limits"); };
+        assert_eq!(limits.windows, vec![
+            LimitWindow { kind: "extra".into(), used_percent: 100.0, resets_at: None },
+            LimitWindow { kind: "fiveHour".into(), used_percent: 0.0, resets_at: None },
+        ]);
+        assert_eq!(limits.status, None);
     }
 
     #[test]

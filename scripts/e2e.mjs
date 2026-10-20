@@ -981,6 +981,21 @@ await step("usage-report", async () => {
   await closeSettingsView();
 });
 
+await step("plan-limits", async () => {
+  // Follows usage-report, which has run a Claude turn; limits arrive with that turn's stream.
+  let limits = [];
+  await until("claude rate limits reported", async () => {
+    limits = await invoke("get_rate_limits");
+    return limits.some((l) => l.agent === "claude" && l.windows.length > 0);
+  }, 20_000, 1000);
+  await openSettingsView();
+  await js(`document.querySelector('[data-section="usage"]')?.scrollIntoView()`);
+  await waitFor("plan limits block", `return !!document.querySelector('[data-plan-limits]')`, 10_000);
+  await waitFor("a limit window row", `return document.querySelectorAll('[data-plan-limits] [data-limit-window]').length > 0`, 10_000);
+  await shot("21b-plan-limits");
+  await closeSettingsView();
+});
+
 await step("ui-shortcuts", async () => {
   while ((await invoke("list_workspaces")).length < 2) await mkWs(`shortcut ws ${Date.now() % 1000}`);
   await waitFor("sidebar rows", `return document.querySelectorAll('aside li button').length >= 2`, 10_000);

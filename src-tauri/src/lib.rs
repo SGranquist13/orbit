@@ -47,6 +47,7 @@ pub(crate) fn relock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 pub struct Inner {
     db: Mutex<Db>,
+    rate_limits: Mutex<usage::RateLimitStore>,
     sessions: Mutex<HashMap<String, SessionHandle>>,
     /// One-shot notes prepended to the next message after a profile switch.
     role_notices: Mutex<HashMap<String, String>>,
@@ -150,6 +151,17 @@ fn emit_workspace(app: &AppHandle, ws: &Workspace) {
 
 /// Handles one normalized event: persist, update workspace status, notify, forward to UI.
 fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent) {
+    // Account data never enters workspace history or the workspace/mobile event stream.
+    if let AgentEvent::RateLimits(limits) = &ev {
+        let mut store = relock(&state.rate_limits);
+        let result = store.update(&state.db(), limits);
+        match result {
+            Ok(Some(snapshot)) => { let _ = app.emit("rate-limits", snapshot); }
+            Ok(None) => {}
+            Err(e) => eprintln!("failed to save rate limits: {e:#}"),
+        }
+        return;
+    }
     // Inline (base64) images become files first, so nothing stored or emitted carries base64.
     let ev = images::externalize(&state.home, ws_id, ev);
     // Drafts are desktop UI previews only: bypass persistence and all turn bookkeeping hooks.
@@ -1023,6 +1035,11 @@ fn workspace_usage(state: State<AppState>, id: String) -> CmdResult<usage::Works
     Ok(usage::workspace_usage(&id, &rows.iter().collect::<Vec<_>>()))
 }
 
+#[tauri::command]
+fn get_rate_limits(state: State<AppState>) -> Vec<agent::RateLimits> {
+    relock(&state.rate_limits).snapshots()
+}
+
 /// Usage of every workspace in one call, so the app can seed its live map at startup.
 #[tauri::command]
 fn all_workspace_usage(state: State<AppState>) -> CmdResult<Vec<usage::WorkspaceUsage>> {
@@ -1429,7 +1446,8 @@ pub fn run() {
             if let Err(e) = skills::install_builtin(&home) {
                 eprintln!("failed to install shipkit: {e}");
             }
-            let state: AppState = Arc::new(Inner { db: Mutex::new(db), sessions: Mutex::default(), role_notices: Mutex::default(), home });
+            let rate_limits = Mutex::new(usage::RateLimitStore::load(&db));
+            let state: AppState = Arc::new(Inner { db: Mutex::new(db), rate_limits, sessions: Mutex::default(), role_notices: Mutex::default(), home });
             app.manage::<AppState>(state.clone());
             // Phone bridge: listens only while Settings > Mobile allows it.
             let handle = app.handle().clone();
@@ -1470,6 +1488,7 @@ pub fn run() {
             compact_session,
             new_session,
             workspace_usage,
+            get_rate_limits,
             all_workspace_usage,
             usage_report,
             load_events,
@@ -1630,7 +1649,7 @@ mod tests {
             agent: "claude".into(), status: "idle".into(), ..Default::default()
         };
         db.insert_workspace(&ws).unwrap();
-        let state: AppState = Arc::new(Inner { db: Mutex::new(db), sessions: Mutex::default(), role_notices: Mutex::default(), home: root.clone() });
+        let state: AppState = Arc::new(Inner { db: Mutex::new(db), rate_limits: Mutex::default(), sessions: Mutex::default(), role_notices: Mutex::default(), home: root.clone() });
 
         let e = archive_inner(&state, &ws.id, true, false).await.unwrap_err();
         assert!(e.starts_with("Uncommitted changes:") && e.contains("scratch.txt"), "{e}");

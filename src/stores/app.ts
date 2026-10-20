@@ -3,6 +3,7 @@ import { create } from "zustand";
 import {
   api,
   type AgentKind,
+  type RateLimits,
   type ModelInfo,
   events,
   type AgentEvent,
@@ -44,6 +45,8 @@ interface AppState {
   summaries: Record<string, Summary>;
   /** Token/cost/context digest per workspace, kept current from `usage` events. */
   usage: Record<string, WorkspaceUsage>;
+  /** Latest plan-limit windows per agent (5-hour, weekly), seeded at startup and kept live. */
+  rateLimits: Partial<Record<AgentKind, RateLimits>>;
   view: View;
   routines: Routine[];
   /** Bumped whenever routines or their runs change, so open views refetch history. */
@@ -128,6 +131,7 @@ interface AppState {
   /** Opens the Routines view on a blank draft. */
   newRoutine: () => void;
   openSettings: () => void;
+  openSettingsAt: (section: string) => void;
   closeSettings: () => void;
   /** Saves a partial update immediately; resolves false (and sets the error) on failure. */
   updateSettings: (patch: Partial<Settings>) => Promise<boolean>;
@@ -206,6 +210,7 @@ export const useApp = create<AppState>((set, get) => ({
   changes: {},
   summaries: {},
   usage: {},
+  rateLimits: {},
   view: "workspace",
   routines: [],
   routinesTick: 0,
@@ -314,6 +319,11 @@ export const useApp = create<AppState>((set, get) => ({
         .allWorkspaceUsage()
         .then((list) => set({ usage: Object.fromEntries(list.map((u) => [u.workspaceId, u])) }))
         .catch(() => {});
+      api
+        .getRateLimits()
+        .then((list) => set((s) => ({ rateLimits: { ...s.rateLimits, ...Object.fromEntries(list.map((l) => [l.agent, l])) } })))
+        .catch(() => {});
+      await events.onRateLimits((l) => set((s) => ({ rateLimits: { ...s.rateLimits, [l.agent]: l } })));
       await events.onWorkspace((ws) => get().upsertWorkspace(ws));
       await events.onAgentEvent(onAgentEvent);
       await events.onWorkspaceArchived((id) => get().removeWorkspace(id));
@@ -381,6 +391,8 @@ export const useApp = create<AppState>((set, get) => ({
   setScheduleOpen: (open) => set({ scheduleOpen: open }),
   newRoutine: () => set((s) => ({ view: "routines", selectedRoutine: "new", previousView: s.view === "settings" ? s.previousView : "routines" })),
 
+  openSettingsAt: (section) =>
+    set((s) => ({ settingsSection: section, ...(s.view === "settings" ? {} : { view: "settings" as const, previousView: s.view }) })),
   openSettings: () => set((s) => (s.view === "settings" ? s : { view: "settings", previousView: s.view })),
   closeSettings: () => set((s) => (s.view === "settings" ? { view: s.previousView } : s)),
 

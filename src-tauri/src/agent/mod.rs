@@ -52,10 +52,27 @@ pub struct FileRef {
     pub size: u64,
 }
 
-/// Normalized event stream shared by all agents. Persisted (except deltas) and sent to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LimitWindow {
+    pub kind: String,
+    pub used_percent: f64,
+    pub resets_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimits {
+    pub agent: AgentKind,
+    pub windows: Vec<LimitWindow>,
+    pub status: Option<String>,
+}
+
+/// Normalized event stream shared by all agents. Persisted (except live/account events) and sent to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum AgentEvent {
+    RateLimits(RateLimits),
     SessionStarted { session_id: String, model: Option<String> },
     /// What the user typed. When sent via a skill, `text` holds the skill's arguments.
     UserMessage {
@@ -110,9 +127,9 @@ pub enum AgentEvent {
 }
 
 impl AgentEvent {
-    /// Drafts and deltas are only useful live; final calls/messages replace them in history.
+    /// Drafts/deltas are live only; account rate limits are persisted globally in settings.
     pub fn is_persistent(&self) -> bool {
-        !matches!(self, AgentEvent::TextDelta { .. } | AgentEvent::ToolDraft { .. })
+        !matches!(self, AgentEvent::TextDelta { .. } | AgentEvent::ToolDraft { .. } | AgentEvent::RateLimits(_))
     }
 }
 

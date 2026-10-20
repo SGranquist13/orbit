@@ -7,6 +7,7 @@ import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
 import { SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, Gauge, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { openSelectedInEditor } from "../lib/openEditor";
@@ -314,6 +315,9 @@ export function Palette() {
               })}
             >
               <Cpu className="size-3.5" /> Local models
+            </Command.Item>
+            <Command.Item className={item} value="Show plan limits usage 5-hour weekly" onSelect={run(() => useApp.getState().openSettingsAt("usage"))}>
+              <Gauge className="size-3.5" /> Show plan limits
             </Command.Item>
             <Command.Item className={item} value="Archived workspaces (restore)" onSelect={run(() => openSettingsAt("data"))}>
               <History className="size-3.5" /> Archived workspaces
