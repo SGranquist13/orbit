@@ -11,6 +11,8 @@ import {
   CircleDot,
   FilePen,
   FileText,
+  ImagePlus,
+  Image as ImageIcon,
   Folder,
   GitBranch,
   Globe,
@@ -32,7 +34,9 @@ import { Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useS
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
-import { activeProfile, api, type Attachment, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
+import { MAX_FILE_BYTES, formatSize, isImageFile, prepareImage, toDataUrl } from "../lib/images";
+import { FileChip, FileRow, ImageRow } from "./ChatImage";
+import { activeProfile, api, type Attachment, type FileRef, type ImageRef, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
 import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
@@ -50,7 +54,18 @@ export function Chat({ ws }: { ws: Workspace }) {
   const focusMode = useApp((s) => s.focusMode);
 
   return (
-    <div className="relative flex min-w-0 flex-1 flex-col bg-bg">
+    <div
+      className="relative flex min-w-0 flex-1 flex-col bg-bg"
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        const files = [...e.dataTransfer.files];
+        if (files.length === 0) return;
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("orbit-attach-files", { detail: { workspaceId: ws.id, files } }));
+      }}
+    >
       <header className="relative flex h-12 shrink-0 items-center gap-3 overflow-hidden px-6" data-tauri-drag-region>
         <StatusDot status={ws.status} />
         <h1 className="truncate text-[15px] font-semibold tracking-[-0.02em]">{ws.name}</h1>
@@ -302,6 +317,11 @@ function PrHint({ pr }: { pr: PrStatus }) {
   );
 }
 
+/** Asks the open chat's composer to show its image picker (palette entry). */
+export function requestAttachImage() {
+  window.dispatchEvent(new CustomEvent("orbit-attach-image"));
+}
+
 function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[]; live: string; running: boolean; loading: boolean; wsId: string }) {
   const loadError = useApp((s) => s.transcriptErrors[wsId]);
   const ref = useRef<HTMLDivElement>(null);
@@ -337,7 +357,7 @@ function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[];
           </div>
         )}
         {blocks.map((b, i) => (
-          <BlockView key={b.key} block={b} active={running && i === lastTools && i === blocks.length - 1} />
+          <BlockView key={b.key} block={b} wsId={wsId} active={running && i === lastTools && i === blocks.length - 1} />
         ))}
         {live && (
           <div className="prose-chat streaming-caret selectable whitespace-pre-wrap text-fg">{live}</div>
@@ -353,7 +373,7 @@ function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[];
   );
 }
 
-const BlockView = memo(function BlockView({ block, active }: { block: Block; active: boolean }) {
+const BlockView = memo(function BlockView({ block, active, wsId }: { block: Block; active: boolean; wsId: string }) {
   switch (block.kind) {
     case "user":
       return (
@@ -364,6 +384,8 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
                 <Zap className="size-3" />/{block.skill}
               </span>
             )}
+            {block.images && block.images.length > 0 && <ImageRow workspaceId={wsId} images={block.images} className={cn("justify-end", (block.text || block.files?.length) && "mb-2")} />}
+            {block.files && block.files.length > 0 && <FileRow files={block.files} className={cn("justify-end", block.text && "mb-2")} />}
             {block.text}
           </div>
         </div>
@@ -372,12 +394,12 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
       return (
         <div className="prose-chat text-fg">
           <Suspense fallback={<span className="whitespace-pre-wrap">{block.text}</span>}>
-            <MarkdownText text={block.text} />
+            <MarkdownText text={block.text} workspaceId={wsId} />
           </Suspense>
         </div>
       );
     case "tools":
-      return <ToolGroup calls={block.calls} active={active} />;
+      return <ToolGroup calls={block.calls} active={active} wsId={wsId} />;
     case "turnEnd":
       return (
         <div className="flex items-center gap-3 text-[11px] font-medium tabular-nums text-mute">
@@ -418,10 +440,11 @@ const BlockView = memo(function BlockView({ block, active }: { block: Block; act
   }
 });
 
-function ToolGroup({ calls, active }: { calls: ToolCallView[]; active: boolean }) {
+function ToolGroup({ calls, active, wsId }: { calls: ToolCallView[]; active: boolean; wsId: string }) {
   const [open, setOpen] = useState(false);
   const last = calls[calls.length - 1];
   const failed = calls.filter((c) => c.isError).length;
+  const images = calls.flatMap((c) => c.images ?? []);
   return (
     <div className="text-[12.5px]">
       <button onClick={() => setOpen((o) => !o)} className="group flex max-w-full items-center gap-2 text-mute hover:text-fg">
@@ -437,11 +460,12 @@ function ToolGroup({ calls, active }: { calls: ToolCallView[]; active: boolean }
           </span>
         )}
       </button>
+      {!open && images.length > 0 && <ImageRow workspaceId={wsId} images={images} className="mt-2 pl-5" />}
       {open && (
         <ul className="relative mt-2 space-y-px pl-3.5">
           <span className="dither-50 absolute inset-y-0 left-0 w-0.5 bg-line-strong" />
           {calls.map((c) => (
-            <ToolRow key={c.id} call={c} />
+            <ToolRow key={c.id} call={c} wsId={wsId} />
           ))}
         </ul>
       )}
@@ -452,13 +476,14 @@ function ToolGroup({ calls, active }: { calls: ToolCallView[]; active: boolean }
 function toolIcon(name: string) {
   if (name === "Bash") return SquareTerminal;
   if (name === "Read") return FileText;
+  if (name === "ViewImage") return ImageIcon;
   if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(name)) return FilePen;
   if (name === "Grep" || name === "Glob") return Search;
   if (name.startsWith("Web")) return Globe;
   return Wrench;
 }
 
-function ToolRow({ call }: { call: ToolCallView }) {
+function ToolRow({ call, wsId }: { call: ToolCallView; wsId: string }) {
   const [open, setOpen] = useState(false);
   const Icon = toolIcon(call.name);
   const summary = toolSummary(call.name, call.input);
@@ -480,7 +505,8 @@ function ToolRow({ call }: { call: ToolCallView }) {
           <Check className="size-3 shrink-0 text-ok/70" />
         )}
       </button>
-      {open && (
+      {open && call.images && call.images.length > 0 && <ImageRow workspaceId={wsId} images={call.images} className="mb-1.5 ml-6 mt-1" />}
+      {open && (call.output || !call.images?.length) && (
         <pre className="selectable mb-1.5 ml-6 mt-1 max-h-72 overflow-auto rounded-md border border-line bg-panel p-2.5 font-mono text-[11px] leading-relaxed text-dim">
           {call.output || JSON.stringify(call.input, null, 2)}
         </pre>
@@ -730,8 +756,112 @@ function ScheduleButton({ ws, text, onScheduled }: { ws: Workspace; text: string
   );
 }
 
+interface Pending {
+  id: number;
+  name: string;
+  size: number;
+  preview?: string; // object URL for images
+  image?: ImageRef;
+  file?: FileRef;
+  error?: string;
+}
+let pendingId = 0;
+
+/** Thumbnail strip above the input: images as thumbs, other files as chips. */
+function PendingStrip({ items, onRemove }: { items: Pending[]; onRemove: (id: number) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2 px-3 pt-3" data-pending-strip>
+      {items.map((p) =>
+        p.preview ? (
+          <span key={p.id} className="group relative inline-flex" data-pending-image>
+            <img
+              src={p.preview}
+              alt={p.name}
+              title={p.name}
+              className={cn("size-14 rounded-[4px] border-[1.5px] border-line object-cover", !p.image && !p.error && "opacity-50", p.error && "border-bad")}
+            />
+            {!p.image && !p.error && <LoaderCircle className="absolute inset-0 m-auto size-4 animate-spin text-fg" />}
+            <RemoveX label={p.name} onClick={() => onRemove(p.id)} />
+          </span>
+        ) : (
+          <FileChip key={p.id} file={p} uploading={!p.file && !p.error} error={p.error} onRemove={() => onRemove(p.id)} />
+        ),
+      )}
+    </div>
+  );
+}
+
+function RemoveX({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Remove ${label}`}
+      className="absolute -right-1.5 -top-1.5 hidden size-4 place-items-center rounded-full border border-line-strong bg-raised text-dim hover:text-fg group-hover:grid"
+    >
+      <X className="size-2.5" strokeWidth={3} />
+    </button>
+  );
+}
+
 function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   const [text, setText] = useState("");
+  const [pending, setPending] = useState<Pending[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const addFiles = (files: File[]) => {
+    for (const f of files) {
+      const id = ++pendingId;
+      const isImg = isImageFile(f);
+      const item: Pending = { id, name: f.name || "image", size: f.size, preview: isImg ? URL.createObjectURL(f) : undefined };
+      if (!isImg && f.size > MAX_FILE_BYTES) {
+        setPending((p) => [...p, { ...item, error: `Over ${formatSize(MAX_FILE_BYTES)}` }]);
+        continue;
+      }
+      setPending((p) => [...p, item]);
+      void (async () => {
+        try {
+          if (isImg) {
+            const { data, mediaType } = await prepareImage(f);
+            const image = await api.saveImage(ws.id, data, mediaType);
+            setPending((p) => p.map((x) => (x.id === id ? { ...x, image } : x)));
+          } else {
+            const data = (await toDataUrl(f)).replace(/^data:[^,]*,/, "");
+            const file = await api.saveFile(ws.id, f.name, data, f.type || "application/octet-stream");
+            setPending((p) => p.map((x) => (x.id === id ? { ...x, file } : x)));
+          }
+        } catch (e) {
+          setPending((p) => p.map((x) => (x.id === id ? { ...x, error: String(e).replace(/^Error:\s*/, "").slice(0, 60) } : x)));
+        }
+      })();
+    }
+  };
+  const removePending = (id: number) =>
+    setPending((p) => {
+      const gone = p.find((x) => x.id === id);
+      if (gone?.preview) URL.revokeObjectURL(gone.preview);
+      return p.filter((x) => x.id !== id);
+    });
+  const addRef = useRef(addFiles);
+  addRef.current = addFiles;
+
+  // Drops on the chat, and the palette's "Attach file…".
+  useEffect(() => {
+    const onFiles = (e: Event) => {
+      const d = (e as CustomEvent<{ workspaceId: string; files: File[] }>).detail;
+      if (d.workspaceId === ws.id) addRef.current(d.files);
+    };
+    const onPick = () => fileInput.current?.click();
+    window.addEventListener("orbit-attach-files", onFiles);
+    window.addEventListener("orbit-attach-image", onPick);
+    return () => {
+      window.removeEventListener("orbit-attach-files", onFiles);
+      window.removeEventListener("orbit-attach-image", onPick);
+    };
+  }, [ws.id]);
+
+  // Attachments belong to a workspace; switching away drops unsent ones.
+  useEffect(() => () => setPending([]), [ws.id]);
   const [highlight, setHighlight] = useState(0);
   const skills = useApp((s) => s.skills);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -757,20 +887,42 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
     }
   }, [text, ws.id]);
 
+  const uploading = pending.some((p) => !p.image && !p.file && !p.error);
+  const ready = pending.filter((p) => p.image || p.file);
+  const slashCmd = /^\/(\S+)\s*([\s\S]*)$/.exec(text.trim());
+  // Skills are sent as a command: attachments can't ride along.
+  const isSkill = !!slashCmd && !!resolveSkill(skills, slashCmd[1]);
+  const canSend = (!!text.trim() || ready.length > 0) && !uploading && !(isSkill && ready.length > 0);
+
   const send = async () => {
     const t = text.trim();
-    if (!t) return;
+    if (!canSend) return;
+    const sent = pending;
     setText("");
+    setPending([]);
     const slash = /^\/(\S+)\s*([\s\S]*)$/.exec(t);
     const skill = slash && resolveSkill(skills, slash[1]);
     try {
       // Unknown slash commands pass through untouched (e.g. Claude's own /compact).
       if (skill) await api.runSkill(ws.id, skill.id, slash[2]);
-      else await api.sendMessage(ws.id, t);
+      else {
+        const images = sent.flatMap((p) => (p.image ? [p.image] : []));
+        const files = sent.flatMap((p) => (p.file ? [p.file] : []));
+        await api.sendMessage(ws.id, t, images, files);
+      }
+      for (const p of sent) if (p.preview) URL.revokeObjectURL(p.preview);
     } catch (e) {
       setText(t);
+      setPending(sent);
       useApp.getState().setError(String(e));
     }
+  };
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const files = [...e.clipboardData.items].flatMap((i) => (i.kind === "file" ? [i.getAsFile()].filter((f): f is File => !!f) : []));
+    if (files.length === 0) return;
+    e.preventDefault();
+    addFiles(files);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -839,11 +991,25 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
             ))}
           </ul>
         )}
+        {pending.length > 0 && <PendingStrip items={pending} onRemove={removePending} />}
+        {isSkill && ready.length > 0 && <p className="px-4 pt-2 text-[11.5px] font-medium text-mute">Skills can't take attachments. Remove them or send as a plain message.</p>}
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          data-attach-input
+          onChange={(e) => {
+            addFiles([...(e.target.files ?? [])]);
+            e.target.value = "";
+          }}
+        />
         <textarea
           ref={ref}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           rows={3}
           placeholder={running ? `Steer ${agentLabel[ws.agent]}, sent mid-run…` : `Ask ${agentLabel[ws.agent]} to do something, or type / for skills`}
           className="block w-full resize-none bg-transparent px-4 pt-4 text-[14px] font-medium leading-relaxed text-fg placeholder:text-mute focus:outline-none"
@@ -862,6 +1028,15 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
               <Kbd>Esc</Kbd> to interrupt
             </span>
           )}
+          <button
+            onClick={() => fileInput.current?.click()}
+            disabled={isSkill}
+            title="Attach a file or image (or paste / drop)"
+            aria-label="Attach file"
+            className="grid size-8 place-items-center rounded-[4px] border-[1.5px] border-line-strong text-dim transition-colors hover:bg-hover hover:text-fg disabled:opacity-30"
+          >
+            <ImagePlus className="size-4" />
+          </button>
           <ScheduleButton
             ws={ws}
             text={text}
@@ -871,7 +1046,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
               window.setTimeout(() => setNotice(null), 6000);
             }}
           />
-          {running && !text.trim() ? (
+          {running && !text.trim() && pending.length === 0 ? (
             <button
               onClick={() => void useApp.getState().interrupt(ws.id)}
               title="Interrupt (Esc)"
@@ -882,7 +1057,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
           ) : (
             <button
               onClick={() => void send()}
-              disabled={!text.trim()}
+              disabled={!canSend}
               title="Send (Enter)"
               className="grid size-8 place-items-center rounded-[4px] bg-accent text-accent-fg shadow-hard-sm transition-[transform,box-shadow,opacity] hover:brightness-110 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:opacity-25 disabled:shadow-none"
             >

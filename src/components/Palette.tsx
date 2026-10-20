@@ -6,12 +6,12 @@ import { explorerAction, type ExplorerAction } from "./code/Explorer";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
-import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, activeProfile } from "../lib/ipc";
 import { useApp } from "../stores/app";
-import { pickAttachFolder } from "./Chat";
+import { pickAttachFolder, requestAttachImage } from "./Chat";
 import { pickRepo } from "./Sidebar";
 import { TeammateAvatar } from "./TeammateAvatar";
 import { AgentIcon, StatusDot, TeammateDot } from "./ui";
@@ -161,6 +161,16 @@ export function Palette() {
                 </Command.Item>
                 <Command.Item className={item} onSelect={run(() => void pickAttachFolder(selectedId))}>
                   <FolderSymlink className="size-3.5" /> Attach folder…
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Attach file… (image, PDF, text to the message)"
+                  onSelect={run(() => {
+                    useApp.getState().select(selectedId);
+                    window.setTimeout(requestAttachImage, 50);
+                  })}
+                >
+                  <Paperclip className="size-3.5" /> Attach file…
                 </Command.Item>
                 <Command.Item className={item} onSelect={run(() => useApp.getState().setRelatedOpen(true))}>
                   <Sparkles className="size-3.5" /> Find related projects

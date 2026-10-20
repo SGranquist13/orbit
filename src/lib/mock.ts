@@ -5,7 +5,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { AgentEvent, Attachment, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -89,15 +89,33 @@ const summaries: Summary[] = [
   sum("w4", 190, { lastSeq: 8, lastTurnSeq: 8, lastTurnError: "Build failed: cannot resolve ./hero.png", lastAssistantText: "The hero image import is missing from the repo.", lastUserText: "Refresh the homepage hero" }),
 ];
 
+// Images and files saved through the mock `save_image` / `save_file`, keyed by their fake path.
+const svgUrl = (label: string, a: string, b: string) =>
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="320" height="200" fill="url(#g)"/><text x="160" y="108" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#fff">${label}</text></svg>`,
+  );
+const mockImages = new Map<string, string>([
+  ["C:/mock/images/crash.svg", svgUrl("crash screenshot", "#555", "#222")],
+  ["C:/mock/images/signup.svg", svgUrl("signup form", "#777", "#333")],
+]);
+let mockImageSeq = 0;
+let mockFileSeq = 0;
+
 let seq = 0;
 const e = (event: AgentEvent): StoredEvent => ({ seq: ++seq, ts: now, event });
 const transcript: StoredEvent[] = [
-  e({ type: "userMessage", text: "The onboarding flow crashes when the org name is empty. Find the cause and fix it, with a test." }),
+  e({
+    type: "userMessage",
+    text: "The onboarding flow crashes when the org name is empty. Find the cause and fix it, with a test.",
+    images: [{ path: "C:/mock/images/crash.svg", mediaType: "image/svg+xml" }],
+    files: [{ path: "C:/mock/files/1/report.pdf", name: "report.pdf", mediaType: "application/pdf", size: 482_300 }],
+  }),
   e({ type: "message", text: "I'll trace the onboarding submit path and find where an empty org name blows up." }),
   e({ type: "toolCall", id: "t1", name: "Grep", input: { pattern: "createOrganization" } }),
   e({ type: "toolResult", id: "t1", output: "src/onboarding/submit.ts:42\nsrc/api/org.ts:17", isError: false }),
   e({ type: "toolCall", id: "t2", name: "Read", input: { file_path: "src/onboarding/submit.ts" } }),
-  e({ type: "toolResult", id: "t2", output: "…", isError: false }),
+  e({ type: "toolResult", id: "t2", output: "…", isError: false, images: [{ path: "C:/mock/images/signup.svg", mediaType: "image/svg+xml" }] }),
   e({ type: "toolCall", id: "t3", name: "Bash", input: { command: "bun test src/onboarding" } }),
   e({ type: "toolResult", id: "t3", output: "1 fail: slugify(undefined)", isError: true }),
   e({
@@ -948,10 +966,26 @@ export function installMockBackend() {
           emitAgentEvent(id, { type: "turnCompleted", durationMs: null, costUsd: null, isError: false, error: null, interrupted: true });
           return null;
         }
+        case "save_image": {
+          const { data, mediaType } = args as { data: string; mediaType: string };
+          const path = `C:/mock/images/${++mockImageSeq}.${mediaType.split("/")[1] ?? "png"}`;
+          mockImages.set(path, `data:${mediaType};base64,${data}`);
+          return { path, mediaType };
+        }
+        case "save_file": {
+          const { name, mediaType, data } = args as { name: string; mediaType: string; data: string };
+          return { path: `C:/mock/files/${++mockFileSeq}/${name}`, name, mediaType, size: Math.floor((data.length * 3) / 4) };
+        }
+        case "read_image": {
+          const src = mockImages.get((args as { path: string }).path);
+          if (!src) throw new Error("image not found");
+          return src;
+        }
         case "send_message":
           if (LAUNCH) launchSend(id, (args as { text: string }).text, emitAgentEvent, setLaunchStatus);
           else {
-            emitAgentEvent(id, { type: "userMessage", text: (args as { text: string }).text });
+            const m = args as { text: string; images?: ImageRef[]; files?: FileRef[] };
+            emitAgentEvent(id, { type: "userMessage", text: m.text, ...(m.images ? { images: m.images } : {}), ...(m.files ? { files: m.files } : {}) });
             if (id === "w1") window.dispatchEvent(new CustomEvent("orbit-simulate-agent-edit"));
             else {
               setLaunchStatus(id, "running");
