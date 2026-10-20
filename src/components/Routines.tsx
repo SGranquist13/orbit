@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { confirmAction } from "../lib/confirm";
 import { DEFAULT_PROFILE, api, type AgentKind, type Routine, type RoutineMode, type RoutineRun, type RunStatus, type Schedule } from "../lib/ipc";
 import { SIMPLIFY_NAME, TEMPLATES, actionText, defaultSchedule, describeSchedule, formatNext, textToAction } from "../lib/routines";
-import { defaultAgentModel, modelsFor } from "../lib/settings";
+import { defaultAgentModel, modelLabelFor, modelsFor } from "../lib/settings";
 import { timeAgo } from "../lib/attention";
 import { useApp } from "../stores/app";
 import { Segmented, Select, Toggle } from "./settings/controls";
@@ -180,7 +180,8 @@ function Editor({ routine }: { routine: Routine | null }) {
     setMode("fresh");
   };
 
-  const models = modelsFor(agent, settings);
+  const modelLists = useApp((s) => s.agentModels);
+  const models = modelsFor(agent, settings, modelLists);
   if (model && !models.includes(model)) models.push(model);
   const canSave = (what === "simplify" || !!prompt.trim()) && !!repoId && !saving;
 
@@ -336,7 +337,7 @@ function Editor({ routine }: { routine: Routine | null }) {
                   setModel(a === agent ? model : "");
                 }}
               />
-              <Select label="Model" className={ownerTeammate ? "pointer-events-none opacity-50" : ""} value={model} options={models.map((m) => ({ value: m, label: m || "Default model" }))} onChange={setModel} />
+              <Select label="Model" className={ownerTeammate ? "pointer-events-none opacity-50" : ""} value={model} options={models.map((m) => ({ value: m, label: modelLabelFor(agent, m, modelLists) || "Default model" }))} onChange={setModel} />
             </Labeled>
             <Labeled label="Profile">
               <Select

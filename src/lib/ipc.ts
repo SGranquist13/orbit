@@ -3,6 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type AgentKind = "claude" | "codex";
+
+export interface ModelInfo {
+  id: string;
+  label: string;
+  isDefault: boolean;
+  efforts: string[];
+}
 export type WorkspaceStatus = "idle" | "running" | "done" | "error";
 
 export interface Repo {
@@ -636,6 +643,7 @@ export interface TeammateInput {
 // workspace_usage) are still registered in Rust: the e2e scripts call workspace_summary via raw invoke and the
 // mobile bridge calls the others directly.
 export const api = {
+  agentModels: (agent: AgentKind, refresh = false) => invoke<ModelInfo[]>("agent_models", { agent, refresh }),
   listTeammates: () => invoke<TeammateView[]>("list_teammates"),
   saveTeammate: (input: TeammateInput) => invoke<TeammateView>("save_teammate", { input }),
   /** Deletes a custom teammate, or resets an overridden starter one to its default. */

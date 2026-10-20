@@ -2,6 +2,8 @@ import { archiveWithWorktree } from "../lib/archive";
 import { create } from "zustand";
 import {
   api,
+  type AgentKind,
+  type ModelInfo,
   events,
   type AgentEvent,
   type AgentEventPayload,
@@ -66,6 +68,9 @@ interface AppState {
   /** Typed app settings; null until loaded (consumers fall back to defaults). */
   settingsSection: string | null;
   settings: Settings | null;
+  agentModels: Partial<Record<AgentKind, ModelInfo[]>>;
+  modelsLoading: boolean;
+  loadModels: (refresh?: boolean) => Promise<void>;
   /** undefined = not fetched yet, null = no PR for the branch. */
   prs: Record<string, PrStatus | null | undefined>;
   /** Folders attached to each workspace (loaded when it is selected, refetched after changes). */
@@ -215,6 +220,8 @@ export const useApp = create<AppState>((set, get) => ({
   previousView: "workspace",
   settingsSection: null,
   settings: null,
+  agentModels: {},
+  modelsLoading: false,
   prs: {},
   attachments: {},
   related: {},
@@ -238,6 +245,25 @@ export const useApp = create<AppState>((set, get) => ({
   transcriptErrors: {},
   shipping: {},
   settingsError: null,
+
+  loadModels: async (refresh = false) => {
+    if (get().modelsLoading) return;
+    set({ modelsLoading: true });
+    try {
+      await Promise.all((["claude", "codex"] as const).map(async (agent) => {
+        if (!refresh && get().agentModels[agent]) return;
+        try {
+          const models = await api.agentModels(agent, refresh);
+          set((s) => ({ agentModels: { ...s.agentModels, [agent]: models } }));
+        } catch (e) {
+          // Transport failure: keep the previous list (or the picker's built-in fallback).
+          console.warn(`Could not load ${agent} models`, e);
+        }
+      }));
+    } finally {
+      set({ modelsLoading: false });
+    }
+  },
 
   loadSettings: async () => {
     try {
@@ -299,6 +325,7 @@ export const useApp = create<AppState>((set, get) => ({
       for (const ws of workspaces) void get().refreshChanges(ws.id);
       void get().loadSkills();
       void get().loadSettings();
+      void get().loadModels();
       const last = localStorage.getItem("selectedWorkspace");
       if (last && workspaces.some((w) => w.id === last)) get().select(last);
     })().catch((e) => {

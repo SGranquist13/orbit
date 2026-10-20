@@ -1,7 +1,7 @@
 import { FolderPlus, Lock, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_PROFILE, api, type AgentKind, type Profile } from "../lib/ipc";
-import { defaultModelFor, modelsFor } from "../lib/settings";
+import { defaultModelFor, modelLabelFor, modelsFor } from "../lib/settings";
 import { useApp } from "../stores/app";
 import { pickRepo } from "./Sidebar";
 import { AgentIcon, Button, Kbd, agentLabel, cn } from "./ui";
@@ -20,7 +20,8 @@ export function NewWorkspace() {
   // Agent and model start from Settings; only the last repo is remembered between uses.
   const [agent, setAgent] = useState<AgentKind>(() => settings?.defaultAgent ?? "claude");
   const [model, setModel] = useState(() => defaultModelFor(settings?.defaultAgent ?? "claude", settings));
-  const models = modelsFor(agent, settings);
+  const modelLists = useApp((s) => s.agentModels);
+  const models = modelsFor(agent, settings, modelLists);
   // Experimental: installed Ollama models, offered for both agents (`local:<name>` in the workspace's model).
   const [localModels, setLocalModels] = useState<string[]>([]);
   useEffect(() => {
@@ -52,7 +53,7 @@ export function NewWorkspace() {
     const nextAgent = p.agent ?? agent;
     if (p.agent) setAgent(p.agent);
     if (p.agent && p.agent !== agent) setModel(defaultModelFor(nextAgent, settings));
-    if (p.model && modelsFor(nextAgent, settings).includes(p.model)) setModel(p.model);
+    if (p.model && modelsFor(nextAgent, settings, modelLists).includes(p.model)) setModel(p.model);
   };
 
   const close = () => useApp.getState().setNewWorkspaceOpen(false);
@@ -181,7 +182,7 @@ export function NewWorkspace() {
           >
             {models.map((m) => (
               <option key={m} value={m}>
-                {m || "default model"}
+                {modelLabelFor(agent, m, modelLists) || "default model"}
               </option>
             ))}
             {localModels.length > 0 && (

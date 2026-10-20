@@ -1,4 +1,5 @@
 import { mockCodeCommand, simulateCodeTurn } from "./code/mock";
+import { BUILTIN_MODELS } from "./settings";
 // Browser-only mock backend: `bun run dev` + open http://localhost:1420 to iterate on UI
 // without building the Rust app. Never loaded inside Tauri.
 import { emit } from "@tauri-apps/api/event";
@@ -1124,6 +1125,13 @@ export function installMockBackend() {
         case "test_local_model": {
           await new Promise((r) => setTimeout(r, 900));
           return { ok: true, latencyMs: 912, output: '{"reply":"pong"}', error: null };
+        }
+        case "agent_models": {
+          const { agent } = args as { agent: "claude" | "codex" };
+          return BUILTIN_MODELS[agent].map((id) => ({
+            id, label: agent === "claude" ? id[0].toUpperCase() + id.slice(1) : id,
+            isDefault: false, efforts: [],
+          }));
         }
         case "get_settings":
           return settings;

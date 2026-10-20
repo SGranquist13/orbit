@@ -719,6 +719,31 @@ const selectWsInSidebar = async (name) => {
   await waitFor("workspace selected", `return document.querySelector('header h1')?.innerText === ${JSON.stringify(name)}`, 10_000);
 };
 
+await step("agent-model-lists", async () => {
+  const claude = await invoke("agent_models", { agent: "claude", refresh: false });
+  if (claude.map((m) => m.id).join(",") !== "opus,sonnet,haiku") throw new Error("unexpected Claude aliases");
+  const codex = await invoke("agent_models", { agent: "codex", refresh: true });
+  if (!codex.length || codex.some((m) => !m.id || !m.label || !Array.isArray(m.efforts))) throw new Error("invalid Codex catalog/fallback");
+  if (JSON.stringify(await invoke("agent_models", { agent: "codex", refresh: false })) !== JSON.stringify(codex)) throw new Error("catalog not cached");
+  await withSettings({ extraModelsCodex: ["orbit-e2e-custom-model"] }, async () => {
+    await js(`location.reload()`);
+    await openSettingsView();
+    await waitFor("catalog labels and extra model in default picker", `
+      const options = [...(document.querySelector('select[aria-label="Default codex model"]')?.options ?? [])];
+      return options.some(o => o.value === 'orbit-e2e-custom-model') &&
+        ${JSON.stringify(codex)}.every(m => options.some(o => o.value === m.id && o.text === m.label));`, 15_000);
+    await waitFor("refresh models action ready", `return [...document.querySelectorAll('#settings-agents button')].some(b => b.innerText === 'Refresh models' && !b.disabled)`, 15_000);
+    await js(`document.querySelector('#settings-agents').scrollIntoView(); [...document.querySelectorAll('#settings-agents button')].find(b => b.innerText === 'Refresh models').click()`);
+    await waitFor("model refresh finished", `return [...document.querySelectorAll('#settings-agents button')].some(b => b.innerText === 'Refresh models' && !b.disabled)`, 15_000);
+    await closeSettingsView();
+    await key("p", { ctrl: true, shift: true });
+    await waitFor("refresh palette action", `return [...document.querySelectorAll('[cmdk-item]')].some(el => el.innerText.includes('Refresh model lists'))`, 5000);
+    await js(`[...document.querySelectorAll('[cmdk-item]')].find(el => el.innerText.includes('Refresh model lists')).click()`);
+    await waitFor("palette closed", `return !document.querySelector('[cmdk-root]')`, 5000);
+  });
+  await js(`location.reload()`);
+});
+
 await step("settings-branch-prefix", async () => {
   // The prefix from Settings > General names the branch of the next workspace (no agent turn needed).
   await withSettings({ branchPrefix: "e2e-pre/" }, async () => {

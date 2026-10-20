@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { timeAgo } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, type AgentKind, type PlanView, type Teammate, type TeammateMessage, type TeammateTask, type TeammateTaskStatus, type TeammateView } from "../lib/ipc";
-import { defaultModelFor, modelsFor } from "../lib/settings";
+import { defaultModelFor, modelLabelFor, modelsFor } from "../lib/settings";
 import { rememberedTeammate } from "../lib/lastTeammate";
 import { useApp } from "../stores/app";
 import { AVATAR_PORTRAITS, AVATAR_ACCESSORIES, AVATAR_BADGES, AVATAR_COLORS, AVATAR_EXPRESSIONS, AVATAR_SHAPES, formatAvatar, parseAvatar, randomAvatar, type AvatarSpec } from "../lib/avatar";
@@ -468,7 +468,8 @@ export function TeammateEditor({ slug }: { slug: string }) {
   const [memory, setMemory] = useState<string | null>(null);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const close = () => useApp.getState().setTeammateEditor(null);
-  const models = modelsFor(agent, settings);
+  const modelLists = useApp((s) => s.agentModels);
+  const models = modelsFor(agent, settings, modelLists);
   if (model && !models.includes(model)) models.push(model);
 
   useEffect(() => {
@@ -634,7 +635,7 @@ export function TeammateEditor({ slug }: { slug: string }) {
                 <select value={model} onChange={(e) => setModel(e.target.value)} className={sel}>
                   {models.map((m) => (
                     <option key={m} value={m}>
-                      {m || "default model"}
+                      {modelLabelFor(agent, m, modelLists) || "default model"}
                     </option>
                   ))}
                 </select>

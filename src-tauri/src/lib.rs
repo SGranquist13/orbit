@@ -1168,6 +1168,11 @@ async fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: serd
 }
 
 #[tauri::command]
+async fn agent_models(agent: AgentKind, refresh: bool) -> Vec<agent::models::ModelInfo> {
+    agent::models::list(agent, refresh).await
+}
+
+#[tauri::command]
 async fn environment_info(state: State<'_, AppState>) -> CmdResult<maintenance::EnvironmentInfo> {
     Ok(maintenance::environment_info(&state.home).await)
 }
@@ -1383,6 +1388,7 @@ pub fn run() {
             get_settings,
             update_settings,
             environment_info,
+            agent_models,
             list_archived_workspaces,
             restore_workspace,
             cleanup_merged_worktrees,

@@ -112,6 +112,9 @@ export function Palette() {
             </>}
           </Command.Group>
           <Command.Group heading="Actions" className={heading}>
+            <Command.Item className={item} value="Refresh model lists" onSelect={run(() => { void useApp.getState().loadModels(true); })}>
+              <Cpu className="size-3.5" /> Refresh model lists
+            </Command.Item>
             <Command.Item
               className={item}
               value="Ask a teammate… (hand off a task)"

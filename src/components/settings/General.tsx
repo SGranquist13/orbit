@@ -1,10 +1,12 @@
 import { useKeybindingLabels } from "../../lib/useKeybinding";
 import type { AgentKind } from "../../lib/ipc";
-import { defaultModelFor, modelsFor } from "../../lib/settings";
+import { defaultModelFor, modelLabelFor, modelsFor } from "../../lib/settings";
 import { useTheme, type ThemeMode } from "../../lib/theme";
 import { Row, Segmented, Select, Toggle, save, useSettings } from "./controls";
+import { useApp } from "../../stores/app";
 
 export function General() {
+  const modelLists = useApp((s) => s.agentModels);
   const keyLabel = useKeybindingLabels();
   const s = useSettings();
   const mode = useTheme((t) => t.mode);
@@ -12,7 +14,7 @@ export function General() {
 
   const modelSelect = (agent: AgentKind) => {
     const current = defaultModelFor(agent, s);
-    const options = modelsFor(agent, s);
+    const options = modelsFor(agent, s, modelLists);
     if (!options.includes(current)) options.push(current);
     const field = agent === "claude" ? "defaultModelClaude" : "defaultModelCodex";
     return (
@@ -20,7 +22,7 @@ export function General() {
         <Select
           label={`Default ${agent} model`}
           value={current}
-          options={options.map((m) => ({ value: m, label: m || "Agent default" }))}
+          options={options.map((m) => ({ value: m, label: modelLabelFor(agent, m, modelLists) || "Agent default" }))}
           onChange={(v) => void save({ [field]: v })}
         />
       </Row>
