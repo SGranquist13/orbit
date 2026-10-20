@@ -85,6 +85,7 @@ pub struct Workspace {
     pub ahead: i64,
     /// The routine that started this workspace, if any.
     pub routine_id: Option<String>,
+    pub attempt_group: Option<String>,
     /// Slug of the teammate that created this workspace, if any.
     pub teammate: Option<String>,
 }
@@ -173,6 +174,25 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at INTEGER NOT NULL,
   UNIQUE(workspace_id, path)
 );
+CREATE TABLE IF NOT EXISTS attempt_groups (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,
+  repo_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('running', 'picked', 'cancelled')),
+  winner_workspace_id TEXT,
+  expected_count INTEGER NOT NULL,
+  evaluating INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS attempt_entries (
+  workspace_id TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  finished INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER,
+  cost_usd REAL,
+  summary TEXT
+);
+CREATE INDEX IF NOT EXISTS attempt_entries_group ON attempt_entries(group_id);
 CREATE TABLE IF NOT EXISTS routines (
   id TEXT PRIMARY KEY,
   repo_id TEXT NOT NULL REFERENCES repos(id),
@@ -277,6 +297,7 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         behind: r.get("behind")?,
         ahead: r.get("ahead")?,
         routine_id: r.get("routine_id")?,
+        attempt_group: r.get("attempt_group")?,
         teammate: r.get("teammate")?,
     })
 }
@@ -406,6 +427,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("behind", "ALTER TABLE workspaces ADD COLUMN behind INTEGER NOT NULL DEFAULT 0"),
         ("ahead", "ALTER TABLE workspaces ADD COLUMN ahead INTEGER NOT NULL DEFAULT 0"),
         ("routine_id", "ALTER TABLE workspaces ADD COLUMN routine_id TEXT"),
+        ("attempt_group", "ALTER TABLE workspaces ADD COLUMN attempt_group TEXT"),
         ("teammate", "ALTER TABLE workspaces ADD COLUMN teammate TEXT"),
     ] {
         if !cols.iter().any(|c| c == col) {
@@ -494,12 +516,12 @@ impl Db {
 
     pub fn insert_workspace(&self, ws: &Workspace) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs, attempt_group)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 ws.id, ws.repo_id, ws.name, ws.branch, ws.path, ws.agent, ws.model, ws.status,
                 ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id, ws.teammate,
-                serde_json::to_string(&ws.disabled_packs)?
+                serde_json::to_string(&ws.disabled_packs)?, ws.attempt_group
             ],
         )?;
         Ok(())
@@ -1303,5 +1325,53 @@ mod tests {
         assert_eq!(db.related_defaults("r").unwrap(), vec!["/code/api".to_string()]);
         db.set_related_default("r", "/code/api", false).unwrap();
         assert!(db.related_defaults("r").unwrap().is_empty());
+    }
+}
+
+impl Db {
+    pub fn insert_attempt_group(&self, g: &crate::attempts::AttemptGroup, count: usize) -> anyhow::Result<()> {
+        self.conn.execute("INSERT INTO attempt_groups (id, prompt, repo_id, created_at, status, expected_count) VALUES (?1, ?2, ?3, ?4, 'running', ?5)", params![g.id, g.prompt, g.repo_id, g.created_at, count as i64])?;
+        Ok(())
+    }
+
+    pub fn insert_attempt(&self, group: &str, workspace: &str) -> anyhow::Result<()> {
+        self.conn.execute("INSERT INTO attempt_entries (workspace_id, group_id) VALUES (?1, ?2)", params![workspace, group])?;
+        Ok(())
+    }
+
+    pub fn attempt_group(&self, id: &str) -> anyhow::Result<crate::attempts::AttemptGroup> {
+        use crate::attempts::{Attempt, AttemptGroup};
+        let mut group = self.conn.query_row("SELECT id, prompt, repo_id, created_at, status, winner_workspace_id FROM attempt_groups WHERE id = ?1", [id], |r| {
+            Ok(AttemptGroup { id: r.get(0)?, prompt: r.get(1)?, repo_id: r.get(2)?, created_at: r.get(3)?, status: r.get(4)?, winner_workspace_id: r.get(5)?, workspace_ids: vec![], attempts: vec![] })
+        })?;
+        let mut stmt = self.conn.prepare("SELECT workspace_id, finished, duration_ms, cost_usd, summary FROM attempt_entries WHERE group_id = ?1 ORDER BY rowid")?;
+        let rows = stmt.query_map([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, Option<i64>>(2)?.map(|n| n.max(0) as u64), r.get::<_, Option<f64>>(3)?, r.get::<_, Option<String>>(4)?)))?;
+        for row in rows {
+            let (workspace_id, finished, duration_ms, cost_usd, summary) = row?;
+            group.workspace_ids.push(workspace_id.clone());
+            group.attempts.push(Attempt { workspace_id, finished, duration_ms, cost_usd, summary: summary.map(|s| serde_json::from_str(&s)).transpose()? });
+        }
+        Ok(group)
+    }
+
+    /// Records only the initial turn; later messages cannot trigger another evaluation.
+    pub fn finish_attempt(&self, workspace: &str, duration: Option<u64>, cost: Option<f64>) -> anyhow::Result<Option<String>> {
+        let changed = self.conn.execute("UPDATE attempt_entries SET finished = 1, duration_ms = ?2, cost_usd = ?3 WHERE workspace_id = ?1 AND finished = 0 AND group_id IN (SELECT id FROM attempt_groups WHERE status = 'running')", params![workspace, duration.map(|n| n.min(i64::MAX as u64) as i64), cost])?;
+        if changed == 0 { return Ok(None); }
+        Ok(Some(self.conn.query_row("SELECT group_id FROM attempt_entries WHERE workspace_id = ?1", [workspace], |r| r.get(0))?))
+    }
+
+    pub fn claim_attempt_checks(&self, group: &str) -> anyhow::Result<bool> {
+        Ok(self.conn.execute("UPDATE attempt_groups SET evaluating = 1 WHERE id = ?1 AND status = 'running' AND evaluating = 0 AND expected_count = (SELECT COUNT(*) FROM attempt_entries WHERE group_id = ?1 AND finished = 1)", [group])? == 1)
+    }
+
+    pub fn store_attempt_summary(&self, group: &str, workspace: &str, summary: &crate::attempts::AttemptSummary) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE attempt_entries SET summary = ?3 WHERE workspace_id = ?2 AND group_id = ?1 AND EXISTS (SELECT 1 FROM attempt_groups WHERE id = ?1 AND status = 'running')", params![group, workspace, serde_json::to_string(summary)?])?;
+        Ok(())
+    }
+
+    pub fn close_attempt_group(&self, group: &str, winner: Option<&str>) -> anyhow::Result<()> {
+        self.conn.execute("UPDATE attempt_groups SET status = ?2, winner_workspace_id = ?3 WHERE id = ?1 AND status = 'running'", params![group, if winner.is_some() { "picked" } else { "cancelled" }, winner])?;
+        Ok(())
     }
 }

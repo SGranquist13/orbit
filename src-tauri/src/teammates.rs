@@ -845,6 +845,8 @@ pub(crate) async fn start_task(app: &AppHandle, state: &AppState, s: Start) -> C
         app,
         state,
         NewWorkspaceArgs {
+            attempt_group: None,
+            branch_suffix: None,
             repo_id: s.repo_id.clone(),
             name,
             agent: t.agent.clone(),
@@ -1179,3 +1181,4 @@ mod tests {
         assert!(!effective_readonly(Some(false), true));
     }
 }
+

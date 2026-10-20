@@ -6,7 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { AttemptGroup, StartAttemptsArgs, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -39,6 +39,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   behind: 0,
   ahead: 0,
   routineId: null,
+  attemptGroup: null,
   teammate: null,
 });
 
@@ -50,6 +51,21 @@ const workspaces: Workspace[] = [
   ws("w5", "r1", "Migrate billing schema", "claude", "idle"),
   ws("w6", "r2", "Try new pricing layout", "codex", "idle"),
 ];
+
+// A completed Best of N group is available through attempt_group("attempt-demo").
+const attemptGroups: AttemptGroup[] = [{
+  id: "attempt-demo", prompt: "Add retry handling", repoId: "r1", createdAt: now - 600_000,
+  status: "running", winnerWorkspaceId: null,
+  workspaceIds: ["attempt-a", "attempt-b", "attempt-c"],
+  attempts: ["attempt-a", "attempt-b", "attempt-c"].map((id, i) => {
+    const w = ws(id, "r1", `add-retry-handling � ${"ABC"[i]}`, i === 1 ? "codex" : "claude", "done");
+    w.attemptGroup = "attempt-demo";
+    w.branch = `you/add-retry-handling-${"abc"[i]}`;
+    workspaces.push(w);
+    return { workspaceId: id, finished: true, durationMs: 60_000 + i * 10_000, costUsd: 0.1 + i * 0.05,
+      summary: { checks: i === 2 ? "fail" : "pass", filesChanged: i + 1, additions: 12 + i * 8, deletions: 3 + i, durationMs: 60_000 + i * 10_000, costUsd: 0.1 + i * 0.05 } };
+  }),
+}];
 
 // w1 running (seen), w2 finished unseen, w3 asked a question unseen, w4 failed unseen, w1's PR has failing checks.
 const seenSeq: Record<string, number> = { w1: 40, w2: 6, w3: 5, w4: 3 };
@@ -955,6 +971,56 @@ export function installMockBackend() {
       // Code filesystem and the tiny PTY shell share the same per-root mock trees.
       if (cmd.startsWith("code_") || cmd.startsWith("pty_")) return mockCodeCommand(cmd, args);
       switch (cmd) {
+        case "attempt_group": {
+          const group = attemptGroups.find((g) => g.id === id);
+          if (!group) throw new Error("Unknown attempt group");
+          return structuredClone(group);
+        }
+        case "start_attempts": {
+          const input = args as unknown as StartAttemptsArgs;
+          if (input.attempts.length < 2 || input.attempts.length > 4 || !input.prompt.trim()) throw new Error("Choose 2�4 attempts and a prompt");
+          if (!repos.some((r) => r.id === input.repoId) || input.attempts.some((a) => a.agent !== "claude" && a.agent !== "codex")) throw new Error("Unknown repository or agent");
+          const group: AttemptGroup = { id: `attempt-${Date.now()}`, prompt: input.prompt, repoId: input.repoId, createdAt: Date.now(), status: "running", winnerWorkspaceId: null, workspaceIds: [], attempts: [] };
+          input.attempts.forEach((a, i) => {
+            const w = ws(`${group.id}-${i}`, input.repoId, `${input.prompt.slice(0, 40)} � ${"ABCD"[i]}`, a.agent, "done");
+            w.model = a.model ?? null;
+            w.profile = input.profile ?? null;
+            w.attemptGroup = group.id;
+            w.branch += `-${"abcd"[i]}`;
+            workspaces.push(w);
+            group.workspaceIds.push(w.id);
+            group.attempts.push({ workspaceId: w.id, finished: true, durationMs: 45_000, costUsd: 0.12, summary: { checks: "pass", filesChanged: i + 1, additions: 10 + i, deletions: i, durationMs: 45_000, costUsd: 0.12 } });
+            void emit("workspace", { ...w });
+          });
+          attemptGroups.push(group);
+          void emit("attempts", structuredClone(group));
+          return structuredClone(group);
+        }
+        case "compare_attempts": {
+          const { aWs, bWs, path } = args as { aWs: string; bWs: string; path?: string };
+          const first = workspaces.find((w) => w.id === aWs);
+          const second = workspaces.find((w) => w.id === bWs);
+          if (!first || !second || first.repoId !== second.repoId) throw new Error("Attempts must belong to the same repository");
+          return aWs === bWs ? "" : `diff --git a/${path ?? "src/retry.ts"} b/${path ?? "src/retry.ts"}\n--- a/${path ?? "src/retry.ts"}\n+++ b/${path ?? "src/retry.ts"}\n@@ -1 +1 @@\n-const retries = 2;\n+const retries = 3;`;
+        }
+        case "pick_attempt":
+        case "cancel_attempts": {
+          const { groupId, workspaceId } = args as { groupId: string; workspaceId?: string };
+          const group = attemptGroups.find((g) => g.id === groupId);
+          if (!group) throw new Error("Unknown attempt group");
+          const winner = cmd === "pick_attempt" ? workspaceId ?? null : null;
+          if (cmd === "pick_attempt" && (!winner || !group.workspaceIds.includes(winner))) throw new Error("Workspace is not in this attempt group");
+          if (group.status !== "running" && !(group.status === "picked" && group.winnerWorkspaceId === winner) && !(group.status === "cancelled" && !winner)) throw new Error("Attempt group is already closed");
+          group.status = winner ? "picked" : "cancelled";
+          group.winnerWorkspaceId = winner;
+          for (const workspace of group.workspaceIds.filter((w) => w !== winner)) {
+            const index = workspaces.findIndex((w) => w.id === workspace);
+            if (index >= 0) archived.push(...workspaces.splice(index, 1));
+            void emit("workspace-archived", workspace);
+          }
+          void emit("attempts", structuredClone(group));
+          return structuredClone(group);
+        }
         case "list_repos":
           return repos;
         case "list_workspaces":
@@ -1390,3 +1456,4 @@ export function installMockBackend() {
     ),
   );
 }
+
