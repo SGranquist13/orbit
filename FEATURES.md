@@ -56,7 +56,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 |---|---|---|
 | Claude Code and Codex, streamed live (text, thinking, tool calls) | ✅ | Tool calls fold into expandable groups |
 | Follow-ups, interrupt (Esc), resume after restart | ✅ | |
-| **Images and file attachments**: paste, drop or attach images and files; images go to the agent natively, files as paths it reads with its own tools | 🧪 | Thumbnails, file chips and a lightbox in the chat |
+| **Images and file attachments**: paste, drop or attach images and files; images go to the agent natively, files as paths it reads with its own tools | ✅ | Thumbnails, file chips and a lightbox in the chat |
 | Images from the agent (a screenshot it reads, Codex image view / generation, markdown images) shown in the chat | 🧪 | |
 | Steer Codex mid-turn; Claude queues messages sent mid-turn | ✅ | |
 | Model picker per workspace | ✅ | |
