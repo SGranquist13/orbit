@@ -179,7 +179,21 @@ export type AgentEvent =
   | { type: "error"; message: string }
   | { type: "exited"; code: number | null; stderr: string };
 
+export interface TurnPoint {
+  seq: number;
+  turnIndex: number;
+  sha: string;
+  userTextPreview: string;
+}
+
+export interface RewindPreview {
+  target: TurnPoint;
+  files: string[];
+  droppedTurns: TurnPoint[];
+}
+
 export interface StoredEvent {
+  commitSha?: string | null;
   seq: number;
   ts: number;
   event: AgentEvent;
@@ -732,6 +746,10 @@ export const api = {
   newSession: (id: string) => invoke<void>("new_session", { id }),
   allWorkspaceUsage: () => invoke<WorkspaceUsage[]>("all_workspace_usage"),
   usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
+  workspaceTurnPoints: (workspaceId: string) => invoke<TurnPoint[]>("workspace_turn_points", { workspaceId }),
+  rewindPreview: (workspaceId: string, seq: number) => invoke<RewindPreview>("rewind_preview", { workspaceId, seq }),
+  rewindWorkspace: (workspaceId: string, seq: number) => invoke<Workspace>("rewind_workspace", { workspaceId, seq }),
+  branchFromTurn: (workspaceId: string, seq: number, name?: string) => invoke<Workspace>("branch_from_turn", { workspaceId, seq, name }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
   archiveWorkspace: (id: string, removeWorktree: boolean, force = false) =>

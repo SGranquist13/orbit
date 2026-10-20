@@ -1274,7 +1274,7 @@ mod tests {
         assert_eq!(parse_summary(&json!({ "summary": "  ", "nothingToDo": true })), None);
         assert_eq!(parse_summary(&json!({ "nothingToDo": true })), None);
 
-        let ev = |seq: i64, event: AgentEvent| db::StoredEvent { seq, ts: 0, event };
+        let ev = |seq: i64, event: AgentEvent| db::StoredEvent { seq, ts: 0, event, commit_sha: None };
         let events = vec![
             ev(1, AgentEvent::Message { text: "old run".into() }),
             ev(2, AgentEvent::UserMessage { text: "go".into(), skill: None, images: vec![], files: vec![] }),

@@ -288,26 +288,38 @@ pub fn try_rebase(worktree: &Path, base: &str) -> RebaseOutcome {
 
 /// After a turn: commit the worktree as a save point (if enabled), then refresh behind/ahead.
 /// Runs on a blocking thread; never holds the db lock across git calls.
-pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) {
+pub fn save_point(app: &AppHandle, state: &AppState, ws_id: &str) -> Option<String> {
     let settings = state.settings();
     let found = state.db().workspace(ws_id);
     let ws = match found {
         Ok(w) => w,
-        Err(_) => return,
+        Err(_) => return None,
     };
+    let mut saved = true;
     // A Simplify step commits (or reverts) its own result; a save point would swallow it as `wip:`.
     if settings.save_commits && !crate::simplify::active(ws_id) {
         let text = state.db().last_user_text(ws_id).unwrap_or_default();
         let msg = if settings.commit_messages == "model" { written_message(state, &settings, Path::new(&ws.path), &text) } else { wip_message(&text) };
         let _g = lock();
         if let Err(e) = commit_save_point(Path::new(&ws.path), &msg) {
+            saved = false;
             eprintln!("save point for {} failed: {e}", ws.name);
         }
     }
+    // A dirty tree without save commits has no accurate checkpoint. Never attach an older SHA.
+    let sha = {
+        let _g = lock();
+        if saved && git::is_clean(Path::new(&ws.path)) {
+            git::run(Path::new(&ws.path), &["rev-parse", "HEAD"]).ok()
+        } else {
+            None
+        }
+    };
     let base = state.db().repo(&ws.repo_id).map(|r| r.base_branch).unwrap_or_default();
     if let Some(w) = sync_one(state, ws_id, &base, "suggest") {
         emit_workspace(app, &w);
     }
+    sha
 }
 
 /// Stages everything and returns (stat, diff) of what a save point would commit; None when the tree is clean.
