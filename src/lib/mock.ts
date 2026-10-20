@@ -6,8 +6,10 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
+const repoScripts: Record<string, RepoScripts> = { r1: { setupScript: "bun install", runScript: "bun run dev -- --port $PORT", copyGlobs: [".env*"] } };
+const workspaceRuns: Record<string, WorkspaceRunStatus> = {};
 const now = Date.now();
 const repos: Repo[] = [
   { id: "r1", name: "superset", path: "C:/code/superset", baseBranch: "main" },
@@ -248,6 +250,15 @@ function setLaunchStatus(id: string, status: Workspace["status"]) {
   if (w) { w.status = status; void emit("workspace", { ...w }); }
 }
 
+/** A short fake setup log for a new workspace, so the mock shows the chat's setup row. */
+function mockSetup(workspaceId: string) {
+  const lines = ["$ bun install", "Resolving dependencies", "Installed 412 packages in 1.8s", "Copied .env.local"];
+  const send = (status: string, line?: string) => void emit("workspace-setup", { workspaceId, status, ...(line ? { line } : {}) });
+  setTimeout(() => send("running"), 50);
+  lines.forEach((l, i) => setTimeout(() => send("running", l), 300 + i * 500));
+  setTimeout(() => send("done"), 300 + lines.length * 500);
+}
+
 function emitAgentEvent(workspaceId: string, event: AgentEvent) {
   void emit("agent-event", { workspaceId, seq: ++seq, ts: Date.now(), event });
 }
@@ -309,6 +320,7 @@ let settings: Settings = {
   commitMessages: "prompt",
   checksMode: "block",
   checkTimeoutMinutes: 10,
+  setupTimeoutMinutes: 10,
   installBeforeChecks: true,
   syncMode: "auto",
   simplifyModel: "sonnet",
@@ -1122,6 +1134,7 @@ export function installMockBackend() {
             if (text) { w.status = "running"; setTimeout(() => launchSend(w.id, text, emitAgentEvent, setLaunchStatus), 300); }
           }
           workspaces.unshift(w);
+          mockSetup(w.id);
           return { ...w };
         }
         case "snooze_workspace": {
@@ -1247,6 +1260,24 @@ export function installMockBackend() {
           }
           return list;
         }
+        case "get_repo_scripts":
+          return repoScripts[a.repoId!] ?? { setupScript: null, runScript: null, copyGlobs: [] };
+        case "set_repo_scripts":
+          repoScripts[a.repoId!] = (args as { scripts: RepoScripts }).scripts;
+          return null;
+        case "start_run": {
+          if (!repoScripts[workspaces.find((x) => x.id === a.workspaceId)?.repoId ?? ""]?.runScript) throw "This repository has no run script";
+          workspaceRuns[a.workspaceId!] = { status: "running", port: 4173 };
+          void emit("workspace-run", { workspaceId: a.workspaceId, status: "running", line: "$ bun run dev -- --port 4173" });
+          setTimeout(() => void emit("workspace-run", { workspaceId: a.workspaceId, status: "running", line: "ready on http://localhost:4173" }), 400);
+          return 4173;
+        }
+        case "stop_run":
+          workspaceRuns[a.workspaceId!] = { status: "stopped", port: 4173 };
+          void emit("workspace-run", { workspaceId: a.workspaceId, status: "stopped" });
+          return null;
+        case "run_status":
+          return workspaceRuns[a.workspaceId!] ?? { status: "stopped", port: null };
         case "get_check_command":
           return { detected: a.repoId === "r1" ? "bun run typecheck" : null, override: checkOverrides[a.repoId!] ?? null };
         case "set_check_command":

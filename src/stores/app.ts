@@ -1,3 +1,4 @@
+import { startScriptEvents } from "./scripts";
 import { archiveWithWorktree } from "../lib/archive";
 import { create } from "zustand";
 import {
@@ -332,6 +333,7 @@ export const useApp = create<AppState>((set, get) => ({
       await events.onTeammateChanged(() => void get().refreshTeammates());
       void get().refreshTeammates();
       await events.onSimplify(onSimplify);
+      startScriptEvents();
       for (const ws of workspaces) void get().refreshChanges(ws.id);
       void get().loadSkills();
       void get().loadSettings();

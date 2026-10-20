@@ -136,7 +136,7 @@ pub fn install_command(repo: &Path, check_cmd: &str) -> Option<String> {
 }
 
 /// Kills `pid` and everything it spawned.
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -154,7 +154,7 @@ fn kill_tree(pid: u32) {
     }
 }
 
-fn shell(worktree: &Path, cmd: &str) -> Command {
+pub(crate) fn shell(worktree: &Path, cmd: &str) -> Command {
     #[cfg(windows)]
     let mut c = {
         use std::os::windows::process::CommandExt;

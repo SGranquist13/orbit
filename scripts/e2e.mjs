@@ -1918,4 +1918,32 @@ await step("attachments-tool-image", async () => {
   await shot("attachments-tool-image");
 });
 
+// Standalone: node scripts/e2e.mjs worktree-setup (no agent turn).
+await step("worktree-setup", async () => {
+  const repoId = (await invoke("list_repos"))[0].id;
+  const giPath = path.join(repo, ".gitignore");
+  const giOrig = fs.existsSync(giPath) ? fs.readFileSync(giPath, "utf8") : null;
+  fs.writeFileSync(giPath, (giOrig ?? "") + "\n.env.local\n");
+  fs.writeFileSync(path.join(repo, ".env.local"), "SECRET=1\n");
+  try {
+    await invoke("set_repo_scripts", { repoId, scripts: { setupScript: "echo setup-ok > setup.txt", runScript: null, copyGlobs: [".env.local"] } });
+    const ws = await mkWs("worktree setup");
+    await until("setup.txt and .env.local in the worktree", () => fs.existsSync(path.join(ws.path, "setup.txt")) && fs.existsSync(path.join(ws.path, ".env.local")), 20000);
+    await until("setup row reached done", async () => (await js(`const s = window.__ORBIT_SCRIPTS__?.(); return s?.setup?.[${JSON.stringify(ws.id)}]?.status ?? null`)) === "done", 20000);
+    // The run script serves nothing heavy; Orbit hands it a free port in $PORT.
+    await invoke("set_repo_scripts", { repoId, scripts: { setupScript: null, runScript: `node -e "require('http').createServer((q,s)=>s.end('ok')).listen(process.env.PORT)"`, copyGlobs: [] } });
+    const port = await invoke("start_run", { workspaceId: ws.id });
+    if (!(port > 0)) throw new Error(`no port returned: ${port}`);
+    try {
+      await until("dev server answering on its port", async () => { try { return (await (await fetch(`http://127.0.0.1:${port}`)).text()) === "ok"; } catch { return false; } }, 15000);
+    } finally {
+      await invoke("stop_run", { workspaceId: ws.id });
+    }
+    await until("run stopped", async () => (await invoke("run_status", { workspaceId: ws.id })).status === "stopped", 10000);
+  } finally {
+    if (giOrig === null) fs.rmSync(giPath, { force: true }); else fs.writeFileSync(giPath, giOrig);
+    await invoke("set_repo_scripts", { repoId, scripts: { setupScript: null, runScript: null, copyGlobs: [] } });
+  }
+});
+
 await h.finish();

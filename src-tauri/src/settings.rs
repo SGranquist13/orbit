@@ -68,6 +68,7 @@ pub struct Settings {
     pub checks_mode: String,
     /// Per-run limit for a check (and for the dependency install before it); the process tree is killed after.
     pub check_timeout_minutes: u32,
+    pub setup_timeout_minutes: u32,
     /// Install JS dependencies in a worktree that has a package.json but no node_modules before checking.
     pub install_before_checks: bool,
     /// off | suggest (record how far behind, inbox only) | auto (rebase idle, clean workspaces).
@@ -141,6 +142,7 @@ impl Default for Settings {
             commit_messages: "prompt".into(),
             checks_mode: "block".into(),
             check_timeout_minutes: 10,
+            setup_timeout_minutes: 10,
             install_before_checks: true,
             sync_mode: "auto".into(),
             sync_interval_minutes: 10,
@@ -282,6 +284,9 @@ impl Settings {
         check("simplifyModel", &self.simplify_model, SIMPLIFY_MODELS)?;
         if !(1..=30).contains(&self.simplify_max_candidates) {
             return Err(format!("invalid simplifyMaxCandidates {} (expected 1-30)", self.simplify_max_candidates));
+        }
+        if !(1..=240).contains(&self.setup_timeout_minutes) {
+            return Err(format!("invalid setupTimeoutMinutes {} (expected 1-240)", self.setup_timeout_minutes));
         }
         if !(1..=240).contains(&self.check_timeout_minutes) {
             return Err(format!("invalid checkTimeoutMinutes {} (expected 1-240)", self.check_timeout_minutes));

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type CheckCommandInfo, type Repo, type Settings } from "../../lib/ipc";
 import { normalizePrefix } from "../../lib/settings";
 import { useApp } from "../../stores/app";
+import { WorktreeSetup } from "./WorktreeSetup";
 import { Row, Segmented, Select, SubHeading, TextInput, Toggle, save, useSettings } from "./controls";
 
 /** Preset choices plus the current value if it isn't one of them (e.g. set by hand in the database). */
@@ -114,6 +115,8 @@ export function Git() {
         <CheckCommandRow key={r.id} repo={r} />
       ))}
       {repos.length === 0 && <p className="py-3 text-[12px] text-mute">Add a repository to set its check command.</p>}
+
+      <WorktreeSetup />
 
       <SubHeading>Simplify</SubHeading>
       <Row

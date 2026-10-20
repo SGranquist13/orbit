@@ -12,6 +12,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 **Next**
 - Per-repo setup and run scripts, with `.env` and other ignored files copied into new worktrees
+- Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
 - Claude and Codex plan limits (5-hour and weekly windows) in Usage
 - Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
 - MCP servers added once for both agents
@@ -41,6 +42,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | New workspace dialog (prompt, repo, agent, model, profile); the agent starts at once | ✅ | Ctrl+N, Ctrl+Enter |
 | Create a workspace without a task | 🧪 | Empty prompt = **Create** (idle worktree, composer focused); optional name |
 | Open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains | 🧪 | Header button and palette; pick the editor in Settings > Editor |
+| Per-repo setup and run scripts; `.env` and other ignored files are copied into new worktrees | 🧪 | Settings > Git > Worktree setup. The first message waits for setup; Run / Stop dev server in the chat header |
 | Many workspaces running in parallel, Claude and Codex side by side | ✅ | |
 | Sidebar: repos → workspaces with status, diff stats and agent icon | ✅ | Collapses to an icon rail (Ctrl+B) |
 | Rename a workspace; right-click menu (rename, reveal in Explorer, archive) | 🧪 | |
