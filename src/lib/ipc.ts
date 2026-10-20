@@ -818,6 +818,12 @@ export interface ReviewEvent {
   error?: string | null;
 }
 
+export interface ReviewState {
+  status: "idle" | "running" | "done" | "failed";
+  review: Review | null;
+  error: string | null;
+}
+
 export const events = {
   onAgentEvent: (cb: (p: AgentEventPayload) => void): Promise<UnlistenFn> =>
     listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),

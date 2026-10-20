@@ -1,7 +1,7 @@
 import { Clock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeProfile } from "../lib/ipc";
-import { attentionReason, formatSnooze, isSnoozed, reasonMeta, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
+import { attentionReason, formatSnooze, isSnoozed, reasonMeta, reviewBugCount, ruleSuggestions, snoozeOptions, timeAgo, type Reason, type Suggestion } from "../lib/attention";
 import { api, type Summary, type TeammateView, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
 import { TeammateAvatar } from "./TeammateAvatar";
@@ -28,6 +28,7 @@ export function Inbox() {
   const repos = useApp((s) => s.repos);
   const summaries = useApp((s) => s.summaries);
   const prs = useApp((s) => s.prs);
+  const reviews = useApp((s) => s.reviews);
   const changes = useApp((s) => s.changes);
   const settings = useApp((s) => s.settings);
   const staleLimits = useMemo(
@@ -59,9 +60,9 @@ export function Inbox() {
   const all: Row[] = useMemo(
     () =>
       workspaces
-        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits) }))
+        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits, reviews[ws.id]?.review) }))
         .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
-    [workspaces, summaries, prs, staleLimits],
+    [workspaces, summaries, prs, staleLimits, reviews],
   );
   const needs = useMemo(() => all.filter((r) => r.reason), [all]);
   const rows = tab === "needs" ? needs : all;
@@ -315,6 +316,7 @@ function InboxRow({
   onSnooze: (until: number) => void;
 }) {
   const { ws, summary, reason } = row;
+  const bugs = reviewBugCount(useApp((st) => st.reviews[ws.id]?.review));
   const routineName = useApp((s) => s.routines.find((r) => r.id === ws.routineId)?.name) ?? summary?.routineName;
   const snoozed = isSnoozed(ws);
   const running = ws.status === "running";
@@ -349,7 +351,7 @@ function InboxRow({
         )}
         <span className="ml-auto flex shrink-0 items-center gap-3">
           {reason ? (
-            <span className={cn("text-[11.5px] font-medium", reasonMeta(reason).tone)}>{reasonMeta(reason).label}</span>
+            <span className={cn("text-[11.5px] font-medium", reasonMeta(reason).tone)}>{reasonMeta(reason, bugs).label}</span>
           ) : snoozed ? (
             <span className="flex items-center gap-1 text-[11.5px] font-medium text-mute">
               <Clock className="size-3" />

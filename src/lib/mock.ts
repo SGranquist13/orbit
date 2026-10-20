@@ -11,7 +11,7 @@ import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState,
 const mockReviews = new Map<string, Review>();
 function fakeReview(workspaceId: string): Review {
   return {
-    workspaceId, prNumber: 42, headSha: "abc123mockhead", createdAt: Date.now(),
+    workspaceId, prNumber: 827, headSha: "abc123mockhead", createdAt: Date.now(),
     summary: "Found one bug, one risk, and one small cleanup.",
     findings: [
       { path: "src/auth/session.ts", line: 24, severity: "bug", title: "Handle expired sessions", body: "An expired session currently passes the guard and fails on the next request." },

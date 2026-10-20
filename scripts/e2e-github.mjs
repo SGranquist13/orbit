@@ -102,6 +102,20 @@ await h.step("checks-pass-in-panel", async () => {
   if (status.checks.passed < 1 || status.checks.failed) throw new Error(`unexpected checks ${JSON.stringify(status.checks)}`);
 });
 
+await h.step("review-on-ship", async () => {
+  // Draft only: nothing is posted to the PR. Findings may legitimately be empty; a summary must exist.
+  await h.invoke("update_settings", { patch: { reviewOnShip: "draft", reviewModel: "haiku", reviewMaxFindings: 3 } });
+  const review = await h.invoke("run_review", { workspaceId: shipWs.id });
+  if (!review.summary?.trim()) throw new Error(`review has no summary: ${JSON.stringify(review)}`);
+  const stored = await h.invoke("latest_review", { workspaceId: shipWs.id });
+  if (!stored || stored.headSha !== review.headSha || stored.prNumber !== review.prNumber) throw new Error("no stored review row for the PR head");
+  if (stored.findings.length > 3) throw new Error("reviewMaxFindings was not honoured");
+  await ui.openShip();
+  await h.waitFor("Review section shows the summary", `return (${shipPanel})?.innerText.includes(${JSON.stringify(review.summary.slice(0, 20))})`, 30_000);
+  await h.shot("gh-02a-review");
+  await h.invoke("update_settings", { patch: { reviewOnShip: "off", reviewModel: "sonnet", reviewMaxFindings: 8 } });
+});
+
 await h.step("ready-and-merge", async () => {
   await h.waitFor("Ready for review button", `return !!(${panelButton("Ready for review")})`, 10_000);
   await h.js(`(${panelButton("Ready for review")}).click()`);

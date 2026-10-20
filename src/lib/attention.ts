@@ -1,7 +1,7 @@
 // Pure rules for the attention inbox: which workspaces need the user, and why.
-import type { PrStatus, Summary, Workspace } from "./ipc";
+import type { PrStatus, Review, Summary, Workspace } from "./ipc";
 
-export type Reason = "error" | "question" | "checksFailed" | "needsSync" | "checks" | "changes" | "done" | "stale" | "teammate";
+export type Reason = "error" | "question" | "checksFailed" | "needsSync" | "checks" | "changes" | "review" | "done" | "stale" | "teammate";
 
 export type Suggestion =
   | { label: string; kind: "skill"; skillId: string }
@@ -68,11 +68,17 @@ export function isStale(
   return (limits.days > 0 && now - ws.createdAt >= limits.days * DAY_MS) || (limits.behind > 0 && ws.behind >= limits.behind);
 }
 
+/** Findings the review rated as real bugs; risks and nits never reach the inbox. */
+export function reviewBugCount(review: Pick<Review, "findings"> | null | undefined) {
+  return review?.findings.filter((f) => f.severity === "bug").length ?? 0;
+}
+
 export function attentionReason(
   ws: Workspace,
   summary: Summary | undefined,
   pr: PrStatus | null | undefined,
   staleLimits?: { days: number; behind: number },
+  review?: Pick<Review, "findings"> | null,
 ): Reason | null {
   if (!summary || ws.status === "running") return null;
   if (isSnoozed(ws)) return null;
@@ -88,6 +94,7 @@ export function attentionReason(
   if (ws.syncConflicts.length > 0) return "needsSync";
   if (open && pr.checks.failed > 0) return "checks";
   if (open && pr.reviewDecision === "CHANGES_REQUESTED") return "changes";
+  if (reviewBugCount(review) > 0) return "review";
   if (unseen && summary.lastTurnSeq > ws.seenSeq) return "done";
   if (isStale(ws, staleLimits)) return "stale";
   return null;
@@ -100,6 +107,7 @@ const meta: Record<Reason, { label: string; tone: string }> = {
   needsSync: { label: "Needs sync", tone: "text-warn" },
   checks: { label: "Checks failing", tone: "text-bad" },
   changes: { label: "Changes requested", tone: "text-warn" },
+  review: { label: "Review found issues", tone: "text-bad" },
   done: { label: "Finished", tone: "text-ok" },
   stale: { label: "Stale branch", tone: "text-warn" },
   // Teammate threads that need you; they are not workspaces, so `attentionReason` never returns this.
@@ -128,7 +136,8 @@ export function resolveConflictsPrompt(ws: Pick<Workspace, "syncConflicts">, bas
 /** Changed lines (added + deleted) above which a finished workspace is offered "Simplify". */
 export const SIMPLIFY_SUGGEST_LINES = 300;
 
-export function reasonMeta(reason: Reason) {
+export function reasonMeta(reason: Reason, count?: number) {
+  if (reason === "review" && count) return { ...meta.review, label: `Review found ${count} issue${count === 1 ? "" : "s"}` };
   return meta[reason];
 }
 
@@ -165,6 +174,8 @@ export function ruleSuggestions(
       return [skill("Fix CI", "shipkit:fix-ci"), text("Explain why CI is failing")];
     case "changes":
       return [skill("Address comments", "shipkit:address-comments")];
+    case "review":
+      return [text("Fix the bugs from the review"), text("Keep going")];
     case "done": {
       const out: Suggestion[] = [];
       if (ctx.planner) {

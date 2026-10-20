@@ -102,6 +102,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Fix CI, Address comments, Rebase, Push updates | ✅ | Fix CI also one click from the inbox |
 | Ready for review and merge, gated on green checks | ✅ | Merge method and branch deletion in Settings > Git |
 | Live PR status while checks run | 🧪 | |
+| **AI review after Ship**: a read-only Claude pass over the PR diff; findings in the Ship panel and inbox, sent to the agent or posted to the PR | 🧪 | Settings > Git > Review; off by default |
 | GitHub Issues panel (Alt+5): search, labels, Start or Plan from an issue | ✅ | Branch `<n>-slug`, `Closes #n` in the PR |
 | New ticket: rough notes → a well-formed GitHub issue | ✅ | |
 | `#n` chip in the header opens the linked issue | ✅ | |

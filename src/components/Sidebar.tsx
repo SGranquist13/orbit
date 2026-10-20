@@ -30,8 +30,9 @@ export function Sidebar() {
   const view = useApp((s) => s.view);
   const summaries = useApp((s) => s.summaries);
   const prs = useApp((s) => s.prs);
+  const reviews = useApp((s) => s.reviews);
   const teammatesNeedYou = useApp((s) => s.teammates.filter((t) => t.status === "needsYou").length);
-  const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id])).length + teammatesNeedYou;
+  const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id], undefined, reviews[w.id]?.review)).length + teammatesNeedYou;
   const activeRoutines = useApp((s) => s.routines.filter((r) => r.enabled).length);
   const collapsed = useApp((s) => s.sidebarCollapsed);
   if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} teammatesNeedYou={teammatesNeedYou} />;

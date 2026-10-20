@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Preview: an AI review after Ship, shown in Orbit or posted to the PR, with findings you can send to the agent.
 
 ## 0.2.0 - 2026-10-20
 
