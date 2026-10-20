@@ -130,6 +130,14 @@ pub struct StoredEvent {
 }
 
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS reviews (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    pr_number INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    json TEXT NOT NULL,
+    UNIQUE(workspace_id, head_sha)
+);
 CREATE TABLE IF NOT EXISTS repos (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -435,6 +443,19 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
 }
 
 impl Db {
+    pub fn save_review(&self, review: &crate::review::Review) -> anyhow::Result<()> {
+        self.conn.execute("INSERT OR REPLACE INTO reviews (workspace_id, pr_number, head_sha, created_at, json) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![review.workspace_id, review.pr_number as i64, review.head_sha, review.created_at, serde_json::to_string(review)?])?;
+        Ok(())
+    }
+
+    pub fn review(&self, workspace_id: &str, head_sha: Option<&str>) -> anyhow::Result<Option<crate::review::Review>> {
+        let json: Option<String> = self.conn.query_row(
+            "SELECT json FROM reviews WHERE workspace_id = ?1 AND (?2 IS NULL OR head_sha = ?2) ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            params![workspace_id, head_sha], |r| r.get(0)).optional()?;
+        json.map(|s| serde_json::from_str(&s).map_err(Into::into)).transpose()
+    }
+
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;

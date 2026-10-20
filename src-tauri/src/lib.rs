@@ -16,6 +16,7 @@ mod remote;
 mod routines;
 mod settings;
 mod simplify;
+mod review;
 mod skills;
 mod chief;
 mod handoff;
@@ -208,6 +209,7 @@ fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent
     }
     if let AgentEvent::TurnCompleted { is_error, error, interrupted, .. } = &ev {
         teammates::finish_turn(app, state, ws_id, *is_error, error.as_deref(), *interrupted);
+        if !*is_error && !*interrupted { review::after_ship(app, state, ws_id); }
         // A routine run defers its notification until it knows whether the run was worth reporting.
         let routine = routines::finish_turn(app, state, ws_id, updated.as_ref(), *is_error, error.as_deref(), *interrupted);
         // The user stopped it themselves, so no notification for interruptions.
@@ -934,12 +936,12 @@ fn set_pack_enabled(state: State<AppState>, name: String, enabled: bool) -> CmdR
 }
 
 #[tauri::command]
-async fn pr_status(state: State<'_, AppState>, id: String) -> CmdResult<Option<gh::PrStatus>> {
+async fn pr_status(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<Option<gh::PrStatus>> {
     let ws = state.db().workspace(&id).map_err(err)?;
-    tauri::async_runtime::spawn_blocking(move || gh::pr_status(Path::new(&ws.path), &ws.branch))
-        .await
-        .map_err(err)?
-        .map_err(err)
+    let pr = tauri::async_runtime::spawn_blocking(move || gh::pr_status(Path::new(&ws.path), &ws.branch))
+        .await.map_err(err)?.map_err(err)?;
+    if pr.as_ref().is_some_and(|p| p.state == "OPEN") { review::after_ship(&app, &state, &id); }
+    Ok(pr)
 }
 
 #[tauri::command]
@@ -1512,6 +1514,10 @@ pub fn run() {
             trunk::undo_last_turn,
             trunk::workspace_overlaps,
             trunk::sync_now,
+            review::run_review,
+            review::latest_review,
+            review::post_review,
+            review::send_findings_to_agent,
             simplify::simplify_state,
             simplify::simplify_find,
             simplify::simplify_apply,

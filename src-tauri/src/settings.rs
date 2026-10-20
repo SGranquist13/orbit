@@ -49,6 +49,9 @@ pub struct Settings {
     pub extra_models_claude: Vec<String>,
     pub extra_models_codex: Vec<String>,
     // github
+    pub review_on_ship: String,
+    pub review_model: String,
+    pub review_max_findings: u32,
     pub merge_method: String,
     pub delete_branch_on_merge: bool,
     // inbox
@@ -129,6 +132,9 @@ impl Default for Settings {
             codex_sandbox: "danger-full-access".into(),
             extra_models_claude: vec![],
             extra_models_codex: vec![],
+            review_on_ship: "off".into(),
+            review_model: "sonnet".into(),
+            review_max_findings: 8,
             merge_method: "squash".into(),
             delete_branch_on_merge: false,
             ai_suggestions: true,
@@ -275,6 +281,11 @@ impl Settings {
         check_task_model("modelChiefPlan", &self.model_chief_plan, false)?;
         if !(1..=600).contains(&self.local_timeout_secs) {
             return Err(format!("invalid localTimeoutSecs {} (expected 1-600)", self.local_timeout_secs));
+        }
+        check("reviewOnShip", &self.review_on_ship, &["off", "draft", "post"])?;
+        check("reviewModel", &self.review_model, SIMPLIFY_MODELS)?;
+        if !(1..=30).contains(&self.review_max_findings) {
+            return Err("invalid reviewMaxFindings (expected 1-30)".into());
         }
         check("simplifyModel", &self.simplify_model, SIMPLIFY_MODELS)?;
         if !(1..=30).contains(&self.simplify_max_candidates) {
@@ -423,6 +434,19 @@ mod tests {
         assert_eq!(normalize_url("box:8080", DEFAULT_OPENAI_URL), "http://box:8080");
         let s = Settings { local_provider: "openai".into(), ..Default::default() };
         assert_eq!(s.local_base_url(), "http://localhost:1234");
+    }
+
+    #[test]
+    fn review_settings_defaults_and_validation() {
+        let d = Settings::load(Some("{}"), None);
+        assert_eq!((d.review_on_ship.as_str(), d.review_model.as_str(), d.review_max_findings), ("off", "sonnet", 8));
+        for mode in ["off", "draft", "post"] {
+            let s = d.patched(&json!({"reviewOnShip": mode, "reviewModel": "haiku", "reviewMaxFindings": 3})).unwrap();
+            assert_eq!((s.review_on_ship.as_str(), s.review_model.as_str(), s.review_max_findings), (mode, "haiku", 3));
+        }
+        for patch in [json!({"reviewOnShip":"auto"}), json!({"reviewModel":"bad"}), json!({"reviewMaxFindings":0}), json!({"reviewMaxFindings":31})] {
+            assert!(d.patched(&patch).is_err());
+        }
     }
 
     #[test]

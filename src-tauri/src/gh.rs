@@ -44,6 +44,48 @@ pub fn pr_status(worktree: &Path, branch: &str) -> anyhow::Result<Option<PrStatu
     }
 }
 
+/// Exact GitHub head, used to ensure local review anchors match the published commit.
+pub fn review_target(worktree: &Path, branch: &str) -> anyhow::Result<(u64, String)> {
+    let out = gh(worktree, &["pr", "view", branch, "--json", "number,headRefOid,state"])?;
+    let v: Value = serde_json::from_str(&out)?;
+    anyhow::ensure!(v["state"] == "OPEN", "Review requires an open pull request");
+    let number = v["number"].as_u64().ok_or_else(|| anyhow::anyhow!("PR has no number"))?;
+    let head = v["headRefOid"].as_str().filter(|s| !s.is_empty()).ok_or_else(|| anyhow::anyhow!("PR has no head SHA"))?;
+    Ok((number, head.to_string()))
+}
+
+pub fn review_payload(review: &crate::review::Review) -> Value {
+    serde_json::json!({
+        "commit_id": review.head_sha,
+        "event": "COMMENT",
+        "body": review.summary,
+        "comments": review.findings.iter().map(|f| serde_json::json!({
+            "path": f.path, "line": f.line, "side": "RIGHT",
+            "body": format!("**{}: {}**\n\n{}", f.severity, f.title, f.body)
+        })).collect::<Vec<_>>()
+    })
+}
+
+pub fn post_review(worktree: &Path, review: &crate::review::Review) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let (number, head) = review_target(worktree, &review.pr_number.to_string())?;
+    anyhow::ensure!(number == review.pr_number && head == review.head_sha, "The PR head changed; run a new review before posting");
+    let endpoint = format!("repos/{{owner}}/{{repo}}/pulls/{number}/reviews");
+    let mut cmd = Command::new("gh");
+    cmd.args(["api", "--method", "POST", &endpoint, "--input", "-"]).current_dir(worktree)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    { use std::os::windows::process::CommandExt; cmd.creation_flags(0x0800_0000); }
+    let mut child = crate::agent::process::spawn_std(&mut cmd)?;
+    let payload = serde_json::to_vec(&review_payload(review))?;
+    let written = child.stdin.take().ok_or_else(|| anyhow::anyhow!("gh stdin unavailable"))?.write_all(&payload);
+    let out = child.wait_with_output()?;
+    written?;
+    anyhow::ensure!(out.status.success(), "GitHub review failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+    Ok(())
+}
+
 /// Arguments for `gh pr merge`. The local branch is held by a worktree, so `--delete-branch` is
 /// never used; the remote ref is deleted separately (see `merge`).
 fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
@@ -176,6 +218,21 @@ fn parse_issue(v: &Value) -> Issue {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn review_payload_anchors_comments_to_commit() {
+        let review = crate::review::Review {
+            workspace_id: "w".into(), pr_number: 7, head_sha: "abc123".into(), created_at: 0,
+            summary: "One issue".into(), findings: vec![crate::review::Finding {
+                path: "src/a.rs".into(), line: 12, severity: "bug".into(), title: "Missing guard".into(), body: "Fails on empty input".into(),
+            }],
+        };
+        assert_eq!(review_payload(&review), json!({"commit_id":"abc123","event":"COMMENT","body":"One issue",
+            "comments":[{"path":"src/a.rs","line":12,"side":"RIGHT","body":"**bug: Missing guard**\n\nFails on empty input"}]}));
+        let mut empty = review;
+        empty.findings.clear();
+        assert_eq!(review_payload(&empty)["comments"], json!([]));
+    }
 
     #[test]
     fn rollup_mixed() {

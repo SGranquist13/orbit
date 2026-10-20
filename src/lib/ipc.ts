@@ -379,6 +379,9 @@ export interface Settings {
   checkTimeoutMinutes: number;
   installBeforeChecks: boolean;
   syncMode: "off" | "suggest" | "auto";
+  reviewOnShip: "off" | "draft" | "post";
+  reviewModel: "haiku" | "sonnet" | "opus";
+  reviewMaxFindings: number;
   simplifyModel: "haiku" | "sonnet" | "opus";
   simplifyMaxCandidates: number;
   simplifyLowRiskButton: boolean;
@@ -756,6 +759,10 @@ export const api = {
   runChecks: (workspaceId: string) => invoke<CheckResult>("run_checks", { workspaceId }),
   /** The Ship gate: checks per `checksMode`, then squash save points. Run `shipkit:ship` only when `ok`. */
   prepareShip: (workspaceId: string, skipChecks = false) => invoke<PrepareShip>("prepare_ship", { workspaceId, skipChecks }),
+  runReview: (workspaceId: string) => invoke<Review>("run_review", { workspaceId }),
+  latestReview: (workspaceId: string) => invoke<Review | null>("latest_review", { workspaceId }),
+  postReview: (workspaceId: string) => invoke<void>("post_review", { workspaceId }),
+  sendFindingsToAgent: (workspaceId: string, indices: number[]) => invoke<void>("send_findings_to_agent", { workspaceId, indices }),
   simplifyState: (workspaceId: string) => invoke<SimplifyState>("simplify_state", { workspaceId }),
   /** Starts the read-only analysis; progress and the result arrive as `simplify` events. */
   simplifyFind: (workspaceId: string) => invoke<SimplifyState>("simplify_find", { workspaceId }),
@@ -789,6 +796,28 @@ export const api = {
     invoke<string[]>("suggest_prompts", { id, reason, offered }),
 };
 
+export interface ReviewFinding {
+  path: string;
+  line: number;
+  severity: "bug" | "risk" | "nit";
+  title: string;
+  body: string;
+}
+export interface Review {
+  workspaceId: string;
+  prNumber: number;
+  headSha: string;
+  createdAt: number;
+  summary: string;
+  findings: ReviewFinding[];
+}
+export interface ReviewEvent {
+  workspaceId: string;
+  status: "running" | "done" | "failed";
+  review?: Review | null;
+  error?: string | null;
+}
+
 export const events = {
   onAgentEvent: (cb: (p: AgentEventPayload) => void): Promise<UnlistenFn> =>
     listen<AgentEventPayload>("agent-event", (e) => cb(e.payload)),
@@ -801,6 +830,8 @@ export const events = {
   onRoutinesChanged: (cb: () => void): Promise<UnlistenFn> => listen("routines-changed", () => cb()),
   /** A teammate's definition, thread or tasks changed. */
   onTeammateChanged: (cb: (slug: string) => void): Promise<UnlistenFn> => listen<string>("teammate-changed", (e) => cb(e.payload)),
+  onReview: (cb: (event: ReviewEvent) => void): Promise<UnlistenFn> =>
+    listen<ReviewEvent>("review", (e) => cb(e.payload)),
   onSimplify: (cb: (s: SimplifyState) => void): Promise<UnlistenFn> =>
     listen<SimplifyState>("simplify", (e) => cb(e.payload)),
 };
