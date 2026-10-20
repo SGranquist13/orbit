@@ -8,6 +8,7 @@ import { bindings, commands, type Overrides } from "../keybindings";
 import { useApp } from "../../stores/app";
 import { useCode } from "../../stores/code";
 import { editorSelection } from "../../components/code/AskSelection";
+import { commentAtCursor, reviewView } from "./reviewComments";
 
 let lastEditor: EditorView | undefined;
 const insertLineAbove: Command = (view) => {
@@ -64,6 +65,12 @@ export function runEditorCommand(id: string, view?: EditorView): boolean {
   const focused = document.activeElement instanceof HTMLElement ? EditorView.findFromDOM(document.activeElement) : null;
   view ??= focused ?? lastEditor;
   if (!view || !view.dom.isConnected || useApp.getState().view !== "code") return false;
+  if (id === "review.addComment") {
+    const diff = reviewView();
+    if (!diff) return false;
+    commentAtCursor(diff);
+    return true;
+  }
   if (id === "agent.askSelection") {
     const s = useCode.getState(),
       root = s.activeRoot,

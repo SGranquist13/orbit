@@ -15,7 +15,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 - Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
 - Claude and Codex plan limits (5-hour and weekly windows) in Usage
 - MCP servers added once for both agents
-- Comment on diff lines and send them to the agent
 - Rewind a workspace to any earlier turn
 - Linked pull requests across repositories (ship an attached project's changes alongside the main PR)
 - Your installed Claude plugins in `/` autocomplete and as pinnable chips
@@ -155,6 +154,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Live typing: see the agent's edits stream in as they are written | 🧪 | |
 | "Watch an agent" picker on any folder | 🧪 | |
 | Manual mode: edit by hand; agent changes never overwrite unsaved work silently | 🧪 | Reload · Keep mine · Compare |
+| Comment on diff lines (the + in the gutter, Shift-click for a range) and send them all to the agent as one message | 🧪 | Review bar under the diff, count in the chat composer |
 | Ask about a selection (Ctrl+I) | ✅ | Sends the lines + your question to the workspace's agent |
 | Open in Code from the chat header, Ship panel and palette | ✅ | |
 | Settings > Editor: font size, tabs, word wrap, autosave, follow the agent, terminal shell | 🧪 | |

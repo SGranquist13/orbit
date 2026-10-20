@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Preview: comment on lines in the diff and send them to the agent as one message.
 
 ## 0.2.0 - 2026-10-20
 

@@ -28,6 +28,8 @@ import { useApp } from "../../stores/app";
 import { Button } from "../ui";
 
 import { Segmented } from "../settings/controls";
+import { reviewExtension, setReviewComments } from "../../lib/code/reviewComments";
+import { discardReview, sendReview, useReview, useReviewComments } from "../../stores/review";
 
 const external = Annotation.define<boolean>();
 
@@ -60,6 +62,13 @@ export function DiffView({
     host = useRef<HTMLDivElement>(null),
     merge = useRef<MergeView | null>(null),
     config = useRef(new Compartment());
+
+  const wsId = useRef<string | undefined>(undefined);
+
+  wsId.current = ws?.id;
+
+  const drafts = useReviewComments(ws?.id),
+    fileDrafts = drafts.filter((c) => c.path === rel);
 
   const [left, setLeft] = useState<{ text: string; missing: boolean } | null>(null),
     [error, setError] = useState("");
@@ -142,6 +151,18 @@ export function DiffView({
 
           config.current.of([]),
 
+          reviewExtension({
+            add: (startLine, endLine, text) => {
+              const id = wsId.current,
+                doc = merge.current?.b.state.doc;
+              if (!id || !doc) return;
+              const excerpt = doc.sliceString(doc.line(startLine).from, doc.line(endLine).to);
+              useReview.getState().add(id, { path: rel, startLine, endLine, side: "new", text, excerpt });
+            },
+            update: (cid, text) => wsId.current && useReview.getState().update(wsId.current, cid, text),
+            remove: (cid) => wsId.current && useReview.getState().remove(wsId.current, cid),
+          }),
+
           EditorView.domEventHandlers({
             blur: () => {
               if (useApp.getState().settings?.editorAutosave === "focus") useCode.getState().autosave(root, rel);
@@ -184,6 +205,10 @@ export function DiffView({
 
     // Baseline refreshes update the left editor below, preserving the live editor's history and focus.
   }, [key, revision, ready]);
+
+  useLayoutEffect(() => {
+    merge.current?.b.dispatch({ effects: setReviewComments.of(fileDrafts) });
+  }, [drafts, rel, ready, key, revision]);
 
   useLayoutEffect(() => {
     const view = merge.current;
@@ -289,6 +314,21 @@ export function DiffView({
       {!left && !error && <p className="p-3 text-[12px] text-mute">Loading comparison…</p>}
 
       <div ref={host} className="code-diff min-h-0 flex-1 overflow-hidden" />
+
+      {ws && drafts.length > 0 && (
+        <div
+          role="region"
+          aria-label="Review"
+          className="flex shrink-0 items-center gap-3 border-t-[1.5px] border-line-strong bg-panel px-3 py-1.5 text-[12px] text-mute"
+        >
+          <span className="font-medium text-fg">Review ({drafts.length})</span>
+          <span className="min-w-0 flex-1 truncate">
+            {drafts.length === fileDrafts.length ? "" : `${fileDrafts.length} in this file · `}Comments go to {ws.name} as one message
+          </span>
+          <Button onClick={() => void discardReview(ws.id)}>Discard all</Button>
+          <Button onClick={() => void sendReview(ws.id)}>Send to agent</Button>
+        </div>
+      )}
     </div>
   );
 }
