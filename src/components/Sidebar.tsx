@@ -382,6 +382,11 @@ function WorkspaceRow({ ws }: { ws: Workspace }) {
   const unread = useApp((s) => isUnread(ws, s.summaries[ws.id]));
   const totals = diffTotals(useApp((s) => s.changes[ws.id]));
   const running = ws.status === "running";
+  const plan = useApp((s) => s.plans[ws.id]);
+  useEffect(() => {
+    if (running) useApp.getState().ensurePlan(ws.id);
+  }, [running, ws.id]);
+  const planDone = plan ? plan.items.filter((i) => i.status === "done").length : 0;
   return (
     <li>
       {renaming && (
@@ -435,6 +440,11 @@ function WorkspaceRow({ ws }: { ws: Workspace }) {
         {ws.routineId && (
           <span title="Started by a routine" className="relative shrink-0 text-mute">
             <Clock className="size-3" />
+          </span>
+        )}
+        {running && plan && plan.items.length > 0 && (
+          <span title="Plan progress" className="relative shrink-0 text-[10.5px] font-medium tabular-nums text-mute">
+            {planDone}/{plan.items.length}
           </span>
         )}
         <DiffStat {...totals} className={cn("relative", !selected && "hidden group-hover:inline")} />

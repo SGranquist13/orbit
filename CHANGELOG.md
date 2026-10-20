@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: the agent's own plan pinned above the chat with live progress.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.

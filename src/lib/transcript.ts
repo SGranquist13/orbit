@@ -24,6 +24,7 @@ export type Block =
       error: string | null;
       interrupted: boolean;
     }
+  | { kind: "plan"; key: string; done: number; total: number }
   | { kind: "sessionReset"; key: string }
   | { kind: "error"; key: string; message: string };
 
@@ -36,6 +37,9 @@ export function fold(events: StoredEvent[]): Block[] {
     const key = String(seq);
     const last = blocks[blocks.length - 1];
     switch (ev.type) {
+      case "plan":
+        if (ev.items.length) blocks.push({ kind: "plan", key, done: ev.items.filter((i) => i.status === "done").length, total: ev.items.length });
+        break;
       case "userMessage":
         blocks.push({ kind: "user", key, text: ev.text, skill: ev.skill, images: ev.images, files: ev.files });
         break;

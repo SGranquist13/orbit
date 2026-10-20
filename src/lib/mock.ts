@@ -248,8 +248,28 @@ function setLaunchStatus(id: string, status: Workspace["status"]) {
   if (w) { w.status = status; void emit("workspace", { ...w }); }
 }
 
+const latestPlans = new Map<string, Extract<AgentEvent, { type: "plan" }> | null>();
+const planTimers = new Map<string, ReturnType<typeof setTimeout>[]>();
+const mockPlan = (done: number): Extract<AgentEvent, { type: "plan" }> => ({
+  type: "plan", explanation: "Working through the requested change.",
+  items: ["Inspect the code", "Make the change", "Check the result", "Summarize the work"].map((text, i) => ({
+    text, status: i < done ? "done" : i === done ? "inProgress" : "pending",
+  })),
+});
+
 function emitAgentEvent(workspaceId: string, event: AgentEvent) {
+  if (event.type === "turnStarted" || event.type === "sessionReset" || event.type === "turnCompleted" || event.type === "exited") {
+    for (const timer of planTimers.get(workspaceId) ?? []) clearTimeout(timer);
+    planTimers.delete(workspaceId);
+  }
+  if (event.type === "turnStarted" || event.type === "sessionReset") latestPlans.set(workspaceId, null);
+  if (event.type === "plan") latestPlans.set(workspaceId, event);
+  if (event.type === "turnCompleted" && !event.isError && !event.interrupted && latestPlans.get(workspaceId)) emitAgentEvent(workspaceId, mockPlan(4));
   void emit("agent-event", { workspaceId, seq: ++seq, ts: Date.now(), event });
+  if (event.type === "turnStarted") {
+    emitAgentEvent(workspaceId, mockPlan(0));
+    planTimers.set(workspaceId, [1, 2, 3].map((done) => setTimeout(() => emitAgentEvent(workspaceId, mockPlan(done)), done * 150)));
+  }
 }
 
 /** Compaction drops the context to a summary; the mock reports it as a quick turn. */
@@ -961,6 +981,16 @@ export function installMockBackend() {
           return [...workspaces];
         case "load_events":
           return LAUNCH ? launchEvents(id, transcript) : transcript;
+        case "latest_plan": {
+          const workspaceId = a.workspaceId ?? "";
+          if (latestPlans.has(workspaceId)) return latestPlans.get(workspaceId);
+          const history = LAUNCH ? launchEvents(workspaceId, transcript) : transcript;
+          for (const { event } of [...history].reverse()) {
+            if (event.type === "plan") return event;
+            if (event.type === "sessionReset" || event.type === "turnStarted") break;
+          }
+          return null;
+        }
         case "workspace_changes":
           return LAUNCH ? launchChanges(id) : changes;
         case "interrupt": {
