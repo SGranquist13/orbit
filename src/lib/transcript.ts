@@ -1,5 +1,5 @@
 // Folds the flat normalized event stream into blocks the chat view renders.
-import type { StoredEvent } from "./ipc";
+import type { FileRef, ImageRef, StoredEvent } from "./ipc";
 
 export interface ToolCallView {
   id: string;
@@ -7,10 +7,11 @@ export interface ToolCallView {
   input: unknown;
   output?: string;
   isError?: boolean;
+  images?: ImageRef[];
 }
 
 export type Block =
-  | { kind: "user"; key: string; text: string; skill?: string }
+  | { kind: "user"; key: string; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[] }
   | { kind: "assistant"; key: string; text: string }
   | { kind: "tools"; key: string; calls: ToolCallView[] }
   | {
@@ -36,7 +37,7 @@ export function fold(events: StoredEvent[]): Block[] {
     const last = blocks[blocks.length - 1];
     switch (ev.type) {
       case "userMessage":
-        blocks.push({ kind: "user", key, text: ev.text, skill: ev.skill });
+        blocks.push({ kind: "user", key, text: ev.text, skill: ev.skill, images: ev.images, files: ev.files });
         break;
       case "message":
         if (ev.text.trim()) blocks.push({ kind: "assistant", key, text: ev.text });
@@ -54,6 +55,7 @@ export function fold(events: StoredEvent[]): Block[] {
         if (call) {
           call.output = ev.output;
           call.isError = ev.isError;
+          if (ev.images?.length) call.images = ev.images;
         }
         break;
       }
@@ -118,12 +120,13 @@ export function toolSummary(name: string, input: unknown): string {
     case "Bash":
       return str(i.command);
     case "Read":
+    case "ViewImage":
     case "Write":
     case "Edit":
     case "MultiEdit":
     case "NotebookEdit":
       if (Array.isArray(i.files)) return i.files.map((f) => base(String(f))).join(", ");
-      return base(str(i.file_path) || str(i.notebook_path));
+      return base(str(i.file_path) || str(i.notebook_path) || str(i.path));
     case "Grep":
     case "Glob":
       return str(i.pattern);

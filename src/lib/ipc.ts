@@ -129,16 +129,30 @@ export interface Overlap {
   files: string[];
 }
 
+/** An image on disk (absolute path); load it with `api.readImage`. */
+export interface ImageRef {
+  path: string;
+  mediaType: string;
+}
+
+/** A non-image file attached to a message (absolute path on disk). */
+export interface FileRef {
+  path: string;
+  name: string;
+  mediaType: string;
+  size: number;
+}
+
 export type AgentEvent =
   | { type: "sessionStarted"; sessionId: string; model: string | null }
-  | { type: "userMessage"; text: string; skill?: string }
+  | { type: "userMessage"; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[] }
   | { type: "turnStarted" }
   | { type: "textDelta"; text: string }
   | { type: "message"; text: string }
   | { type: "toolCall"; id: string; name: string; input: unknown }
   // Live input preview; never persisted or rendered in the chat transcript.
   | { type: "toolDraft"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "toolResult"; id: string; output: string; isError: boolean }
+  | { type: "toolResult"; id: string; output: string; isError: boolean; images?: ImageRef[] }
   | { type: "turnCompleted"; durationMs: number | null; costUsd: number | null; isError: boolean; error: string | null; interrupted?: boolean }
   | {
       type: "usage";
@@ -682,7 +696,19 @@ export const api = {
   addRepo: (path: string) => invoke<Repo>("add_repo", { path }),
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
   createWorkspace: (args: CreateWorkspaceArgs) => invoke<Workspace>("create_workspace", { ...args }),
-  sendMessage: (id: string, text: string) => invoke<void>("send_message", { id, text }),
+  sendMessage: (id: string, text: string, images?: ImageRef[], files?: FileRef[]) =>
+    invoke<void>("send_message", {
+      id,
+      text,
+      ...(images && images.length > 0 ? { images } : {}),
+      ...(files && files.length > 0 ? { files } : {}),
+    }),
+  /** Stores an attached non-image file (base64) and returns the reference to send. */
+  saveFile: (workspaceId: string, name: string, data: string, mediaType: string) => invoke<FileRef>("save_file", { workspaceId, name, data, mediaType }),
+  /** Stores a pasted/dropped image (base64, no data: prefix) and returns the reference to send. */
+  saveImage: (workspaceId: string, data: string, mediaType: string) => invoke<ImageRef>("save_image", { workspaceId, data, mediaType }),
+  /** A data: URL for an image the workspace may show. */
+  readImage: (workspaceId: string, path: string) => invoke<string>("read_image", { workspaceId, path }),
   interrupt: (id: string) => invoke<void>("interrupt", { id }),
   renameWorkspace: (id: string, name: string) => invoke<void>("rename_workspace", { id, name }),
   /** Summarise the conversation to free context (`/compact`). */
