@@ -5,6 +5,7 @@
 - Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains
 - Preview: Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a warning near the limit.
 - Preview: per-repo setup and run scripts; `.env` and other ignored files are copied into new worktrees.
+- Preview: the agent's own plan pinned above the chat with live progress.
 
 ## 0.2.0 - 2026-10-20
 

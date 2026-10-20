@@ -255,7 +255,7 @@ impl ClaudeParser {
                     self.last_context =
                         Some(n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"));
                 }
-                content(&v)
+                let mut events: Vec<_> = content(&v)
                     .iter()
                     .filter_map(|block| match block["type"].as_str()? {
                         "text" => Some(AgentEvent::Message { text: block["text"].as_str()?.to_string() }),
@@ -266,7 +266,29 @@ impl ClaudeParser {
                         }),
                         _ => None,
                     })
-                    .collect()
+                    .collect();
+                for block in content(&v) {
+                    if block["type"] == "tool_use" && block["name"] == "TodoWrite" {
+                        if let Some(todos) = block["input"]["todos"].as_array() {
+                            let items = todos.iter().filter_map(|todo| {
+                                let status = match todo["status"].as_str()? {
+                                    "pending" => super::PlanStatus::Pending,
+                                    "in_progress" => super::PlanStatus::InProgress,
+                                    "completed" => super::PlanStatus::Done,
+                                    _ => return None,
+                                };
+                                let text = if status == super::PlanStatus::InProgress {
+                                    todo["activeForm"].as_str().or_else(|| todo["content"].as_str())?
+                                } else {
+                                    todo["content"].as_str()?
+                                };
+                                Some(super::PlanItem { text: text.into(), status })
+                            }).collect();
+                            events.push(AgentEvent::Plan { items, explanation: None });
+                        }
+                    }
+                }
+                events
             }
             Some("user") => content(&v)
                 .iter()
@@ -726,6 +748,28 @@ mod tests {
             LimitWindow { kind: "fiveHour".into(), used_percent: 0.0, resets_at: None },
         ]);
         assert_eq!(limits.status, None);
+    fn todo_write_normalizes_plan_and_keeps_tool_calls() {
+        // Synthetic: no recorded fixture contains TodoWrite. Input follows Claude's
+        // documented input: https://code.claude.com/docs/en/agent-sdk/python#todowrite
+        let events = parse_fixture("claude_todo_synthetic.jsonl");
+        assert_eq!(events.len(), 4);
+        assert!(matches!(&events[0], AgentEvent::ToolCall { id, name, input }
+            if id == "todo-1" && name == "TodoWrite" && input["todos"].as_array().unwrap().len() == 3));
+        assert_eq!(serde_json::to_value(&events[1]).unwrap(), json!({
+            "type":"plan", "explanation":null, "items":[
+                {"text":"Inspect code","status":"done"},
+                {"text":"Writing tests","status":"inProgress"},
+                {"text":"Run checks","status":"pending"}
+            ]
+        }));
+        assert!(matches!(&events[2], AgentEvent::ToolCall { name, .. } if name == "TodoWrite"));
+        assert_eq!(events[3], AgentEvent::Plan { items: vec![], explanation: None });
+        assert!(events[1].is_persistent());
+        let wire = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(serde_json::from_value::<AgentEvent>(wire).unwrap(), events[1]);
+        let mut nested: Value = serde_json::from_str(include_str!("../../tests/fixtures/claude_todo_synthetic.jsonl").lines().next().unwrap()).unwrap();
+        nested["parent_tool_use_id"] = json!("parent");
+        assert!(parse_line(&nested.to_string()).is_empty());
     }
 
     #[test]

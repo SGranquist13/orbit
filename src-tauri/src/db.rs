@@ -1092,6 +1092,22 @@ impl Db {
         Ok(StoredEvent { seq: self.conn.last_insert_rowid(), ts, event: ev.clone() })
     }
 
+    /// Last plan in the current turn, retained after completion until the next turn/session.
+    pub fn latest_plan(&self, workspace_id: &str) -> anyhow::Result<Option<AgentEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT payload FROM events WHERE workspace_id = ?1 ORDER BY seq DESC",
+        )?;
+        let rows = stmt.query_map([workspace_id], |r| r.get::<_, String>(0))?;
+        for row in rows {
+            match serde_json::from_str::<AgentEvent>(&row?) {
+                Ok(event @ AgentEvent::Plan { .. }) => return Ok(Some(event)),
+                Ok(AgentEvent::SessionReset | AgentEvent::TurnStarted) => return Ok(None),
+                _ => {}
+            }
+        }
+        Ok(None)
+    }
+
     pub fn events(&self, workspace_id: &str) -> anyhow::Result<Vec<StoredEvent>> {
         let mut stmt = self
             .conn
@@ -1157,6 +1173,36 @@ mod tests {
         assert!(db.archived_workspaces().unwrap().is_empty());
         db.set_setting("app_settings", "{}").unwrap();
         assert_eq!(db.setting("app_settings").unwrap().as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn latest_plan_persists_and_respects_turn_and_session_boundaries() {
+        let db = Db::memory();
+        db.insert_repo(&Repo { id: "r".into(), name: "r".into(), path: "/r".into(), base_branch: "main".into() }).unwrap();
+        db.insert_workspace(&Workspace {
+            id: "w".into(), repo_id: "r".into(), name: "w".into(), branch: "b".into(),
+            path: "/w".into(), agent: "claude".into(), status: "idle".into(), ..Default::default()
+        }).unwrap();
+        assert_eq!(db.latest_plan("w").unwrap(), None);
+        let plan = AgentEvent::Plan {
+            items: vec![crate::agent::PlanItem { text: "Run checks".into(), status: crate::agent::PlanStatus::Pending }],
+            explanation: Some("Verify".into()),
+        };
+        db.append_event("w", &AgentEvent::TurnStarted).unwrap();
+        db.append_event("w", &plan).unwrap();
+        assert_eq!(db.latest_plan("w").unwrap(), Some(plan.clone()));
+        assert_eq!(db.events("w").unwrap().last().unwrap().event, plan);
+        assert_eq!(db.latest_plan("other-workspace").unwrap(), None);
+        let cleared = AgentEvent::Plan { items: vec![], explanation: None };
+        db.append_event("w", &cleared).unwrap();
+        db.append_event("w", &AgentEvent::Message { text: "Done".into() }).unwrap();
+        db.append_event("w", &AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: false, error: None, interrupted: false }).unwrap();
+        assert_eq!(db.latest_plan("w").unwrap(), Some(cleared));
+        db.append_event("w", &AgentEvent::TurnStarted).unwrap();
+        assert_eq!(db.latest_plan("w").unwrap(), None);
+        db.append_event("w", &plan).unwrap();
+        db.append_event("w", &AgentEvent::SessionReset).unwrap();
+        assert_eq!(db.latest_plan("w").unwrap(), None);
     }
 
     #[test]

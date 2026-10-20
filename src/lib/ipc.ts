@@ -186,6 +186,7 @@ export type AgentEvent =
   | { type: "sessionStarted"; sessionId: string; model: string | null }
   | { type: "userMessage"; text: string; skill?: string; images?: ImageRef[]; files?: FileRef[] }
   | { type: "turnStarted" }
+  | { type: "plan"; items: PlanItem[]; explanation: string | null }
   | { type: "textDelta"; text: string }
   | { type: "message"; text: string }
   | { type: "toolCall"; id: string; name: string; input: unknown }
@@ -208,6 +209,13 @@ export type AgentEvent =
   | { type: "sessionReset" }
   | { type: "error"; message: string }
   | { type: "exited"; code: number | null; stderr: string };
+
+export interface PlanItem {
+  text: string;
+  status: "pending" | "inProgress" | "done";
+}
+
+export type PlanEvent = Extract<AgentEvent, { type: "plan" }>;
 
 export interface StoredEvent {
   seq: number;
@@ -769,6 +777,7 @@ export const api = {
   getRateLimits: () => invoke<RateLimits[]>("get_rate_limits"),
   usageReport: (sinceMs: number | null) => invoke<UsageReport>("usage_report", { sinceMs }),
   loadEvents: (id: string) => invoke<StoredEvent[]>("load_events", { id }),
+  latestPlan: (workspaceId: string) => invoke<PlanEvent | null>("latest_plan", { workspaceId }),
   workspaceChanges: (id: string) => invoke<FileChange[]>("workspace_changes", { id }),
   archiveWorkspace: (id: string, removeWorktree: boolean, force = false) =>
     invoke<void>("archive_workspace", { id, removeWorktree, force }),

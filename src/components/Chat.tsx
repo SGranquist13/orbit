@@ -113,6 +113,7 @@ export function Chat({ ws }: { ws: Workspace }) {
       <div className="border-t-[1.5px] border-line" />
       <RelatedPopover ws={ws} />
 
+      <PlanCard wsId={ws.id} running={running} />
       <Transcript blocks={blocks} live={live} running={running} loading={!events} wsId={ws.id} />
       <Composer ws={ws} running={running} />
     </div>
@@ -430,6 +431,12 @@ const BlockView = memo(function BlockView({ block, active, wsId }: { block: Bloc
           <span className="dither-rule flex-1 bg-line-strong" />
         </div>
       );
+    case "plan":
+      return (
+        <div className="text-[11px] font-medium tabular-nums text-mute">
+          Updated plan ({block.done}/{block.total})
+        </div>
+      );
     case "sessionReset":
       return (
         <div className="flex items-center gap-3 text-[11px] font-medium text-mute">
@@ -447,6 +454,54 @@ const BlockView = memo(function BlockView({ block, active, wsId }: { block: Bloc
       );
   }
 });
+
+/** The agent's own plan, pinned above the transcript while the turn or session has one. */
+function PlanCard({ wsId, running }: { wsId: string; running: boolean }) {
+  const plan = useApp((s) => s.plans[wsId]);
+  const key = `orbit.planCollapsed.${wsId}`;
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(key) === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    useApp.getState().ensurePlan(wsId);
+    try { setCollapsed(localStorage.getItem(key) === "1"); } catch { setCollapsed(false); }
+  }, [wsId, key]);
+  if (!plan || plan.items.length === 0) return null;
+  const done = plan.items.filter((i) => i.status === "done").length;
+  const toggle = () => {
+    setCollapsed(!collapsed);
+    try { localStorage.setItem(key, collapsed ? "0" : "1"); } catch { /* storage unavailable */ }
+  };
+  return (
+    <div data-testid="plan-card" className="shrink-0 border-b-[1.5px] border-line bg-panel px-6 py-2">
+      <button onClick={toggle} aria-expanded={!collapsed} className="flex w-full items-center gap-1.5 text-[11px] font-medium tabular-nums text-mute hover:text-fg">
+        <ChevronRight className={cn("size-3 transition-transform", !collapsed && "rotate-90")} strokeWidth={2.5} />
+        <span>Plan · {done}/{plan.items.length}</span>
+      </button>
+      {!collapsed && (
+        <ul className="mt-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto">
+          {plan.items.map((item, i) => (
+            <li key={i} className="relative flex items-start gap-2 overflow-hidden text-[12px] leading-5">
+              {item.status === "inProgress" && running && <span className="dither-sweep bg-run opacity-20" />}
+              <span className="relative mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
+                {item.status === "done" ? (
+                  <Check className="size-3.5 text-ok" strokeWidth={2.5} />
+                ) : item.status === "inProgress" ? (
+                  <span className="size-2 bg-run" />
+                ) : (
+                  <span className="size-2 rounded-full border-[1.5px] border-line-strong" />
+                )}
+              </span>
+              <span className={cn("relative min-w-0", item.status === "done" ? "text-mute line-through" : item.status === "inProgress" ? "text-fg" : "text-dim")}>
+                {item.text}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function ToolGroup({ calls, active, wsId }: { calls: ToolCallView[]; active: boolean; wsId: string }) {
   const [open, setOpen] = useState(false);

@@ -817,6 +817,18 @@ await step("roles-opt-in", async () => {
   if (cleared.profile) throw new Error(`profile not cleared: ${cleared.profile}`);
 });
 
+await step("agent-plan", async () => {
+  // The agent's own todo list is pinned above the chat as a plan card and kept by latest_plan.
+  const ws = await newWorkspace({
+    agent: "claude", model: "haiku",
+    prompt: "Use your todo list tool to plan three steps for saying hello, mark them all done, then reply done.",
+  });
+  await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
+  const plan = await invoke("latest_plan", { workspaceId: ws.id });
+  if (!plan || plan.items.length < 1) throw new Error(`no plan recorded: ${JSON.stringify(plan)}`);
+  await waitFor("plan card", `return !!document.querySelector('[data-testid=plan-card]') && /Plan · \d+\/\d+/.test(document.querySelector('[data-testid=plan-card]').innerText)`, 10_000);
+});
+
 await step("settings-accept-edits", async () => {
   // Accept edits allows file edits but denies shell commands. (A bare `echo > file` is auto-approved by the
   // Claude CLI in this mode as a "file edit", so the denied command is a node one-liner.)

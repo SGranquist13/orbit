@@ -37,7 +37,6 @@ Show the Claude and Codex plan windows (5-hour, weekly) with used share and rese
 - **Rewind to any turn:** reset code and conversation to any earlier turn, or branch a new workspace from there.
 - **Automatic review on Ship:** a read-only Reviewer posts inline findings on the PR.
 - **Best of N:** one prompt, several attempts side by side, keep the best.
-- **Agent's plan:** the agent's own todo list pinned above the chat with live progress.
 
 ## Design notes
 

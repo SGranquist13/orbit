@@ -14,6 +14,7 @@ import {
   type FileChange,
   type Pack,
   type PrStatus,
+  type PlanEvent,
   type Profile,
   type Related,
   type Repo,
@@ -41,6 +42,9 @@ interface AppState {
   transcripts: Record<string, StoredEvent[]>;
   /** In-flight streamed text per workspace, cleared when the final message lands. */
   live: Record<string, string>;
+  /** The agent's current plan per workspace (undefined = not fetched, null = none). */
+  plans: Record<string, PlanEvent | null>;
+  ensurePlan: (id: string) => void;
   changes: Record<string, FileChange[]>;
   /** Live digest of each workspace's event log; drives unread dots and the inbox. */
   summaries: Record<string, Summary>;
@@ -208,6 +212,12 @@ export const useApp = create<AppState>((set, get) => ({
   selectedId: null,
   transcripts: {},
   live: {},
+  plans: {},
+  ensurePlan: (id) => {
+    if (useApp.getState().plans[id] !== undefined) return;
+    useApp.setState((s) => ({ plans: { ...s.plans, [id]: s.plans[id] ?? null } }));
+    api.latestPlan(id).then((p) => useApp.setState((s) => (s.plans[id] ? s : { plans: { ...s.plans, [id]: p } }))).catch(() => {});
+  },
   changes: {},
   summaries: {},
   usage: {},
@@ -750,6 +760,12 @@ function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
       live: clearsLive ? { ...s.live, [id]: "" } : s.live,
       summaries: { ...s.summaries, [id]: foldSummary(s.summaries[id], id, seq, ts, event) },
       usage: patchUsage(s.usage, id, event),
+      plans:
+        event.type === "plan"
+          ? { ...s.plans, [id]: event }
+          : event.type === "turnStarted" || event.type === "sessionReset"
+            ? { ...s.plans, [id]: null }
+            : s.plans,
     };
   });
   // The workspace the user is looking at never counts as unread.
