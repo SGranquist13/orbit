@@ -16,6 +16,10 @@ Every task gets its own git worktree, branch and agent. You get one inbox for al
 
 [**Download**](https://github.com/SGranquist13/orbit/releases/latest) · [Quick start](#quick-start) · [Features](#features) · [FAQ](#faq) · [Changelog](CHANGELOG.md)
 
+<!-- release:start (written by `bun run release`) -->
+**New in [v0.2.0](https://github.com/SGranquist13/orbit/releases/tag/v0.2.0):** Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.
+<!-- release:end -->
+
 <br/>
 
 <img src="docs/screenshot.png" alt="Orbit: a workspace with an agent's fix, its PR, attached folders and skill chips; the sidebar lists the fleet across three repos" width="900" />
@@ -32,7 +36,7 @@ Orbit is the control room for that workflow:
 - **Attention, not tabs.** An inbox shows only the sessions that need you: finished, failed, asking a question, or blocked by red CI. Each comes with suggested replies you can send in one keystroke.
 - **Built for shipping.** Commit, push, draft PR, checks, Fix CI, review comments and merge, all from one panel. Orbit runs your checks before anything leaves your machine.
 
-It doesn't replace your editor. Agents write the code; Orbit keeps the fleet organised and moving.
+Agents write the code; Orbit keeps the fleet organised and moving. When you want to see exactly what an agent is doing, the built-in **Code view** follows its edits live.
 
 ## How it works
 
@@ -52,7 +56,7 @@ It doesn't replace your editor. Agents write the code; Orbit keeps the fleet org
 2. **Download** `Orbit_x.y.z_x64-setup.exe` from [Releases](https://github.com/SGranquist13/orbit/releases/latest) and run it.
    > The installer isn't code-signed yet, so Windows SmartScreen will warn you. Click **More info → Run anyway**.
 3. **Add a repository** (bottom-left of the sidebar) and press **Ctrl+N** to start your first workspace.
-4. Give it a task, switch to something else, and come back when the **Inbox** (Ctrl+I) says it's done.
+4. Give it a task, switch to something else, and come back when the **Inbox** (Alt+1) says it's done.
 
 > Want to look around without agents or accounts? Run the UI in mock mode (see [Build from source](#build-from-source)).
 
@@ -60,6 +64,8 @@ It doesn't replace your editor. Agents write the code; Orbit keeps the fleet org
 
 ### Fleet of workspaces
 - One **git worktree + branch per task**. Claude Code and Codex run side by side, with streaming chat, tool-call groups, interrupt, and resume after restart.
+- **Images and files in chat:** paste, drop or attach them. Images go to Claude and Codex natively; files as paths the agent reads itself.
+- Model lists come straight from the agent CLIs, plus any custom model id.
 - **Profiles:** Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer. Read-only roles are **enforced**, not just prompted.
 - **Attach folders** (read-only or editable) and discover related projects (package.json, Cargo.toml, pyproject, go.mod), so agents can work across repos.
 - **Context meter** per session, with Compact and New session; per-turn tokens and cost, and a usage report.
@@ -67,6 +73,11 @@ It doesn't replace your editor. Agents write the code; Orbit keeps the fleet org
 ### Attention inbox
 - Workspaces that finished, failed, asked something, have failing checks or need a sync.
 - **Suggested replies**, from rules or a cheap AI pass, sent with a number key. Inline reply, dismiss, snooze, `j`/`k` navigation.
+
+### Code view
+- A built-in editor (CodeMirror 6): explorer, tabs, quick open, find and replace, project search, terminal, git gutter and side-by-side diffs.
+- **Watch mode** follows the agent as it edits: change flashes, gutter marks and a per-turn activity timeline. Edits stream in as the agent writes them.
+- Select some lines and **ask the agent about them** (Ctrl+I).
 
 ### Ship to GitHub
 - **Ship panel:** commit, push, draft PR, live checks, *Fix CI*, *Address comments*, *Ready for review*, *Squash & merge*.
@@ -89,16 +100,19 @@ It doesn't replace your editor. Agents write the code; Orbit keeps the fleet org
 - **Simplify:** a read-only pass finds cleanups in your diff and applies the low-risk ones one at a time. Each lands in its own commit, and any that breaks your checks is reverted.
 
 ### Made for the keyboard
+VS Code keybindings throughout, including the editor and `Ctrl+K` chords.
+
 | Shortcut | Action | Shortcut | Action |
 |---|---|---|---|
-| `Ctrl+K` | Command palette | `Ctrl+.` | Ship panel |
+| `Ctrl+Shift+P` / `F1` | Command palette | `Ctrl+Shift+G` | Ship panel |
 | `Ctrl+N` | New workspace | `Ctrl+1…9` | Jump to workspace |
-| `Ctrl+I` | Inbox | `Ctrl+B` | Toggle sidebar |
-| `Ctrl+Shift+G` | Issues | `Ctrl+\` | Focus mode |
-| `Ctrl+Shift+E` | Routines | `Ctrl+Shift+L` | Dark / light theme |
-| `Ctrl+Shift+T` | Teammates | `Esc` | Stop the running turn |
+| `Alt+1` | Inbox | `Alt+2` | Code view |
+| `Alt+3` | Routines | `Alt+4` | Teammates |
+| `Alt+5` | Issues | `Ctrl+P` | Quick open file |
+| `Ctrl+B` | Toggle sidebar | `Ctrl+K Z` | Focus mode |
+| `Ctrl+K Ctrl+T` | Dark / light theme | `Esc` | Stop the running turn |
 
-Every action is also in the command palette, and Settings (`Ctrl+,`) lets you adjust almost every behaviour.
+Every action is also in the command palette. Rebind any shortcut in Settings (`Ctrl+,`) > Keyboard shortcuts, where you can also adjust almost every other behaviour.
 
 ## Requirements
 
@@ -134,7 +148,7 @@ bun run dev          # UI-only mock mode at http://localhost:1420: no agents, re
 
 **Do I need API keys?** No. Orbit drives the Claude Code and Codex CLIs you already use, with their existing logins and subscriptions.
 
-**Is it an editor?** No. Orbit is where you run and steer agents and ship their work. Open any workspace in your editor when you want to look closer: it's a normal folder on disk.
+**Does it replace my editor?** It doesn't have to. The Code view is good for watching agents and quick edits, and every workspace is a normal folder on disk you can open in your own editor.
 
 **Can agents break my checkout?** They work in separate worktrees on their own branches. Your main checkout is never touched, and archiving asks before discarding uncommitted work.
 
@@ -142,15 +156,13 @@ bun run dev          # UI-only mock mode at http://localhost:1420: no agents, re
 
 **Can I use local models?** Utility tasks (suggestions, commit messages, PR drafts, summaries) can run on Ollama or any OpenAI-compatible server (Settings → Models). Running whole agent sessions on local models is experimental.
 
-**How well is it tested?** This release was verified with an end-to-end suite that drives the real app: 46 scenarios with real Claude and Codex agents, plus 10 against real GitHub PRs, CI and issues. There are also 178 Rust unit tests. [FEATURES.md](FEATURES.md) lists what's available, what's in preview, and the roadmap.
+**How well is it tested?** Every release is verified with an end-to-end suite that drives the real app with real Claude and Codex agents, a second suite against real GitHub PRs, CI and issues, and Rust unit tests. [FEATURES.md](FEATURES.md) lists what's available, what's in preview, and the roadmap.
 
 ## Roadmap
 
 Next up:
-- Load model lists from the CLIs, and switch agent or model on an existing workspace
-- Image and file attachments in the composer
+- Switch the agent or model of an existing workspace
 - Your own Claude plugins and repo-local skills in `/` autocomplete
-- Per-workspace skill-pack toggles
 - Shipping linked PRs across repositories
 - Signed installer, and macOS and Linux builds
 

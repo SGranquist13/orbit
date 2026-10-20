@@ -17,6 +17,10 @@ bun run dev      # http://localhost:1420, fake backend in src/lib/mock.ts
 
 Most UI work can be done and checked here. Run the real app with `bun run app`.
 
+## Branches and releases
+
+Open pull requests against **`next`**, the integration branch for the coming release. `main` only moves when a release is cut, so it always matches the latest download. If your change is user-facing, add a line under `## Unreleased` in [CHANGELOG.md](CHANGELOG.md).
+
 ## Checks before a pull request
 
 ```
