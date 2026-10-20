@@ -42,6 +42,8 @@ pub struct Workspace {
     pub dismissed_seq: i64,
     /// Profile id (`<plugin>:<name>`); None = builder.
     pub profile: Option<String>,
+    /// Pack directory names disabled only in this workspace.
+    pub disabled_packs: Vec<String>,
     /// Hidden from the inbox until this time (ms epoch); 0 = not snoozed.
     pub snoozed_until: i64,
     /// The last Ship gate / check run failed (cleared by a passing check or a new user message).
@@ -235,6 +237,7 @@ fn workspace_from_row(r: &Row) -> rusqlite::Result<Workspace> {
         seen_seq: r.get("seen_seq")?,
         dismissed_seq: r.get("dismissed_seq")?,
         profile: r.get("profile")?,
+        disabled_packs: serde_json::from_str(&r.get::<_, String>("disabled_packs")?).unwrap_or_default(),
         snoozed_until: r.get("snoozed_until")?,
         checks_failed: r.get::<_, i64>("checks_failed")? != 0,
         checks_command: r.get("checks_command")?,
@@ -366,6 +369,7 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         ("seen_seq", "ALTER TABLE workspaces ADD COLUMN seen_seq INTEGER NOT NULL DEFAULT 0"),
         ("dismissed_seq", "ALTER TABLE workspaces ADD COLUMN dismissed_seq INTEGER NOT NULL DEFAULT 0"),
         ("profile", "ALTER TABLE workspaces ADD COLUMN profile TEXT"),
+        ("disabled_packs", "ALTER TABLE workspaces ADD COLUMN disabled_packs TEXT NOT NULL DEFAULT '[]'"),
         ("snoozed_until", "ALTER TABLE workspaces ADD COLUMN snoozed_until INTEGER NOT NULL DEFAULT 0"),
         ("checks_failed", "ALTER TABLE workspaces ADD COLUMN checks_failed INTEGER NOT NULL DEFAULT 0"),
         ("checks_command", "ALTER TABLE workspaces ADD COLUMN checks_command TEXT"),
@@ -462,11 +466,12 @@ impl Db {
 
     pub fn insert_workspace(&self, ws: &Workspace) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 ws.id, ws.repo_id, ws.name, ws.branch, ws.path, ws.agent, ws.model, ws.status,
-                ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id, ws.teammate
+                ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id, ws.teammate,
+                serde_json::to_string(&ws.disabled_packs)?
             ],
         )?;
         Ok(())
@@ -516,6 +521,11 @@ impl Db {
 
     pub fn set_profile(&self, id: &str, profile: Option<&str>) -> anyhow::Result<Workspace> {
         self.conn.execute("UPDATE workspaces SET profile = ?2 WHERE id = ?1", params![id, profile])?;
+        self.workspace(id)
+    }
+
+    pub fn set_workspace_packs(&self, id: &str, disabled: &[String]) -> anyhow::Result<Workspace> {
+        self.conn.execute("UPDATE workspaces SET disabled_packs = ?2 WHERE id = ?1", params![id, serde_json::to_string(disabled)?])?;
         self.workspace(id)
     }
 
@@ -1060,6 +1070,28 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_pack_migration_and_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute("INSERT INTO repos VALUES ('r', 'repo', '/repo', 'main', 0)", []).unwrap();
+        conn.execute("INSERT INTO workspaces (id, repo_id, name, branch, path, agent, created_at, updated_at) VALUES ('w', 'r', 'task', 'b', '/w', 'claude', 0, 0)", []).unwrap();
+        migrate(&conn).unwrap();
+        let db = Db { conn };
+        assert!(db.workspace("w").unwrap().disabled_packs.is_empty());
+        db.set_agent_session("w", "conversation").unwrap();
+        db.set_workspace_packs("w", &["shipkit".into(), "pack-with-different-plugin".into()]).unwrap();
+        migrate(&db.conn).unwrap(); // Existing values survive subsequent startups.
+        let ws = db.workspace("w").unwrap();
+        assert_eq!(ws.disabled_packs, vec!["shipkit", "pack-with-different-plugin"]);
+        assert_eq!(ws.agent_session_id.as_deref(), Some("conversation"));
+        assert_eq!(serde_json::to_value(&ws).unwrap()["disabledPacks"], serde_json::json!(["shipkit", "pack-with-different-plugin"]));
+        let copy = Workspace { id: "copy".into(), ..ws };
+        db.insert_workspace(&copy).unwrap();
+        assert_eq!(db.workspace("copy").unwrap().disabled_packs, copy.disabled_packs);
+        assert!(db.set_workspace_packs("w", &[]).unwrap().disabled_packs.is_empty());
+    }
 
     #[test]
     fn archive_and_restore() {

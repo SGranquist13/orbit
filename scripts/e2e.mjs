@@ -1106,6 +1106,66 @@ await step("packs-install-lifecycle", async () => {
   }
 });
 
+await step("workspace-pack-toggles", async () => {
+  await withPack(async () => {
+    const ws = await mkWs("workspace packs");
+    const other = await mkWs("other workspace packs", { agent: "codex", model: null });
+    const pins = await invoke("get_pins");
+    try {
+      await invoke("set_pins", { pins: [...pins, "e2epack:hello"] });
+      await reloadUi();
+      await selectWsInSidebar("workspace packs");
+      await paletteRun("Skill packs for this workspace", "Skill packs for this workspace");
+      const toggle = `document.querySelector('[role="switch"][aria-label="Enable e2e-pack in this workspace"]')`;
+      await waitFor("workspace switch", `return !!(${toggle})`, 5000);
+      await js(`(${toggle}).click()`);
+      await until("workspace override saved", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.disabledPacks.includes("e2e-pack"), 5000, 100);
+      if (!(await hasSkill("e2epack:hello"))) throw new Error("workspace toggle changed global skills");
+      await closePacksDialog();
+      await setComposer("/e2epack");
+      await sleep(300);
+      if (await autocompleteHas("e2epack:hello")) throw new Error("workspace-disabled skill in autocomplete");
+      if (await js(`return [...document.querySelectorAll('button')].some((b) => b.innerText.trim() === 'HELLO')`)) throw new Error("workspace-disabled pinned chip visible");
+      await setComposer("");
+      await key("p", { ctrl: true, shift: true });
+      await type("e2epack:hello");
+      await sleep(300);
+      if (await js(`return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes('/e2epack:hello'))`)) throw new Error("workspace-disabled palette skill visible");
+      await key("Escape");
+      let rejected = false;
+      try { await invoke("run_skill", { id: ws.id, skillId: "e2epack:hello", args: "" }); }
+      catch (e) { rejected = String(e).includes("disabled"); }
+      if (!rejected) throw new Error("disabled Claude skill was not rejected");
+      await selectWsInSidebar("other workspace packs");
+      await setComposer("/e2epack");
+      await waitFor("other workspace still offers skill", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+      await setComposer("");
+      await invoke("set_workspace_packs", { id: other.id, disabled: ["e2e-pack", "shipkit"] });
+      if ((await invoke("list_profiles", { workspaceId: other.id })).some((p) => p.pack === "shipkit")) throw new Error("workspace-disabled profiles offered");
+      rejected = false;
+      try { await invoke("run_skill", { id: other.id, skillId: "e2epack:hello", args: "" }); }
+      catch (e) { rejected = String(e).includes("disabled"); }
+      if (!rejected) throw new Error("disabled Codex skill was not rejected");
+      await invoke("set_pack_enabled", { name: "e2e-pack", enabled: false });
+      await invoke("set_workspace_packs", { id: other.id, disabled: [] });
+      if (await hasSkill("e2epack:hello")) throw new Error("workspace override enabled a globally disabled pack");
+      await invoke("set_pack_enabled", { name: "e2e-pack", enabled: true });
+      await selectWsInSidebar("workspace packs");
+      await openPacksDialog();
+      await js(`(${toggle}).click()`);
+      await until("workspace override cleared", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.disabledPacks.length === 0, 5000, 100);
+      await closePacksDialog();
+      await setComposer("/e2epack");
+      await waitFor("workspace autocomplete restored", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+      await setComposer("");
+    } finally {
+      await invoke("set_pins", { pins });
+      await invoke("set_workspace_packs", { id: ws.id, disabled: [] });
+      await invoke("set_workspace_packs", { id: other.id, disabled: [] });
+    }
+  });
+});
+
 await step("pins-and-palette-skill", async () => {
   await withPack(async () => {
     await mkWs("pins ws");

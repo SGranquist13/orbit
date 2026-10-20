@@ -29,6 +29,8 @@ export interface Workspace {
   dismissedSeq: number;
   /** Profile id (`<plugin>:<name>`); null = Builder. */
   profile: string | null;
+  /** Pack directory names disabled only in this workspace. */
+  disabledPacks: string[];
   /** Hidden from the inbox until this time (ms epoch); 0 = not snoozed. */
   snoozedUntil: number;
   /** The last Ship gate / check run failed (cleared by a pass or a new message). */
@@ -214,9 +216,15 @@ export interface Profile {
 
 export const DEFAULT_PROFILE = "shipkit:builder";
 
-/** The workspace's active profile: its stored one, else (or if it vanished) Builder. */
-export function activeProfile(profiles: Profile[], ws: Pick<Workspace, "profile">): Profile | undefined {
-  return profiles.find((p) => p.id === ws.profile) ?? profiles.find((p) => p.id === DEFAULT_PROFILE);
+/** Filter the globally available skills or profiles by stable pack directory name. */
+export function workspacePackItems<T extends { pack: string }>(items: T[], ws?: Pick<Workspace, "disabledPacks">): T[] {
+  return items.filter((item) => !ws?.disabledPacks.includes(item.pack));
+}
+
+/** The workspace's active profile: its stored one, else an available Builder. */
+export function activeProfile(profiles: Profile[], ws: Pick<Workspace, "profile" | "disabledPacks">): Profile | undefined {
+  const available = workspacePackItems(profiles, ws);
+  return available.find((p) => p.id === ws.profile) ?? available.find((p) => p.id === DEFAULT_PROFILE);
 }
 
 export interface PrStatus {
@@ -700,7 +708,8 @@ export const api = {
   setPins: (pins: string[]) => invoke<void>("set_pins", { pins }),
   listPacks: () => invoke<Pack[]>("list_packs"),
   listSkills: () => invoke<Skill[]>("list_skills"),
-  listProfiles: () => invoke<Profile[]>("list_profiles"),
+  listProfiles: (workspaceId?: string) => invoke<Profile[]>("list_profiles", { workspaceId }),
+  setWorkspacePacks: (id: string, disabled: string[]) => invoke<Workspace>("set_workspace_packs", { id, disabled }),
   setWorkspaceProfile: (id: string, profile: string) => invoke<Workspace>("set_workspace_profile", { id, profile }),
   installPack: (url: string) => invoke<Pack>("install_pack", { url }),
   updatePack: (name: string) => invoke<void>("update_pack", { name }),
