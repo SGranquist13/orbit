@@ -8,6 +8,7 @@ mod code;
 mod db;
 mod gh;
 mod git;
+mod images;
 mod llm;
 mod maintenance;
 mod related;
@@ -22,7 +23,7 @@ mod teammates;
 mod trunk;
 mod usage;
 
-use agent::{AgentEvent, AgentKind, Command, SessionConfig, SessionHandle};
+use agent::{AgentEvent, AgentKind, Command, FileRef, ImageRef, SessionConfig, SessionHandle};
 use db::{Attachment, Db, Repo, StoredEvent, Workspace};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -150,6 +151,8 @@ fn emit_workspace(app: &AppHandle, ws: &Workspace) {
 
 /// Handles one normalized event: persist, update workspace status, notify, forward to UI.
 fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent) {
+    // Inline (base64) images become files first, so nothing stored or emitted carries base64.
+    let ev = images::externalize(&state.home, ws_id, ev);
     // Drafts are desktop UI previews only: bypass persistence and all turn bookkeeping hooks.
     // They stay off the mobile bridge: the phone protocol (ide_mobile/docs/protocol.md) has no such event.
     if matches!(ev, AgentEvent::ToolDraft { .. }) {
@@ -322,6 +325,13 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
     let mut add_dirs = add_dirs;
     if teammate.is_some() && kind == AgentKind::Claude {
         add_dirs.push(teammates::dir(&state.home));
+    }
+    // Attached files live here; always granted so the agent can Read them (also for read-only roles).
+    if kind == AgentKind::Claude {
+        let files = images::files_dir(&state.home).join(&ws.id);
+        if std::fs::create_dir_all(&files).is_ok() {
+            add_dirs.push(files);
+        }
     }
     let settings = state.settings();
     let settings_local_ollama_url = settings.ollama_url();
@@ -736,8 +746,15 @@ fn set_related_default(state: State<AppState>, repo_id: String, path: String, en
 
 /// Records what the user did (`display` + optional `skill`) and sends `payload` to the agent.
 fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Option<String>, payload: String) -> anyhow::Result<()> {
+    send_with_images(app, state, id, display, skill, payload, vec![], vec![])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_with_images(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Option<String>, payload: String, images: Vec<ImageRef>, files: Vec<FileRef>) -> anyhow::Result<()> {
     let ws = state.db().workspace(id)?;
-    on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill });
+    on_agent_event(app, state, id, AgentEvent::UserMessage { text: display, skill, images: images.clone(), files: files.clone() });
+    // Attached files are read by the agent with its own tools, so it gets their paths.
+    let payload = format!("{payload}{}", images::files_block(&files));
     // Pending role hand-over note from a profile switch goes to the agent, not the transcript.
     let note = state.notices_lock().remove(id);
     let payload = match note {
@@ -751,10 +768,10 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
         e
     };
     let handle = ensure_session(app, state, &ws).map_err(fail)?;
-    if !handle.send(Command::User(payload.clone())) {
+    if !handle.send(Command::User { text: payload.clone(), images: images.clone() }) {
         // Session died between lookup and send: drop it and retry once with a fresh process.
         state.sessions_lock().remove(id);
-        ensure_session(app, state, &ws).map_err(fail)?.send(Command::User(payload));
+        ensure_session(app, state, &ws).map_err(fail)?.send(Command::User { text: payload, images });
     }
     let ws = state.db().set_status(id, "running")?;
     emit_workspace(app, &ws);
@@ -763,8 +780,41 @@ fn send(app: &AppHandle, state: &AppState, id: &str, display: String, skill: Opt
 
 /// Async so agent processes are spawned inside the Tokio runtime.
 #[tauri::command]
-async fn send_message(app: AppHandle, state: State<'_, AppState>, id: String, text: String) -> CmdResult<()> {
-    send(&app, &state, &id, text.clone(), None, text).map_err(err)
+async fn send_message(app: AppHandle, state: State<'_, AppState>, id: String, text: String, images: Option<Vec<ImageRef>>, files: Option<Vec<FileRef>>) -> CmdResult<()> {
+    let files: Vec<FileRef> = files.unwrap_or_default();
+    if !files.is_empty() {
+        images::check_file_paths(&state.home, &files)?;
+    }
+    let images: Vec<ImageRef> = images.unwrap_or_default().into_iter().map(|i| ImageRef { data: None, ..i }).collect();
+    if !images.is_empty() {
+        images::check_send_paths(&state.home, &images)?;
+    }
+    send_with_images(&app, &state, &id, text.clone(), None, text, images, files).map_err(err)
+}
+
+/// Stores a pasted/dropped image (base64, no `data:` prefix) for this workspace.
+#[tauri::command]
+fn save_image(state: State<AppState>, workspace_id: String, data: String, media_type: String) -> CmdResult<ImageRef> {
+    images::save_base64(&state.home, &workspace_id, &data, &media_type)
+}
+
+/// Stores an attached file (base64) for this workspace, keeping its (sanitised) name.
+#[tauri::command]
+fn save_file(state: State<AppState>, workspace_id: String, name: String, data: String, media_type: String) -> CmdResult<FileRef> {
+    images::save_file(&state.home, &workspace_id, &name, &data, &media_type)
+}
+
+/// An image as a `data:` URL, if it lives in Orbit's images folder, the worktree or an attachment.
+#[tauri::command]
+fn read_image(state: State<AppState>, workspace_id: String, path: String) -> CmdResult<String> {
+    let ws = state.db().workspace(&workspace_id).map_err(err)?;
+    let attachments = state.db().attachments(&workspace_id).map_err(err)?;
+    let mut roots = vec![images::images_dir(&state.home), PathBuf::from(&ws.path)];
+    for a in attachments {
+        roots.push(PathBuf::from(a.path));
+        roots.extend(a.worktree_path.map(PathBuf::from));
+    }
+    images::read_data_url(&roots, Path::new(&ws.path), &path)
 }
 
 /// Runs a pack skill/command: natively as a slash command for Claude, expanded inline for Codex.
@@ -907,7 +957,7 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
     if ws.agent_session_id.is_none() {
         return Err("Nothing to compact yet".into());
     }
-    on_agent_event(&app, &state, &id, AgentEvent::UserMessage { text: "/compact".into(), skill: None });
+    on_agent_event(&app, &state, &id, AgentEvent::UserMessage { text: "/compact".into(), skill: None, images: vec![], files: vec![] });
     let handle = ensure_session(&app, &state, &ws).map_err(err)?;
     if !handle.send(Command::Compact) {
         state.sessions_lock().remove(&id);
@@ -1368,6 +1418,9 @@ pub fn run() {
             list_workspaces,
             create_workspace,
             send_message,
+            save_image,
+            save_file,
+            read_image,
             interrupt,
             stop_session,
             rename_workspace,

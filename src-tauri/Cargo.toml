@@ -41,6 +41,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 base64 = "0.22"
+sha2 = "0.10"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 if-addrs = "0.13"

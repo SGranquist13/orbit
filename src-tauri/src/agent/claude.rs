@@ -1,7 +1,7 @@
 //! Claude Code adapter: one long-lived `claude -p` process per session speaking
 //! stream-json on stdin/stdout.
 
-use super::{process, push_tail, AgentEvent, Command, EventSink, SessionConfig};
+use super::{process, push_tail, AgentEvent, Command, EventSink, ImageRef, SessionConfig};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,11 +81,39 @@ pub fn local_env(cfg: &SessionConfig) -> Vec<(&'static str, String)> {
 }
 
 pub fn user_line(text: &str) -> String {
-    json!({
-        "type": "user",
-        "message": { "role": "user", "content": [{ "type": "text", "text": text }] }
-    })
-    .to_string()
+    user_line_with_images(text, &[])
+}
+
+/// A user message: one base64 image block per `(media_type, data)`, then the text (omitted when
+/// empty and there are images).
+pub fn user_line_with_images(text: &str, images: &[(String, String)]) -> String {
+    let mut content: Vec<Value> = images
+        .iter()
+        .map(|(media_type, data)| json!({ "type": "image", "source": { "type": "base64", "media_type": media_type, "data": data } }))
+        .collect();
+    if !text.is_empty() || content.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    json!({ "type": "user", "message": { "role": "user", "content": content } }).to_string()
+}
+
+/// Images inside a `tool_result` content array (e.g. the Read tool on a PNG), base64 still inline.
+fn tool_result_images(c: &Value) -> Vec<ImageRef> {
+    c.as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter(|p| p["type"] == "image" && p["source"]["type"] == "base64")
+                .filter_map(|p| {
+                    Some(ImageRef {
+                        path: String::new(),
+                        media_type: p["source"]["media_type"].as_str()?.to_string(),
+                        data: Some(p["source"]["data"].as_str()?.to_string()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn interrupt_line(request_id: u64) -> String {
@@ -221,6 +249,7 @@ impl ClaudeParser {
                     id: b["tool_use_id"].as_str().unwrap_or_default().to_string(),
                     output: tool_result_text(&b["content"]),
                     is_error: b["is_error"].as_bool().unwrap_or(false),
+                    images: tool_result_images(&b["content"]),
                 })
                 .collect(),
             Some("result") => {
@@ -442,7 +471,13 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
                 Some(line) = err_rx.recv() => push_tail(&mut tail, line),
                 cmd = rx.recv() => {
                     let line = match cmd {
-                        Some(Command::User(text)) => user_line(&text),
+                        Some(Command::User { text, images }) => {
+                            let (loaded, errors) = crate::images::load_base64(&images);
+                            for message in errors {
+                                sink(AgentEvent::Error { message });
+                            }
+                            user_line_with_images(&text, &loaded)
+                        }
                         Some(Command::Compact) => user_line("/compact"),
                         Some(Command::Interrupt) => {
                             interrupts += 1;
@@ -472,6 +507,34 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_line_with_images_orders_images_before_text() {
+        let imgs = vec![("image/png".to_string(), "AAAA".to_string())];
+        let v: Value = serde_json::from_str(&user_line_with_images("what is this?", &imgs)).unwrap();
+        let c = v["message"]["content"].as_array().unwrap();
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0], json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}));
+        assert_eq!(c[1], json!({"type":"text","text":"what is this?"}));
+        // images only: no empty text block
+        let v: Value = serde_json::from_str(&user_line_with_images("", &imgs)).unwrap();
+        assert_eq!(v["message"]["content"].as_array().unwrap().len(), 1);
+        // plain text unchanged
+        let v: Value = serde_json::from_str(&user_line("hi")).unwrap();
+        assert_eq!(v["message"]["content"], json!([{"type":"text","text":"hi"}]));
+    }
+
+    #[test]
+    fn tool_result_with_image_block() {
+        let line = r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_9","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},{"type":"text","text":"ok"}]}]}}"#;
+        let evs = parse_line(line);
+        assert_eq!(evs, vec![AgentEvent::ToolResult {
+            id: "toolu_9".into(),
+            output: "ok".into(),
+            is_error: false,
+            images: vec![ImageRef { path: String::new(), media_type: "image/png".into(), data: Some("iVBORw0KGgo=".into()) }],
+        }]);
+    }
 
     #[test]
     fn partial_json_truncated_members_and_containers() {
@@ -617,7 +680,8 @@ mod tests {
         assert!(evs.contains(&AgentEvent::ToolResult {
             id: "toolu_1".into(),
             output: "hello world".into(),
-            is_error: false
+            is_error: false,
+            images: vec![]
         }));
         assert!(evs.contains(&AgentEvent::Message { text: "The file says hello world.".into() }));
         assert!(matches!(
@@ -670,7 +734,7 @@ mod tests {
             let _ = tx.send(ev);
         }))
         .unwrap();
-        handle.send(Command::User("Reply with the single word: pong".into()));
+        handle.send(Command::User { text: "Reply with the single word: pong".into(), images: vec![] });
         let mut seen = Vec::new();
         let done = tokio::time::timeout(std::time::Duration::from_secs(120), async {
             while let Some(ev) = rx.recv().await {

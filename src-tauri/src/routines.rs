@@ -1277,7 +1277,7 @@ mod tests {
         let ev = |seq: i64, event: AgentEvent| db::StoredEvent { seq, ts: 0, event };
         let events = vec![
             ev(1, AgentEvent::Message { text: "old run".into() }),
-            ev(2, AgentEvent::UserMessage { text: "go".into(), skill: None }),
+            ev(2, AgentEvent::UserMessage { text: "go".into(), skill: None, images: vec![], files: vec![] }),
             ev(3, AgentEvent::Message { text: "one".into() }),
             ev(4, AgentEvent::TurnStarted),
             ev(5, AgentEvent::Message { text: "two".into() }),

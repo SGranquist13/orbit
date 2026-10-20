@@ -11,6 +11,34 @@ pub struct Db {
     conn: Connection,
 }
 
+/// One-line text for a user message: `/skill args`, with `[image]` / `[file] name` / `[2 files]`
+/// markers for attachments.
+pub fn user_preview(text: String, skill: Option<String>, images: &[crate::agent::ImageRef], files: &[crate::agent::FileRef]) -> String {
+    let mut s = match skill {
+        Some(skill) if text.is_empty() => format!("/{skill}"),
+        Some(skill) => format!("/{skill} {text}"),
+        None => text,
+    };
+    let mut marks = Vec::new();
+    match images.len() {
+        0 => {}
+        1 => marks.push("[image]".to_string()),
+        n => marks.push(format!("[{n} images]")),
+    }
+    match files {
+        [] => {}
+        [f] => marks.push(format!("[file] {}", f.name)),
+        fs => marks.push(format!("[{} files]", fs.len())),
+    }
+    for m in marks {
+        if !s.is_empty() {
+            s.push(' ');
+        }
+        s.push_str(&m);
+    }
+    s
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Repo {
@@ -564,11 +592,7 @@ impl Db {
     /// The user's latest message (with its `/skill` prefix), for naming save-point commits.
     pub fn last_user_text(&self, id: &str) -> Option<String> {
         match self.latest(id, "userMessage").ok().flatten()?.event {
-            AgentEvent::UserMessage { text, skill } => Some(match skill {
-                Some(skill) if text.is_empty() => format!("/{skill}"),
-                Some(skill) => format!("/{skill} {text}"),
-                None => text,
-            }),
+            AgentEvent::UserMessage { text, skill, images, files } => Some(user_preview(text, skill, &images, &files)),
             _ => None,
         }
     }
@@ -676,12 +700,8 @@ impl Db {
         if let Some(StoredEvent { event: AgentEvent::Message { text }, .. }) = self.latest(id, "message")? {
             s.last_assistant_text = Some(text);
         }
-        if let Some(StoredEvent { event: AgentEvent::UserMessage { text, skill }, .. }) = self.latest(id, "userMessage")? {
-            s.last_user_text = Some(match skill {
-                Some(skill) if text.is_empty() => format!("/{skill}"),
-                Some(skill) => format!("/{skill} {text}"),
-                None => text,
-            });
+        if let Some(StoredEvent { event: AgentEvent::UserMessage { text, skill, images, files }, .. }) = self.latest(id, "userMessage")? {
+            s.last_user_text = Some(user_preview(text, skill, &images, &files));
         }
         Ok(s)
     }
@@ -1108,10 +1128,10 @@ mod tests {
             ..Default::default()
         };
         db.insert_workspace(&ws).unwrap();
-        db.append_event("w", &AgentEvent::UserMessage { text: "hi".into(), skill: None }).unwrap();
+        db.append_event("w", &AgentEvent::UserMessage { text: "hi".into(), skill: None, images: vec![], files: vec![] }).unwrap();
         let evs = db.events("w").unwrap();
         assert_eq!(evs.len(), 1);
-        assert_eq!(evs[0].event, AgentEvent::UserMessage { text: "hi".into(), skill: None });
+        assert_eq!(evs[0].event, AgentEvent::UserMessage { text: "hi".into(), skill: None, images: vec![], files: vec![] });
         assert_eq!(db.set_status("w", "running").unwrap().status, "running");
 
         // Inbox bookkeeping.
