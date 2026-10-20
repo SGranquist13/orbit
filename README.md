@@ -142,7 +142,7 @@ bun run dev          # UI-only mock mode at http://localhost:1420: no agents, re
 
 **Can I use local models?** Utility tasks (suggestions, commit messages, PR drafts, summaries) can run on Ollama or any OpenAI-compatible server (Settings → Models). Running whole agent sessions on local models is experimental.
 
-**How well is it tested?** This release was verified with an end-to-end suite that drives the real app: 46 scenarios with real Claude and Codex agents, plus 10 against real GitHub PRs, CI and issues. There are also 178 Rust unit tests. [FEATURES.md](FEATURES.md) shows exactly what is proven in the real app.
+**How well is it tested?** This release was verified with an end-to-end suite that drives the real app: 46 scenarios with real Claude and Codex agents, plus 10 against real GitHub PRs, CI and issues. There are also 178 Rust unit tests. [FEATURES.md](FEATURES.md) lists what's available, what's in preview, and the roadmap.
 
 ## Roadmap
 
@@ -154,7 +154,7 @@ Next up:
 - Shipping linked PRs across repositories
 - Signed installer, and macOS and Linux builds
 
-Ideas and discussion live in [PLANNING.md](PLANNING.md). The companion iPhone app (pair, follow and steer the fleet from your phone) is built but not publicly released yet.
+The roadmap is in [FEATURES.md](FEATURES.md); ideas and design notes live in [PLANNING.md](PLANNING.md). The companion iPhone app (pair, follow and steer the fleet from your phone) is built but not publicly released yet.
 
 ## Contributing
 

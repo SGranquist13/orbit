@@ -2,7 +2,7 @@
 
 ## 0.1.0 - 2026-10-18
 
-First public release. Windows 10/11, unsigned installer. Features below are the ones verified in the real app (see [FEATURES.md](FEATURES.md) for the full ledger, including features that are built but not yet verified).
+First public release. Windows 10/11, unsigned installer. Features below are the ones verified in the real app (see [FEATURES.md](FEATURES.md) for everything available, in preview and on the roadmap).
 
 ### Workspaces and agents
 - One git worktree and branch per task; many workspaces running in parallel.

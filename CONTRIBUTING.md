@@ -44,6 +44,6 @@ Use conventional commit messages (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`
 - `src/lib/ipc.ts` mirrors the Rust types (serde camelCase); keep them in sync.
 - Agent output is normalised into `AgentEvent` in Rust; the UI never sees agent-specific shapes. Parsers are tested against recorded fixtures in `src-tauri/tests/fixtures`: record a real stream first, then fix the parser.
 - Never call a helper that locks `db()` while already holding it (`std::sync::Mutex` is not reentrant); `bun run check:guards` catches the common forms.
-- Update [FEATURES.md](FEATURES.md) when you build or verify a feature; only mark it verified after it works in the real app.
+- Update [FEATURES.md](FEATURES.md) when you build or verify a feature: new features start as Preview and become Available once they work end to end in the real app.
 
 More background is in [CLAUDE.md](CLAUDE.md), which doubles as the architecture notes.
