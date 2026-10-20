@@ -1074,6 +1074,11 @@ fn stop_session(state: State<AppState>, id: String) {
 }
 
 #[tauri::command]
+fn latest_plan(state: State<AppState>, workspace_id: String) -> CmdResult<Option<AgentEvent>> {
+    state.db().latest_plan(&workspace_id).map_err(err)
+}
+
+#[tauri::command]
 fn load_events(state: State<AppState>, id: String) -> CmdResult<Vec<StoredEvent>> {
     state.db().events(&id).map_err(err)
 }
@@ -1461,6 +1466,7 @@ pub fn run() {
             all_workspace_usage,
             usage_report,
             load_events,
+            latest_plan,
             workspace_changes,
             archive_workspace,
             get_setting,

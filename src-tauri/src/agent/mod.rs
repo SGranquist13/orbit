@@ -52,6 +52,20 @@ pub struct FileRef {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PlanStatus {
+    Pending,
+    InProgress,
+    Done,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanItem {
+    pub text: String,
+    pub status: PlanStatus,
+}
+
 /// Normalized event stream shared by all agents. Persisted (except deltas) and sent to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -68,6 +82,7 @@ pub enum AgentEvent {
         files: Vec<FileRef>,
     },
     TurnStarted,
+    Plan { items: Vec<PlanItem>, explanation: Option<String> },
     TextDelta { text: String },
     Message { text: String },
     ToolCall { id: String, name: String, input: Value },

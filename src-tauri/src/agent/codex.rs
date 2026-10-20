@@ -17,6 +17,19 @@ const SANDBOX_READONLY: &str = "read-only";
 pub fn parse_notification(method: &str, p: &Value) -> Vec<AgentEvent> {
     match method {
         "turn/started" => vec![AgentEvent::TurnStarted],
+        "turn/plan/updated" => {
+            let Some(plan) = p["plan"].as_array() else { return vec![] };
+            let items = plan.iter().filter_map(|step| {
+                let status = match step["status"].as_str()? {
+                    "pending" => super::PlanStatus::Pending,
+                    "inProgress" => super::PlanStatus::InProgress,
+                    "completed" => super::PlanStatus::Done,
+                    _ => return None,
+                };
+                Some(super::PlanItem { text: step["step"].as_str()?.into(), status })
+            }).collect();
+            vec![AgentEvent::Plan { items, explanation: p["explanation"].as_str().map(String::from) }]
+        }
         "item/agentMessage/delta" => vec![AgentEvent::TextDelta {
             text: p["delta"].as_str().unwrap_or_default().to_string(),
         }],
@@ -483,6 +496,23 @@ mod tests {
         assert!(final_call.is_persistent());
         assert!(matches!(final_call, AgentEvent::ToolCall { input, .. } if input["files"] == json!(["src/main.rs","poem.txt"])));
         assert!(!AgentEvent::TextDelta { text:"hi".into() }.is_persistent());
+    }
+
+    #[test]
+    fn plan_updates_normalize_generated_protocol() {
+        // Synthetic, built from codex-cli 0.163.0 app-server generate-ts:
+        // v2/TurnPlanUpdatedNotification.ts, TurnPlanStep.ts, TurnPlanStepStatus.ts.
+        let events = parse_fixture("codex_plan_synthetic.jsonl");
+        assert_eq!(events.len(), 2);
+        let wire = serde_json::to_value(&events[0]).unwrap();
+        assert_eq!(wire, json!({"type":"plan","explanation":"Verify the change","items":[
+            {"text":"Inspect code","status":"done"},
+            {"text":"Write tests","status":"inProgress"},
+            {"text":"Run checks","status":"pending"}
+        ]}));
+        assert!(events[0].is_persistent());
+        assert_eq!(serde_json::from_value::<AgentEvent>(wire).unwrap(), events[0]);
+        assert_eq!(events[1], AgentEvent::Plan { items: vec![], explanation: None });
     }
 
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
