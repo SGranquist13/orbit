@@ -62,6 +62,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Model lists from the agent CLIs | ✅ | Codex catalog, Claude aliases, custom model ids; refresh in Settings > Agents or the palette |
 | Workspace context in the agent's system prompt (branch, base, linked issue) | ✅ | |
 | **Profiles**: Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer | ✅ | Switch mid-session; the agent is told its new role |
+| Roles are optional: no role by default, "+ Add role" in New workspace, a default role in Settings > General, "No role" in the chat footer | 🧪 | |
 | Read-only profiles enforced by the agent's sandbox and tool allowlist, not just by the prompt | ✅ | |
 | "Build this plan" from the inbox when a Planner finishes | 🧪 | |
 | Agents and the commands they start stop with Orbit, even after a crash | 🧪 | |
