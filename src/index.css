@@ -361,15 +361,13 @@ input:focus-visible {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* A plain tint, not dither: dither never goes behind text (the 2px gutter mark carries the texture). */
   background: var(--run);
-  mask-image: var(--dither-fade-x);
-  mask-repeat: repeat-y;
-  mask-size: 100% 32px;
   animation: agent-flash 1.2s ease-out forwards;
 }
-@keyframes agent-flash { from { opacity: 0.3; } to { opacity: 0; } }
+@keyframes agent-flash { from { opacity: 0.16; } to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .cm-agent-flash::before { animation: none; opacity: 0.12; }
+  .cm-agent-flash::before { animation: none; opacity: 0.08; }
 }
 
 /* Live agent cursor: run colour denotes work; texture is confined to a 2px bar. */
