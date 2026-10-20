@@ -4,6 +4,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type AgentKind = "claude" | "codex";
 
+export interface EditorInfo {
+  id: string;
+  name: string;
+  command: string;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;
@@ -419,6 +425,8 @@ export interface Settings {
   editorLiveTyping: "stream" | "instant";
   /** Empty = auto (pwsh, then powershell, then cmd on Windows; $SHELL elsewhere). */
   terminalShell: string;
+  /** null selects the first detected editor. */
+  editorCommand: string | null;
 }
 
 /** `llm.rs`: local model servers for utility tasks. */
@@ -695,6 +703,8 @@ export const api = {
   routineRuns: (routineId: string, limit = 12) => invoke<RoutineRun[]>("routine_runs", { routineId, limit }),
   /** Next fire times (ms epoch) for the editor preview; rejects on an invalid schedule. */
   previewSchedule: (schedule: Schedule, count = 3) => invoke<number[]>("preview_schedule", { schedule, count }),
+  listEditors: () => invoke<EditorInfo[]>("list_editors"),
+  openInEditor: (path: string, editor?: string) => invoke<void>("open_in_editor", { path, editor: editor ?? null }),
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: Partial<Settings>) => invoke<Settings>("update_settings", { patch }),
   localModelsStatus: () => invoke<LocalStatus>("local_models_status"),

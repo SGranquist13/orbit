@@ -322,6 +322,7 @@ let settings: Settings = {
   editorFollowAgent: true,
   editorLiveTyping: "stream",
   terminalShell: "",
+  editorCommand: null,
   syncIntervalMinutes: 10,
   staleDays: 3,
   staleBehind: 20,
@@ -1190,6 +1191,13 @@ export function installMockBackend() {
             isDefault: false, efforts: [],
           }));
         }
+        case "list_editors":
+          return [
+            { id: "code", name: "VS Code", command: "code" },
+            { id: "cursor", name: "Cursor", command: "cursor" },
+          ];
+        case "open_in_editor":
+          return;
         case "get_settings":
           return settings;
         case "update_settings": {

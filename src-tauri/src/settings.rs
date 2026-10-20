@@ -34,6 +34,8 @@ pub struct Settings {
     pub editor_follow_agent: bool,
     pub editor_live_typing: String,
     pub terminal_shell: String,
+    /// Detected editor id or custom argv with an optional {path}; None selects the first detected.
+    pub editor_command: Option<String>,
     // general
     pub branch_prefix: String,
     pub default_agent: String,
@@ -118,6 +120,7 @@ impl Default for Settings {
             editor_follow_agent: true,
             editor_live_typing: "stream".into(),
             terminal_shell: String::new(),
+            editor_command: None,
             branch_prefix: default_branch_prefix(),
             default_agent: "claude".into(),
             default_model_claude: String::new(),
@@ -444,6 +447,9 @@ mod tests {
         assert_eq!(d.editor_autosave, "off");
         assert_eq!(d.editor_live_typing, "stream");
         assert!(d.terminal_shell.is_empty());
+        assert_eq!(d.editor_command, None);
+        assert_eq!(d.patched(&json!({"editorCommand": "cursor"})).unwrap().editor_command.as_deref(), Some("cursor"));
+        assert_eq!(d.patched(&json!({"editorCommand": null})).unwrap().editor_command, None);
         let s = d.patched(&json!({"editorFontSize": 100, "editorTabSize": 0, "editorAutosave": "delay", "terminalShell": "pwsh.exe -NoLogo"})).unwrap();
         assert_eq!((s.editor_font_size, s.editor_tab_size), (28, 1));
         assert_eq!(s.terminal_shell, "pwsh.exe -NoLogo");

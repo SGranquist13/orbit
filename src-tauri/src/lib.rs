@@ -15,6 +15,7 @@ mod related;
 mod remote;
 mod routines;
 mod settings;
+mod editor;
 mod simplify;
 mod skills;
 mod chief;
@@ -1223,6 +1224,17 @@ async fn test_local_model(state: State<'_, AppState>, backend: String, model: St
 }
 
 #[tauri::command]
+fn list_editors() -> Vec<editor::EditorInfo> {
+    editor::detect_editors()
+}
+
+#[tauri::command]
+fn open_in_editor(state: State<AppState>, path: String, editor: Option<String>) -> CmdResult<()> {
+    let selected = editor.or_else(|| state.settings().editor_command);
+    editor::open(&path, selected.as_deref())
+}
+
+#[tauri::command]
 fn get_settings(state: State<AppState>) -> settings::Settings {
     state.settings()
 }
@@ -1465,6 +1477,8 @@ pub fn run() {
             archive_workspace,
             get_setting,
             get_settings,
+            list_editors,
+            open_in_editor,
             update_settings,
             environment_info,
             agent_models,
