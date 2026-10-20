@@ -22,7 +22,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - **UI state persists between e2e runs** (WebView2 localStorage in the scratch dir's own `webview2` profile, e.g. Ship panel open; the harness sets `WEBVIEW2_USER_DATA_FOLDER` so e2e can run while your own Orbit is open). Use the harness helpers (`ui.openShip()`, race-free `ui.newWorkspace()` that waits for the new workspace) instead of toggles.
 - **GitHub checks:** third-party apps (e.g. CodeRabbit) add statuses (a `StatusContext` with `state`, not `status`/`conclusion`). Judge CI by the sandbox's own `check` job.
 - **Agents use judgement:** asking an agent to create a CI-breaking file and then "fix CI" fails because it rightly refuses to undo its own requested work. Simulate breakage from a teammate commit instead.
-- **Ctrl+Shift+I opens WebView2 DevTools** in dev builds, so it can't be an app shortcut (Issues uses Ctrl+Shift+G).
+- **Ctrl+Shift+I opens WebView2 DevTools** in dev builds, so it can't be an app shortcut (Issues uses Alt+5).
 - **Token counts exclude cache reads** (every API call re-reads the cached conversation). "Tokens" = input + output + cache writes.
 - **Sessions carry a generation** (`SessionHandle.generation`); an `Exited` event only forgets its own session. Keep that invariant when touching session lifecycle.
 - **Read-only must be enforced, not prompted.** Claude read-only = `--permission-mode default` + allowlist (a denylist alone lets `echo > file` through Bash). New sessions after a profile switch need the `role_notices` hand-over note or the resumed agent keeps its old role.
@@ -58,6 +58,7 @@ Claude orchestrates; Codex (through the Claude Code `codex` plugin) is a second 
 - Rust: `cmd //c "scripts\\cargo.cmd test"` (or `build`) from bash; it wraps the VS 2022 toolchain. Add `-- --include-ignored` for live tests against real agent CLIs.
 
 ## Architecture
+- `src/lib/keybindings.ts` — pure command registry, effective bindings, context resolution and chord dispatcher. `keybindingRuntime.ts` registers app handlers; `lib/code/keymap.ts` generates live CodeMirror bindings. Settings `keybindings` stores full-map overrides, including empty arrays to unbind.
 - `src-tauri/src/agent/` — each agent CLI is driven over stdio and normalized into `AgentEvent` (`mod.rs`). **The UI never sees agent-specific shapes.**
   - `claude.rs`: `claude -p --input-format stream-json --output-format stream-json …`, one long-lived process per workspace; interrupt = stdin `control_request`.
   - `codex.rs`: `codex app-server` JSON-RPC; mid-turn messages use `turn/steer`. Protocol types: `codex app-server generate-ts --out <dir>`.
@@ -84,7 +85,7 @@ Claude orchestrates; Codex (through the Claude Code `codex` plugin) is a second 
 - `src/lib/transcript.ts` folds events into render blocks (consecutive tool calls → one collapsible group).
 
 ## Conventions
-- **Colour is reserved for function.** Chrome is greyscale (dark "Void" by default, light "Paper" via Ctrl+Shift+L; `data-theme` on `<html>`, `src/lib/theme.ts`). Hues only carry meaning: `run` (working), `ok` (done / additions), `bad` (error / deletions), `warn`, `info`, `merged`. `accent` is the neutral emphasis ink (white on dark), not a brand colour. Never add decorative colour. **One deliberate exception (user, 2026-10-12): teammate avatars** are cute colourful blob faces (`avatar-*` tokens); status still lives in dots, never in the avatar colour.
+- **Colour is reserved for function.** Chrome is greyscale (dark "Void" by default, light "Paper" via Ctrl+K Ctrl+T; `data-theme` on `<html>`, `src/lib/theme.ts`). Hues only carry meaning: `run` (working), `ok` (done / additions), `bad` (error / deletions), `warn`, `info`, `merged`. `accent` is the neutral emphasis ink (white on dark), not a brand colour. Never add decorative colour. **One deliberate exception (user, 2026-10-12): teammate avatars** are cute colourful blob faces (`avatar-*` tokens); status still lives in dots, never in the avatar colour.
 - Chat bubbles (your messages) are the one softly rounded element: `rounded-[16px]` with a 5px tail corner, `bg-hover` + `border-line`. Never white/inverted blocks.
 - **All UI text is Inter** (400 body, 500 UI labels, 600 headings; `tabular-nums` for numbers). JetBrains Mono only for literal code: code blocks, inline code, tool commands/paths, tool output. Never `font-mono` on chrome (labels, chips, keys, badges). Keep weights restrained; no font-bold in UI chrome. Small radii (3–6px), 1.5px borders, hard offset shadows (`shadow-hard`, `shadow-hard-sm`).
 - Use the theme tokens (`bg-panel`, `text-mute`, `border-line-strong`, `bg-run`, …), never raw hex in components.

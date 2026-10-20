@@ -1,3 +1,4 @@
+import { editorKeymap, plainBindings } from "../../lib/code/keymap";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
@@ -25,8 +26,6 @@ import { baselineKey, bufferKey, useCode, type AgentActivity } from "../../store
 import { useApp } from "../../stores/app";
 
 import { Button } from "../ui";
-
-import { editorSelection } from "./AskSelection";
 
 import { Segmented } from "../settings/controls";
 
@@ -97,19 +96,6 @@ export function DiffView({
 
   const ready = !!left;
 
-  const askKey = EditorView.domEventHandlers({
-    keydown: (event, editor) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k" || event.shiftKey || event.altKey) return false;
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: { selection: editorSelection(editor, root, rel) } }));
-
-      return true;
-    },
-  });
-
   useLayoutEffect(() => {
     if (!host.current || !left) return;
 
@@ -127,8 +113,6 @@ export function DiffView({
 
         extensions: [
           codeTheme,
-
-          askKey,
 
           lineNumbers(),
 
@@ -148,13 +132,11 @@ export function DiffView({
         extensions: [
           codeTheme,
 
-          askKey,
-
           lineNumbers(),
 
           history(),
 
-          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+          keymap.of([...plainBindings(defaultKeymap), ...plainBindings(historyKeymap), indentWithTab]),
 
           language[1].of([]),
 
@@ -214,6 +196,7 @@ export function DiffView({
 
     view.b.dispatch({
       effects: config.current.reconfigure([
+        editorKeymap(settings?.keybindings),
         EditorState.readOnly.of(!!readonly),
         font,
         EditorState.tabSize.of(tabSize),
@@ -222,8 +205,18 @@ export function DiffView({
       ]),
     });
 
-    view.a.dispatch({ effects: leftConfig.current.reconfigure([font, EditorState.tabSize.of(tabSize), wrap]) });
-  }, [ready, revision, readonly, settings?.editorFontSize, settings?.editorTabSize, settings?.editorWordWrap]);
+    view.a.dispatch({
+      effects: leftConfig.current.reconfigure([editorKeymap(settings?.keybindings), font, EditorState.tabSize.of(tabSize), wrap]),
+    });
+  }, [
+    ready,
+    revision,
+    readonly,
+    settings?.editorFontSize,
+    settings?.editorTabSize,
+    settings?.editorWordWrap,
+    settings?.keybindings,
+  ]);
 
   useLayoutEffect(() => {
     const editor = merge.current?.a;

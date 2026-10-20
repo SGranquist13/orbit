@@ -25,7 +25,7 @@ const scratch = resolveScratch(stepOnly ? undefined : args[0], "orbit-e2e");
 const only = stepOnly ? args[0] : args[1]; // optional: run a single step by name
 const h = createHarness({ scratch, only });
 const ui = uiHelpers(h);
-const { home, launch, quit, cdp, js, waitFor, until, key, type, shot, invoke, step } = h;
+const { home, launch, quit, cdp, js, waitFor, until, key, chord, type, shot, invoke, step } = h;
 const repo = path.join(scratch, "repo");
 
 const DOM = `
@@ -44,15 +44,15 @@ async function composerSend(text) {
 
 const turnEnds = TURN_ENDS;
 
-// Inbox helpers. Ctrl+I toggles, and a failed earlier step can leave the view open, so open it idempotently.
+// Inbox helpers. Alt+1 opens, and a failed earlier step can leave the view open, so open it idempotently.
 const INBOX_JS = `const inbox = [...document.querySelectorAll('h1')].find((h) => h.innerText === 'Inbox')?.closest('.flex-col');
     const rows = () => [...(inbox?.querySelectorAll('li') ?? [])];`;
-// Ctrl+Shift+T toggles the Teammates view, so only press it when the view isn't already open.
+// Alt+4 opens the Teammates view, so only press it when the view isn't already open.
 const ensureTeammates = async () => {
-  if (!(await js(`return !!document.querySelector('[data-teammates]')`))) await key("t", { ctrl: true, shift: true });
+  if (!(await js(`return !!document.querySelector('[data-teammates]')`))) await key("4", { alt: true });
 };
 const ensureInbox = async () => {
-  if (!(await js(`${INBOX_JS} return !!inbox`))) await key("i", { ctrl: true });
+  if (!(await js(`${INBOX_JS} return !!inbox`))) await key("1", { alt: true });
   await waitFor("inbox view", `${INBOX_JS} return !!inbox`, 5000);
 };
 // Focus follows the mouse (and moves to a neighbour after a send), so key shortcuts must name their row:
@@ -123,7 +123,7 @@ await step("code-shell", async () => {
   const file = path.join(repo, filename);
   fs.writeFileSync(file, "export const value = 1;\n");
   try {
-    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("o", { ctrl: true, shift: true });
+    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("2", { alt: true });
     await waitFor("Code view", `return !!document.querySelector('[data-code-view]')`, 10_000);
     await js(`document.querySelector('[data-code-view] header button[aria-haspopup="menu"]').click()`);
     const repoName = (await invoke("list_repos"))[0].name;
@@ -145,13 +145,75 @@ await step("code-shell", async () => {
     await waitFor("quick open", `return !!document.querySelector('[cmdk-input][placeholder^="Find a file"]')`, 5000);
     await key("Escape");
     await shot("code-shell-void");
-    await key("l", { ctrl: true, shift: true });
+    await chord(["k", { ctrl: true }], ["t", { ctrl: true }]);
     await shot("code-shell-paper");
-    await key("l", { ctrl: true, shift: true });
+    await chord(["k", { ctrl: true }], ["t", { ctrl: true }]);
     await key("w", { ctrl: true });
   } finally {
     fs.rmSync(file, { force: true });
-    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
+  }
+});
+
+
+// No agent turn: recorder, live overrides, reset, and the save-all chord against two dirty files.
+await step("keybindings", async () => {
+  const filenames = ["ORBIT_KEYS_A.ts", "ORBIT_KEYS_B.ts"];
+  for (const name of filenames) fs.writeFileSync(path.join(repo, name), "export const value = 1;\n");
+  const panelOpen = `return document.querySelector('[aria-label="Bottom panel"]')?.getBoundingClientRect().height > 0`;
+  try {
+    await key("2", { alt: true });
+    await waitFor("Code view", `return !!document.querySelector('[data-code-view]')`, 10000);
+    await js(`document.querySelector('[data-code-view] header button[aria-haspopup="menu"]').click()`);
+    const repoName = (await invoke("list_repos"))[0].name;
+    await js(`[...document.querySelectorAll('[role="menuitem"]')].find(b => b.innerText.includes(${JSON.stringify(repoName)})).click()`);
+    await waitFor("keybinding fixtures", `return !!document.getElementById('file-${filenames[0]}')`, 10000);
+    for (const name of filenames) {
+      await js(`document.getElementById('file-${name}').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+      await js(`document.getElementById('file-${name}').click()`);
+      await waitFor("active fixture", `return [...document.querySelectorAll('[role="tab"][aria-selected="true"]')].some(t => t.innerText.includes('${name}'))`, 5000);
+      await js(`document.querySelector('[data-code-view] .cm-content').focus()`);
+      await key("End", { ctrl: true });
+      await type("\n// keybindings save all\n");
+    }
+    await chord(["k", { ctrl: true }], ["s", {}]);
+    await until("both files saved by chord", async () => filenames.every(name => fs.readFileSync(path.join(repo, name), "utf8").includes("keybindings save all")), 10000, 100);
+    await chord(["k", { ctrl: true }], ["s", { ctrl: true }]);
+    await waitFor("keyboard shortcuts editor", `return !!document.querySelector('[data-command="code.toggleTerminal"]')`, 10000);
+    await js(`document.querySelector('[aria-label="Change Toggle terminal"]').click()`);
+    await waitFor("recorder", `return !!document.querySelector('[aria-label="Record keybinding"]')`, 5000);
+    await key("t", { ctrl: true, alt: true });
+    await key("Enter");
+    await until("binding saved to settings", async () => (await invoke("get_settings")).keybindings["code.toggleTerminal"]?.[0] === "ctrl+alt+t", 5000, 100);
+    await waitFor("binding persisted", `return document.querySelector('[data-command="code.toggleTerminal"]')?.innerText.includes('User')`, 5000);
+    await key("2", { alt: true });
+    await js(`document.activeElement?.blur()`);
+    const before = await js(panelOpen);
+    await key("t", { ctrl: true, alt: true });
+    await waitFor("rebound terminal toggles", `${panelOpen.replace('return ', 'return (')} ) !== ${before}`, 10000);
+    const rebound = await js(panelOpen);
+    await key("`", { ctrl: true });
+    await sleep(200);
+    if ((await js(panelOpen)) !== rebound) throw new Error("old Toggle terminal key still active");
+    await chord(["k", { ctrl: true }], ["s", { ctrl: true }]);
+    await waitFor("shortcuts after rebind", `return !!document.querySelector('[data-command="code.toggleTerminal"]')`, 5000);
+    await h.autoConfirm();
+    await js(`[...document.querySelectorAll('#settings-shortcuts button')].find(b => b.innerText === 'Reset all').click()`);
+    await waitFor("defaults restored", `return document.querySelector('[data-command="code.toggleTerminal"]')?.innerText.includes('Default')`, 5000);
+    await key("2", { alt: true });
+    await js(`document.activeElement?.blur()`);
+    const restored = await js(panelOpen);
+    await key("`", { ctrl: true });
+    await waitFor("default terminal toggles", `${panelOpen.replace('return ', 'return (')} ) !== ${restored}`, 5000);
+    await shot("keybindings");
+  } finally {
+    // Restore defaults even when a recorder/assertion fails, so subsequent scenarios are independent.
+    await key("Escape");
+    await invoke("update_settings", { patch: { keybindings: {} } });
+    for (const name of filenames) fs.rmSync(path.join(repo, name), { force: true });
+    await js(`location.reload()`);
+    await sleep(1000);
+    await key("1", { alt: true });
   }
 });
 
@@ -161,7 +223,7 @@ await step("code-panels", async () => {
   const file = path.join(repo, filename);
   fs.writeFileSync(file, 'export const PANEL_NEEDLE = "hi";\n');
   try {
-    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("o", { ctrl: true, shift: true });
+    if (!(await js(`return !!document.querySelector('[data-code-view]')`))) await key("2", { alt: true });
     await waitFor("Code view", `return !!document.querySelector('[data-code-view]')`, 10_000);
     await js(`document.querySelector('[data-code-view] header button[aria-haspopup="menu"]').click()`);
     const repoName = (await invoke("list_repos"))[0].name;
@@ -189,7 +251,7 @@ await step("code-panels", async () => {
     await key("w", { ctrl: true });
   } finally {
     fs.rmSync(file, { force: true });
-    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
   }
 });
 
@@ -279,17 +341,17 @@ await step("codex-workspace-turn", async () => {
 });
 
 await step("palette-and-theme", async () => {
-  await key("k", { ctrl: true });
+  await key("p", { ctrl: true, shift: true });
   await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
   await type("notes");
   await shot("07-palette");
   await key("Escape");
   const before = await js(`return document.documentElement.dataset.theme`);
-  await key("l", { ctrl: true, shift: true });
+  await chord(["k", { ctrl: true }], ["t", { ctrl: true }]);
   const after = await js(`return document.documentElement.dataset.theme`);
-  if (before === after) throw new Error("Ctrl+Shift+L did not toggle theme");
+  if (before === after) throw new Error("Ctrl+K Ctrl+T did not toggle theme");
   await shot("08-theme-toggled");
-  await key("l", { ctrl: true, shift: true });
+  await chord(["k", { ctrl: true }], ["t", { ctrl: true }]);
 });
 
 await step("packs-dialog", async () => {
@@ -330,7 +392,7 @@ await step("inbox", async () => {
   await focusInboxRow(name);
   await key("e");
   await waitFor("dismissed", `${INBOX} return !rows().some((li) => li.innerText.includes(${name}) && /Finished/.test(li.innerText))`, 10_000);
-  await key("i", { ctrl: true });
+  await ui.workspaceView();
 });
 
 await step("inbox-snooze", async () => {
@@ -352,7 +414,7 @@ await step("inbox-snooze", async () => {
   await js(`document.activeElement?.blur()`);
   await focusInboxRow(name);
   await key("e");
-  await key("i", { ctrl: true });
+  await ui.workspaceView();
 });
 
 await step("attached-folders", async () => {
@@ -490,7 +552,7 @@ await step("routines", async () => {
     const live = await invoke("list_workspaces");
     return !live.some((w) => !known.has(w.id) && w.routineId === routine.id);
   }, 30_000, 1000);
-  await key("e", { ctrl: true, shift: true });
+  await key("3", { alt: true });
   // Diagnostic for a full-suite-only failure (2026-10-18): record focus + header if the view didn't open.
   const diag = await js(`const a = document.activeElement; return (a?.tagName ?? '') + '#' + (a?.getAttribute('aria-label') ?? a?.className ?? '').slice(0, 60) + ' | h1=' + [...document.querySelectorAll('h1')].map(h => h.innerText).join(',')`);
   console.log(`      routines key diag: ${diag}`);
@@ -501,7 +563,7 @@ await step("routines", async () => {
   const simp = await invoke("save_routine", { input: { ...input, name: "", action: { kind: "simplify" }, schedule: { kind: "weekly", weekday: 5, time: "16:00" } } });
   if (simp.action.kind !== "simplify" || simp.name !== "Simplify recent changes") throw new Error(`bad simplify routine: ${JSON.stringify(simp)}`);
   await invoke("delete_routine", { id: simp.id });
-  await key("e", { ctrl: true, shift: true });
+  await ui.workspaceView();
 });
 
 // Skipped unless an Ollama server with at least one model is reachable on localhost:11434.
@@ -731,7 +793,7 @@ await step("archive-and-restore", async () => {
   await selectWsInSidebar("archive me");
   await h.autoConfirm(true);
   // UI path: palette > Archive workspace (confirm is auto-accepted).
-  await key("k", { ctrl: true });
+  await key("p", { ctrl: true, shift: true });
   await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
   await type("Archive workspace");
   await waitFor("archive item", `return [...document.querySelectorAll('[cmdk-item]')].some(i => i.innerText.includes('Archive workspace'))`, 5000);
@@ -840,7 +902,7 @@ await step("ui-shortcuts", async () => {
   const sidebarW = `return ${sw}`;
   const h1 = `return document.querySelector('header h1')?.innerText ?? ''`;
   await js(`document.activeElement?.blur()`);
-  if (await js(`return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`)) await key("i", { ctrl: true });
+  if (await js(`return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`)) await ui.workspaceView();
 
   // Ctrl+1 selects the first workspace in sidebar order (go to the last one first).
   await js(`[...document.querySelectorAll('aside li button')].at(-1).click()`);
@@ -851,21 +913,21 @@ await step("ui-shortcuts", async () => {
   if (rowNames.length > 1 && rowNames[0].includes(lastName)) throw new Error("test needs two distinct workspaces");
 
   // Palette offers Archive workspace while one is selected.
-  await key("k", { ctrl: true });
+  await key("p", { ctrl: true, shift: true });
   await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
   await type("Archive workspace");
   await waitFor("Archive workspace item", `return [...document.querySelectorAll('[cmdk-item]')].some(i => i.innerText.includes('Archive workspace'))`, 5000);
   await key("Escape");
   await waitFor("palette closed", `return !document.querySelector('[cmdk-input]')`, 5000);
 
-  // Focus mode (Ctrl+\) hides the sidebar; again restores it.
+  // Focus mode (Ctrl+K Z) hides the sidebar; again restores it.
   const full = await js(sidebarW);
   if (full < 150) throw new Error(`expected an expanded sidebar, width ${full}`);
-  await key("\\", { ctrl: true });
+  await chord(["k", { ctrl: true }], ["z", {}]);
   await waitFor("sidebar hidden in focus mode", `return ${sw} === 0`, 5000).catch(async () => {
     throw new Error(`focus mode left a sidebar of width ${await js(sidebarW)}`);
   });
-  await key("\\", { ctrl: true });
+  await chord(["k", { ctrl: true }], ["z", {}]);
   await waitFor("sidebar back", `return ${sw} >= 150`, 5000);
 
   // Ctrl+B collapses the sidebar to a rail and back.
@@ -880,9 +942,9 @@ await step("ui-shortcuts", async () => {
   await key("i", { ctrl: true, shift: true });
   await sleep(500);
   if (await js(`return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`)) throw new Error("Ctrl+Shift+I opened the Inbox");
-  await key("i", { ctrl: true });
-  await waitFor("Ctrl+I still opens the Inbox", `return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`, 5000);
-  await key("i", { ctrl: true });
+  await key("1", { alt: true });
+  await waitFor("Alt+1 opens the Inbox", `return [...document.querySelectorAll('h1')].some((h) => h.innerText === 'Inbox')`, 5000);
+  await ui.workspaceView();
 });
 
 /** Waits until the workspace's status is idle (a turn or queued message may still be running). */
@@ -950,7 +1012,7 @@ const withPack = async (fn) => {
   }
 };
 const openPacksDialog = async () => {
-  await key("k", { ctrl: true });
+  await key("p", { ctrl: true, shift: true });
   await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
   await type("Manage skill packs");
   await key("Enter");
@@ -966,7 +1028,7 @@ const setComposer = async (text) => {
 };
 const autocompleteHas = (id) => js(`return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes(${JSON.stringify("/" + id)}))`);
 const paletteRun = async (text, itemText) => {
-  await key("k", { ctrl: true });
+  await key("p", { ctrl: true, shift: true });
   await waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
   await type(text);
   await waitFor("palette item", `return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes(${JSON.stringify(itemText)}))`, 5000);
@@ -1213,7 +1275,7 @@ await step("trunk-warn-and-ship-anyway", async () => {
       if (!anyway.ok) throw new Error(`skip-checks did not proceed: ${JSON.stringify(anyway)}`);
       await waitFor("flag cleared", `const w = (await window.__TAURI_INTERNALS__.invoke("list_workspaces")).find((w) => w.id === ${JSON.stringify(ws.id)}); return !w.checksFailed`, 10_000);
       await waitFor("row has no Ship anyway", `${INBOX_JS} const li = rows().find((li) => li.innerText.includes(${wsKey})); return !li || !/Ship anyway/.test(li.innerText)`, 10_000);
-      await key("i", { ctrl: true });
+      await key("1", { alt: true });
     });
   } finally {
     await invoke("set_check_command", { repoId, cmd: null });
@@ -1416,7 +1478,7 @@ await step("teammates", async () => {
   const [task] = await invoke("teammate_tasks", { slug });
   if (task.workspaceId !== ws.id || !["done", "waiting"].includes(task.status)) throw new Error(`bad task: ${JSON.stringify(task)}`);
   if (!(await invoke("teammate_memory", { slug })).includes("Memory")) throw new Error("memory file was not created on first use");
-  // Open the Teammates view (Ctrl+Shift+T), pick the teammate in the list and look at its thread.
+  // Open the Teammates view (Alt+4), pick the teammate in the list and look at its thread.
   await ensureTeammates();
   await waitFor("teammates view", `return !!document.querySelector('[data-teammates] [data-teammate="${slug}"]')`, 5000);
   await js(`document.querySelector('[data-teammates] [data-teammate="${slug}"]').click()`);
@@ -1521,7 +1583,7 @@ await step("code-live", async () => {
   const filename = "ORBIT_LIVE_E2E.ts";
   fs.writeFileSync(path.join(ws.path, filename), "export const liveValue = 1;\n");
   try {
-    await js(`document.querySelector('button[title="Open in Code (Ctrl+Shift+O)"]').click()`);
+    await js(`document.querySelector('button[title^="Open in Code"]').click()`);
     await waitFor("linked Code root", `return !!document.querySelector('[data-code-view] [aria-label="Editor mode"]')`, 10000);
     await waitFor("live fixture", `return !!document.getElementById('file-${filename}')`, 10000);
     await js(`document.getElementById('file-${filename}').click()`);
@@ -1536,18 +1598,20 @@ await step("code-live", async () => {
     await waitFor("turn comparison", `return document.querySelector('.code-diff')?.innerText.includes('liveValue = 1') && document.querySelector('.code-diff')?.innerText.includes('liveValue = 2')`, 10000);
     await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Back to file').click()`);
     await js(`document.querySelector('.cm-content').focus()`);
-    await key("k", { ctrl: true });
-    await waitFor("selection prompt owns Ctrl K", `return !!document.querySelector('textarea[aria-label="Question about selection"]') && !document.querySelector('[cmdk-input]')`, 5000);
+    await key("i", { ctrl: true });
+    await waitFor("selection prompt owns Ctrl I", `return !!document.querySelector('textarea[aria-label="Question about selection"]') && !document.querySelector('[cmdk-input]')`, 5000);
     await type("Explain this line");
     await js(`const select = document.querySelector('select[aria-label="Target workspace"]'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'new'); select.dispatchEvent(new Event('change', { bubbles: true }));`);
     await js(`[...document.querySelectorAll('[aria-label="Ask about selection"] button')].find(b => b.innerText === 'Continue').click()`);
     await waitFor("new workspace selection prefill", `const t = document.querySelector('textarea[placeholder^="Describe the task"]'); return t?.value.includes('${filename}') && t.value.includes('Explain this line')`, 5000);
     await key("Escape");
-    await key("w", { ctrl: true, alt: true });
+    await key("p", { ctrl: true, shift: true });
+    await type("Toggle Watch / Manual");
+    await key("Enter");
     await waitFor("manual shortcut", `return [...document.querySelectorAll('[aria-label="Editor mode"] button')].find(b => b.innerText === 'Manual')?.getAttribute('aria-checked') === 'true'`, 5000);
     await shot("code-live");
   } finally {
-    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("o", { ctrl: true, shift: true });
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
   }
 });
 

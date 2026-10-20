@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { samePath } from "../../lib/code/agentEdits";
 import { useCode } from "../../stores/code";
 import { useApp } from "../../stores/app";
-import { Button, DiffStat, cn } from "../ui";
+import { Button, DiffStat, StatusDot, cn } from "../ui";
 import { Segmented } from "../settings/controls";
 
 function ago(ts: number) {
@@ -20,7 +20,54 @@ export function AgentStrip() {
   const activity = useCode((s) => s.activity);
   const message = useCode((s) => (ws ? s.agentMessages[ws.id] : ""));
   const activityOpen = useCode((s) => s.activityOpen);
-  if (!root || !ws) return null;
+  const workspaces = useApp((s) => s.workspaces);
+  const repos = useApp((s) => s.repos);
+  const [picking, setPicking] = useState(false);
+  if (!root) return null;
+  if (!ws) {
+    const preferred = (path: string) => {
+      const p = path.replaceAll("\\", "/").toLowerCase().replace(/\/$/, ""),
+        r = root.path.toLowerCase().replace(/\/$/, "");
+      return p === r || p.startsWith(r + "/") || r.startsWith(p + "/");
+    };
+    const priority = (repoId: string, path: string) => Number(preferred(repos.find((r) => r.id === repoId)?.path ?? path));
+    const choices = [...workspaces].sort((a, b) => priority(b.repoId, b.path) - priority(a.repoId, a.path));
+    return (
+      <div className="relative flex items-center gap-2 text-[12px] text-mute">
+        {choices.length ? (
+          <>
+            <Button aria-expanded={picking} onClick={() => setPicking(!picking)}>
+              Watch an agent ▾
+            </Button>
+            {picking && (
+              <div className="absolute left-0 top-full z-30 mt-1 min-w-56 rounded-[4px] border border-line bg-raised p-1 shadow-pop">
+                {choices.map((w) => (
+                  <button
+                    key={w.id}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-hover"
+                    onClick={() => {
+                      setPicking(false);
+                      void useCode
+                        .getState()
+                        .openRoot(w.path, { workspaceId: w.id })
+                        .then(() => useCode.getState().setMode(useCode.getState().activeRoot!, "watch"));
+                    }}
+                  >
+                    <StatusDot status={w.status} />
+                    {w.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            No agent on this folder<Button onClick={() => useApp.getState().setNewWorkspaceOpen(true)}>New workspace</Button>
+          </>
+        )}
+      </div>
+    );
+  }
   const running = turn?.running ?? ws.status === "running";
   const edit = [...activity].reverse().find((a) => a.root === root.path && a.phase === "editing" && a.turn === turn?.number);
   return (

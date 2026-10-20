@@ -1,9 +1,11 @@
+import { useKeybindingLabels } from "../../lib/useKeybinding";
 import type { AgentKind } from "../../lib/ipc";
 import { defaultModelFor, modelsFor } from "../../lib/settings";
 import { useTheme, type ThemeMode } from "../../lib/theme";
 import { Row, Segmented, Select, Toggle, save, useSettings } from "./controls";
 
 export function General() {
+  const keyLabel = useKeybindingLabels();
   const s = useSettings();
   const mode = useTheme((t) => t.mode);
   if (!s) return null;
@@ -27,7 +29,7 @@ export function General() {
 
   return (
     <>
-      <Row label="Theme" description="System follows your OS. Ctrl Shift L flips between dark and light.">
+      <Row label="Theme" description={"System follows your OS." + (keyLabel("workbench.theme") ? ` ${keyLabel("workbench.theme")} flips between dark and light.` : "")}>
         <Segmented<ThemeMode>
           label="Theme"
           value={mode}

@@ -134,7 +134,7 @@ await h.step("fix-ci-from-inbox", async () => {
   git("push", "origin", failWs.branch);
   await h.until("CI red on GitHub", async () => checksRed(prOf(failWs.branch)), 240_000, 5000);
   // The inbox surfaces failing checks; send its Fix CI suggestion with one click.
-  await h.key("i", { ctrl: true });
+  await h.key("1", { alt: true });
   const row = `[...document.querySelectorAll('li')].find(li => li.innerText.includes(${JSON.stringify(failWs.name.slice(0, 24))}) && /Checks failing/.test(li.innerText))`;
   await h.waitFor("inbox row: Checks failing", `return !!(${row})`, 90_000);
   await h.js(`(${row}).dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
@@ -142,7 +142,7 @@ await h.step("fix-ci-from-inbox", async () => {
   await h.shot("gh-03-inbox-checks-failing");
   await h.js(`[...(${row}).querySelectorAll('button')].find(b => /Fix CI/.test(b.innerText)).click()`);
   await h.until("CI green after Fix CI", async () => checksGreen(prOf(failWs.branch)), 600_000, 10_000);
-  await h.key("i", { ctrl: true });
+  await ui.workspaceView();
 });
 
 await h.step("write-ticket", async () => {
@@ -181,7 +181,7 @@ await h.step("issues-start-and-plan", async () => {
   const nPlan = fileIssue(`Add a unit test for greet (${stamp})`, "lib.js exports greet but has no tests. Add a node:test unit test.");
   const rowOf = (n) => `[...document.querySelectorAll('li')].find(li => li.innerText.includes('#${n}'))`;
   const openIssues = async () => {
-    await h.key("g", { ctrl: true, shift: true });
+    await h.key("5", { alt: true });
     await h.waitFor("Issues view", `return [...document.querySelectorAll('h1')].some(x => x.innerText === 'Issues')`, 10_000);
   };
   const press = async (n, label) => {
@@ -224,7 +224,7 @@ await h.step("new-ticket-dialog", async () => {
   const model = (await h.invoke("get_settings")).defaultModelClaude;
   await h.invoke("update_settings", { patch: { defaultAgent: "claude", defaultModelClaude: "haiku" } });
   try {
-    await h.key("k", { ctrl: true });
+    await h.key("p", { ctrl: true, shift: true });
     await h.waitFor("palette", `return !!document.querySelector('[cmdk-input]')`, 5000);
     await h.type("New ticket");
     await h.waitFor("New ticket item", `return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes('New ticket'))`, 5000);

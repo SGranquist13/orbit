@@ -1,3 +1,4 @@
+import { isNonTerminalKey, registerHandler } from "../../lib/keybindings";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -72,26 +73,22 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
     const ro = new ResizeObserver(resize);
     ro.observe(host.current);
     resize();
-    term.attachCustomKeyEventHandler((event) => {
-      if (!(event.ctrlKey || event.metaKey)) return true;
-      const key = event.key.toLowerCase();
-      if (["k", "p", "`"].includes(key) || event.code === "Backquote" || (event.shiftKey && key === "f")) return false;
-      if (event.shiftKey && (key === "c" || key === "v")) {
-        if (event.type === "keydown") {
-          event.preventDefault();
-          if (key === "c") void navigator.clipboard.writeText(term.getSelection()).catch(report);
-          else
-            void navigator.clipboard
-              .readText()
-              .then((text) => {
-                if (!disposed) term.paste(text);
-              })
-              .catch(report);
-        }
-        return false;
-      }
-      return true;
-    });
+    const terminalOff = [
+      registerHandler("terminal.copy", () => {
+        if (useApp.getState().view !== "code" || useCode.getState().activeBottomTab !== terminal.id) return false;
+        void navigator.clipboard.writeText(term.getSelection()).catch(report);
+      }),
+      registerHandler("terminal.paste", () => {
+        if (useApp.getState().view !== "code" || useCode.getState().activeBottomTab !== terminal.id) return false;
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (!disposed) term.paste(text);
+          })
+          .catch(report);
+      }),
+    ];
+    term.attachCustomKeyEventHandler((event) => !isNonTerminalKey(event, useApp.getState().settings?.keybindings));
     const input = term.onData((data) => {
       if (disposed) return;
       if (id) void ptyApi.write(id, data).catch(report);
@@ -158,6 +155,7 @@ export function TerminalView({ terminal, active }: { terminal: CodeTerminal; act
       observer.disconnect();
       ro.disconnect();
       if (id) void ptyApi.close(id).catch(report);
+      terminalOff.forEach((off) => off());
       term.dispose();
       instance.current = null;
     };

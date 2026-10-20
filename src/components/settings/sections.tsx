@@ -2,8 +2,8 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { FolderOpen } from "lucide-react";
 import pkg from "../../../package.json";
-import { Button, Kbd } from "../ui";
-import { Dot, Row, SubHeading, Toggle, save, useSettings } from "./controls";
+import { Button } from "../ui";
+import { Dot, Row, Toggle, save, useSettings } from "./controls";
 import { useEnvironment } from "./env";
 
 export function GitHub() {
@@ -48,104 +48,7 @@ export function InboxSettings() {
   );
 }
 
-const SHORTCUTS: { group: string; items: [string[], string][] }[] = [
-  {
-    group: "Anywhere",
-    items: [
-      [["Ctrl", "K"], "Command palette"],
-      [["Ctrl", "N"], "New workspace"],
-      [["Ctrl", "I"], "Inbox"],
-      [["Ctrl", "Shift", "G"], "Issues"],
-      [["Ctrl", "Shift", "E"], "Routines"],
-      [["Ctrl", "Shift", "T"], "Teammates"],
-      [["Ctrl", ","], "Settings"],
-      [["Ctrl", "1-9"], "Jump to the nth workspace"],
-      [["Ctrl", "B"], "Toggle sidebar"],
-      [["Ctrl", "\\"], "Toggle focus mode"],
-      [["Ctrl", "."], "Toggle Ship panel"],
-      [["Ctrl", "Shift", "L"], "Switch dark / light theme"],
-      [["Esc"], "Close a dialog, or leave Settings"],
-    ],
-  },
-  {
-    group: "Code",
-    items: [
-      [["Ctrl", "Shift", "O"], "Open Code"],
-      [["Ctrl", "P"], "Quick open file"],
-      [["Ctrl", "`"], "Toggle terminal"],
-      [["Ctrl", "Shift", "F"], "Search in files"],
-      [["Ctrl", "Shift", "C"], "Copy terminal selection"],
-      [["Ctrl", "Shift", "V"], "Paste into terminal"],
-      [["Ctrl", "S"], "Save file"],
-      [["Ctrl", "Shift", "S"], "Save all files"],
-      [["Ctrl", "W"], "Close file tab"],
-    ],
-  },
-  {
-    group: "Chat",
-    items: [
-      [["Enter"], "Send message"],
-      [["Shift", "Enter"], "New line"],
-      [["Esc"], "Stop the running turn"],
-      [["/"], "Open the skill menu"],
-      [["Up"], "Previous skill in the menu"],
-      [["Down"], "Next skill in the menu"],
-      [["Tab"], "Accept the highlighted skill"],
-    ],
-  },
-  {
-    group: "Inbox",
-    items: [
-      [["J"], "Next item (or Down)"],
-      [["K"], "Previous item (or Up)"],
-      [["1-6"], "Send the numbered suggestion"],
-      [["Enter"], "Open the workspace"],
-      [["E"], "Dismiss"],
-      [["S"], "Snooze for an hour"],
-    ],
-  },
-  {
-    group: "Issues",
-    items: [
-      [["J"], "Next issue (or Down)"],
-      [["K"], "Previous issue (or Up)"],
-      [["/"], "Search"],
-      [["Enter"], "Start a workspace on the issue"],
-      [["P"], "Plan the issue with the Planner"],
-    ],
-  },
-  {
-    group: "Dialogs",
-    items: [
-      [["Ctrl", "Enter"], "Submit (New workspace, New ticket)"],
-      [["Esc"], "Close"],
-    ],
-  },
-];
-
-export function Shortcuts() {
-  return (
-    <>
-      {SHORTCUTS.map((g) => (
-        <div key={g.group}>
-          <SubHeading>{g.group}</SubHeading>
-          <div className="border-t border-line">
-            {g.items.map(([keys, what]) => (
-              <div key={what + keys.join("")} className="flex items-center justify-between border-b border-line py-2 text-[12px]">
-                <span className="text-dim">{what}</span>
-                <span className="flex items-center gap-1">
-                  {keys.map((k) => (
-                    <Kbd key={k}>{k}</Kbd>
-                  ))}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </>
-  );
-}
+export { Shortcuts } from "./Shortcuts";
 
 export function About() {
   const { info } = useEnvironment();

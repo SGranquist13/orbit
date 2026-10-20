@@ -380,6 +380,7 @@ export interface Settings {
   // Code view (editor + terminal)
   editorFontSize: number;
   editorTabSize: number;
+  keybindings: Record<string, string[]>;
   editorWordWrap: boolean;
   /** "off" | "delay" (1s after typing stops) | "focus" (when the editor loses focus or the tab changes). */
   editorAutosave: "off" | "delay" | "focus";

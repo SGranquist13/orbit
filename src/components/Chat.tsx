@@ -1,3 +1,4 @@
+import { useKeybindingLabels } from "../lib/useKeybinding";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -41,6 +42,7 @@ import { TeammateLabel } from "./TeammateAvatar";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
+  const keyLabel = useKeybindingLabels();
   const events = useApp((s) => s.transcripts[ws.id]);
   const live = useApp((s) => s.live[ws.id] ?? "");
   const blocks = useMemo(() => fold(events ?? []), [events]);
@@ -74,10 +76,10 @@ export function Chat({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />
-        <Button title="Open in Code (Ctrl+Shift+O)" className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
+        <Button title={"Open in Code" + (keyLabel("views.code") ? ` (${keyLabel("views.code")})` : "")} className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
         {focusMode ? (
           <Button onClick={() => useApp.getState().setFocusMode(false)} className="relative shrink-0">
-            Exit focus <Kbd>Ctrl \</Kbd>
+            Exit focus {keyLabel("workbench.focusMode") && <Kbd>{keyLabel("workbench.focusMode")}</Kbd>}
           </Button>
         ) : (
           <>
@@ -264,13 +266,14 @@ function SimplifyButton({ ws }: { ws: Workspace }) {
 
 /** Header toggle for the Ship panel, with a quiet hint of what is in it (PR + checks, or changed files). */
 function ShipButton({ ws }: { ws: Workspace }) {
+  const keyLabel = useKeybindingLabels();
   const open = useApp((s) => s.shipOpen);
   const pr = useApp((s) => s.prs[ws.id]);
   const fileCount = useApp((s) => s.changes[ws.id]?.length ?? 0);
   return (
     <Button
       onClick={() => useApp.getState().setShipOpen(!open)}
-      title="Toggle Ship panel (Ctrl .)"
+      title={"Toggle Ship panel" + (keyLabel("workbench.toggleShip") ? ` (${keyLabel("workbench.toggleShip")})` : "")}
       className={cn("relative shrink-0", open && "bg-raised text-fg")}
     >
       <Rocket className="size-3.5" /> Ship

@@ -64,6 +64,7 @@ interface AppState {
   /** The view to return to when settings closes. */
   previousView: View;
   /** Typed app settings; null until loaded (consumers fall back to defaults). */
+  settingsSection: string | null;
   settings: Settings | null;
   /** undefined = not fetched yet, null = no PR for the branch. */
   prs: Record<string, PrStatus | null | undefined>;
@@ -212,6 +213,7 @@ export const useApp = create<AppState>((set, get) => ({
   selectedRoutine: null,
   scheduleOpen: false,
   previousView: "workspace",
+  settingsSection: null,
   settings: null,
   prs: {},
   attachments: {},

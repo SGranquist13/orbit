@@ -169,12 +169,16 @@ export function createHarness({ scratch, port = 9333, only }) {
 
   async function key(k, { ctrl = false, shift = false, alt = false } = {}) {
     const codes = { Enter: 13, Escape: 27, Tab: 9, "`": 192 };
-    const named = { "`": "Backquote" };
+    const named = { "`": "Backquote", "[": "BracketLeft", "]": "BracketRight", "\\": "Backslash", "/": "Slash", ",": "Comma", ".": "Period", " ": "Space" };
     const vk = codes[k] ?? k.toUpperCase().charCodeAt(0);
-    const code = named[k] ?? (k.length === 1 ? `Key${k.toUpperCase()}` : k);
+    const code = named[k] ?? (/^[0-9]$/.test(k) ? `Digit${k}` : k.length === 1 ? `Key${k.toUpperCase()}` : k);
     const base = { key: k, code, windowsVirtualKeyCode: vk, modifiers: (alt ? 1 : 0) | (ctrl ? 2 : 0) | (shift ? 8 : 0) };
     await cdp("Input.dispatchKeyEvent", { type: "keyDown", ...base });
     await cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+  }
+
+  async function chord(...parts) {
+    for (const [k, modifiers] of parts) await key(k, modifiers);
   }
 
   const type = (text) => cdp("Input.insertText", { text });
@@ -228,7 +232,7 @@ export function createHarness({ scratch, port = 9333, only }) {
     process.exit(failed.length ? 1 : 0);
   }
 
-  return { home, launch, quit, cdp, js, waitFor, until, key, type, shot, invoke, autoConfirm, step, finish, results };
+  return { home, launch, quit, cdp, js, waitFor, until, key, chord, type, shot, invoke, autoConfirm, step, finish, results };
 }
 
 // ── UI helpers shared by scenarios ───────────────────────────
@@ -243,8 +247,8 @@ export function uiHelpers(h) {
   async function newWorkspace({ prompt, agent = "claude", model, profile }) {
     const known = new Set((await h.invoke("list_workspaces")).map((w) => w.id));
     const dialog = `return !!document.querySelector('textarea[placeholder^="Describe the task"]')`;
-    // A CDP key event can be lost right after a reload or a focus change; retry once through the same
-    // window handler (App.tsx) with the page's focus cleared, and say what was on screen if it still fails.
+    // Use the global New workspace action: Ctrl+N creates a file while Code is visible.
+    if (await h.js(`return !!document.querySelector('[data-code-view]')`)) await h.key("1", { alt: true });
     await h.key("n", { ctrl: true });
     if (!(await h.until("new workspace dialog (key)", async () => h.js(dialog), 3000, 250).catch(() => false))) {
       await h.js(`document.activeElement?.blur(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, bubbles: true })); return true`);
@@ -291,5 +295,8 @@ export function uiHelpers(h) {
 
   const lastMessage = () => h.js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
 
-  return { newWorkspace, openShip, clickChip, waitTurn, lastMessage };
+  async function workspaceView() {
+    await h.js(`const row = [...document.querySelectorAll('aside li button')].find(b => b.getBoundingClientRect().width > 0); row?.click()`);
+  }
+  return { newWorkspace, workspaceView, openShip, clickChip, waitTurn, lastMessage };
 }

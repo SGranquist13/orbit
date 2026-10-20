@@ -108,8 +108,30 @@ assert(results.matches.length > 0);
 await s().openRoot("C:\\");
 assert.equal(s().activeRoot, "C:/");
 await s().closeRoot("C:/");
+// Tab navigation wraps, close/reopen stacks belong to the root, and close-all confirms dirty buffers.
+await s().closeAllTabs();
+await s().openFile("src/main.ts", { preview: false });
+await s().openFile("README.md", { preview: false });
+s().cycleTab(1);
+assert.equal(s().roots[0].activeRel, "src/main.ts");
+s().cycleTab(-1);
+assert.equal(s().roots[0].activeRel, "README.md");
+await s().closeTab("README.md");
+await s().reopenTab();
+assert.equal(s().roots[0].activeRel, "README.md");
+assert.equal(s().roots[0].tabs.at(-1)?.preview, false);
+s().updateText(root, "README.md", "// unsaved tab\n");
+Object.assign(globalThis, { confirm: () => false });
+await s().closeAllTabs();
+assert.equal(s().roots[0].tabs.length, 2, "cancel must preserve all tabs");
+Object.assign(globalThis, { confirm: () => true });
+await s().closeAllTabs();
+assert.equal(s().roots[0].tabs.length, 0);
+await s().reopenTab();
+assert.equal(s().roots[0].activeRel, "README.md");
+assert(!s().buffers[bufferKey(root, "README.md")].dirty, "reopen reads the saved file");
 await s().closeRoot(root);
 assert.equal(s().roots.length, 0);
 console.log(
-  "Code smoke passed: helpers, all language loaders, preview/pinning, concurrent saves, fs reload/conflict/overwrite, CRUD, binary, search, roots.",
+  "Code smoke passed: helpers, all language loaders, preview/pinning, concurrent saves, fs reload/conflict/overwrite, CRUD, binary, search, roots, tab cycling/reopen/close-all cancellation.",
 );

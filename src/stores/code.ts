@@ -16,6 +16,7 @@ export interface CodeRoot {
   mode: "watch" | "manual";
   /** The user picked the mode themselves; agent turns no longer switch it to Watch. */
   modePinned?: boolean;
+  closedTabs?: Tab[];
   tabs: Tab[];
   activeRel: string | null;
   expanded: string[];
@@ -110,6 +111,11 @@ export interface AgentTurn {
 export const baselineKey = (entry: Pick<AgentActivity, "root" | "workspaceId" | "turn" | "rel">) =>
   `${entry.workspaceId}|${entry.turn}|${bufferKey(entry.root, entry.rel)}`;
 interface CodeState extends Persisted {
+  explorerHidden: boolean;
+  explorerFocus: number;
+  cycleTab: (direction: number) => void;
+  reopenTab: () => Promise<void>;
+  closeAllTabs: () => Promise<void>;
   activity: AgentActivity[];
   turns: Record<string, AgentTurn>;
   agentMessages: Record<string, string>;
@@ -629,6 +635,37 @@ export const useCode = create<CodeState>((set, get) => {
       const b = get().buffers[bufferKey(path, rel)];
       if (!b || b.error) await get().reloadFromDisk(rel, path);
     },
+    explorerHidden: false,
+    explorerFocus: 0,
+    cycleTab: (direction) => {
+      const r = get().roots.find((r) => r.path === get().activeRoot);
+      if (!r?.tabs.length) return;
+      const index = (r.tabs.findIndex((t) => t.rel === r.activeRel) + direction + r.tabs.length) % r.tabs.length;
+      get().setActive(r.tabs[index].rel);
+    },
+    reopenTab: async () => {
+      const r = get().roots.find((r) => r.path === get().activeRoot),
+        tab = r?.closedTabs?.at(-1);
+      if (!r || !tab) return;
+      rootUpdate(r.path, (r) => ({ ...r, closedTabs: r.closedTabs?.slice(0, -1) }));
+      await get().openFile(tab.rel, { preview: false }, r.path);
+    },
+    closeAllTabs: async () => {
+      const r = get().roots.find((r) => r.path === get().activeRoot);
+      if (!r) return;
+      if (
+        r.tabs.some((t) => get().buffers[bufferKey(r.path, t.rel)]?.dirty) &&
+        !(await confirmAction("Discard unsaved changes in all tabs?", "Discard"))
+      )
+        return;
+      rootUpdate(r.path, (r) => ({
+        ...r,
+        closedTabs: [...(r.closedTabs ?? []), ...r.tabs].slice(-20),
+        tabs: [],
+        activeRel: null,
+      }));
+      set((s) => ({ buffers: Object.fromEntries(Object.entries(s.buffers).filter(([key]) => !key.startsWith(r.path + "|"))) }));
+    },
     closeTab: async (rel) => {
       const path = get().activeRoot;
       if (!path) return;
@@ -637,7 +674,12 @@ export const useCode = create<CodeState>((set, get) => {
       rootUpdate(path, (r) => {
         const at = r.tabs.findIndex((t) => t.rel === rel),
           tabs = r.tabs.filter((t) => t.rel !== rel);
-        return { ...r, tabs, activeRel: r.activeRel === rel ? (tabs[Math.min(at, tabs.length - 1)]?.rel ?? null) : r.activeRel };
+        return {
+          ...r,
+          closedTabs: [...(r.closedTabs ?? []), ...r.tabs.filter((t) => t.rel === rel)].slice(-20),
+          tabs,
+          activeRel: r.activeRel === rel ? (tabs[Math.min(at, tabs.length - 1)]?.rel ?? null) : r.activeRel,
+        };
       });
       set((s) => {
         const buffers = { ...s.buffers };
