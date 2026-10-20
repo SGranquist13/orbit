@@ -235,17 +235,15 @@ export interface Profile {
   path: string;
 }
 
-export const DEFAULT_PROFILE = "shipkit:builder";
-
 /** Filter the globally available skills or profiles by stable pack directory name. */
 export function workspacePackItems<T extends { pack: string }>(items: T[], ws?: Pick<Workspace, "disabledPacks">): T[] {
   return items.filter((item) => !ws?.disabledPacks.includes(item.pack));
 }
 
-/** The workspace's active profile: its stored one, else an available Builder. */
+/** The workspace's active profile: its stored one, if available; undefined = no role. */
 export function activeProfile(profiles: Profile[], ws: Pick<Workspace, "profile" | "disabledPacks">): Profile | undefined {
   const available = workspacePackItems(profiles, ws);
-  return available.find((p) => p.id === ws.profile) ?? available.find((p) => p.id === DEFAULT_PROFILE);
+  return available.find((p) => p.id === ws.profile);
 }
 
 export interface PrStatus {
@@ -362,6 +360,7 @@ export interface Settings {
   defaultAgent: AgentKind;
   defaultModelClaude: string;
   defaultModelCodex: string;
+  defaultProfile: string;
   notifications: boolean;
   notifyOnlyUnfocused: boolean;
   claudePermissionMode: "bypassPermissions" | "acceptEdits";
@@ -744,7 +743,7 @@ export const api = {
   listSkills: () => invoke<Skill[]>("list_skills"),
   listProfiles: (workspaceId?: string) => invoke<Profile[]>("list_profiles", { workspaceId }),
   setWorkspacePacks: (id: string, disabled: string[]) => invoke<Workspace>("set_workspace_packs", { id, disabled }),
-  setWorkspaceProfile: (id: string, profile: string) => invoke<Workspace>("set_workspace_profile", { id, profile }),
+  setWorkspaceProfile: (id: string, profile: string | null) => invoke<Workspace>("set_workspace_profile", { id, profile }),
   installPack: (url: string) => invoke<Pack>("install_pack", { url }),
   updatePack: (name: string) => invoke<void>("update_pack", { name }),
   removePack: (name: string) => invoke<void>("remove_pack", { name }),

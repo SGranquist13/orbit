@@ -1,7 +1,7 @@
 import { CircleDot, LoaderCircle, MessageSquare, Plus, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { timeAgo } from "../lib/attention";
-import { DEFAULT_PROFILE, api, type AgentKind, type Issue } from "../lib/ipc";
+import { api, type AgentKind, type Issue } from "../lib/ipc";
 import { defaultAgentModel } from "../lib/settings";
 import { useApp } from "../stores/app";
 import { Button, Kbd, agentLabel, AgentIcon, cn } from "./ui";
@@ -10,6 +10,11 @@ const PLANNER = "shipkit:planner";
 const TICKET_WRITER = "shipkit:ticket-writer";
 
 /** The default agent from Settings (replaces the old remembered-last-agent behaviour). */
+/** The role from Settings; empty = none. */
+function defaultRole(): string {
+  return useApp.getState().settings?.defaultProfile ?? "";
+}
+
 function lastAgent(): AgentKind {
   return defaultAgentModel().agent;
 }
@@ -114,7 +119,7 @@ export function Issues() {
       if (e.key === "j" || e.key === "ArrowDown") move(1);
       else if (e.key === "k" || e.key === "ArrowUp") move(-1);
       else if (e.key === "/") searchRef.current?.focus();
-      else if (e.key === "Enter" && focused) act(focused, DEFAULT_PROFILE);
+      else if (e.key === "Enter" && focused) act(focused, defaultRole());
       else if (e.key.toLowerCase() === "p" && focused && !workspaceFor(focused.number)) void start(focused, PLANNER);
       else return;
       e.preventDefault();
@@ -192,7 +197,7 @@ export function Issues() {
                 starting={starting === issue.number}
                 disabled={starting !== null}
                 onFocus={() => setFocusedNumber(issue.number)}
-                onStart={() => act(issue, DEFAULT_PROFILE)}
+                onStart={() => act(issue, defaultRole())}
                 onPlan={() => act(issue, PLANNER)}
               />
             ))}

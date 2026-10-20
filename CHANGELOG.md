@@ -20,6 +20,7 @@ Two headline features: a built-in code editor that lets you watch agents work, a
 ### Agents and skills
 - Model lists come from the agent CLIs (Codex's model catalog, Claude's aliases) plus custom model ids; refresh in Settings > Agents or the palette.
 - Preview: per-workspace skill pack toggles.
+- Preview: roles are optional. New workspaces start with no role ("+ Add role" when you want one), Settings > General can set a default role, and "No role" in the chat footer removes one. Workspaces without a role no longer default to Builder.
 
 ### Look and feel
 - Preview: VS Code keybindings everywhere (Ctrl+K chords included), rebindable in Settings > Keyboard shortcuts with key recording, conflict detection and reset.
