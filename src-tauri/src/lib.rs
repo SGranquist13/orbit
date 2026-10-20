@@ -10,6 +10,7 @@ mod gh;
 mod git;
 mod images;
 mod llm;
+mod mcp;
 mod maintenance;
 mod related;
 mod remote;
@@ -333,7 +334,14 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
     }
     let settings = state.settings();
     let settings_local_ollama_url = settings.ollama_url();
+    let servers = mcp::list(&state.db())?;
+    let mcp_servers = mcp::effective(&servers, &ws.disabled_mcp_servers);
+    let mcp_config = if kind == AgentKind::Claude {
+        Some(mcp::write_claude_config(&state.home, &ws.id, &mcp_servers)?)
+    } else { None };
     let cfg = SessionConfig {
+        mcp_servers,
+        mcp_config,
         kind,
         cwd: PathBuf::from(&ws.path),
         model: ws.model.clone(),
@@ -860,6 +868,41 @@ fn get_pins(state: State<AppState>) -> CmdResult<Vec<String>> {
 #[tauri::command]
 fn set_pins(state: State<AppState>, pins: Vec<String>) -> CmdResult<()> {
     state.db().set_setting("pinned_skills", &serde_json::to_string(&pins).map_err(err)?).map_err(err)
+}
+
+#[tauri::command]
+fn list_mcp_servers(state: State<AppState>) -> CmdResult<Vec<mcp::McpServer>> {
+    mcp::list(&state.db()).map_err(err)
+}
+
+#[tauri::command]
+fn save_mcp_server(state: State<AppState>, server: mcp::McpServer) -> CmdResult<mcp::McpServer> {
+    mcp::save(&state.db(), server).map_err(err)
+}
+
+#[tauri::command]
+fn delete_mcp_server(state: State<AppState>, id: String) -> CmdResult<()> {
+    mcp::delete(&state.db(), &id).map_err(err)
+}
+
+#[tauri::command]
+async fn test_mcp_server(server: mcp::McpServer) -> CmdResult<mcp::ServerInfo> {
+    mcp::test(&server).await.map_err(err)
+}
+
+#[tauri::command]
+fn import_claude_mcp() -> CmdResult<Vec<mcp::McpServer>> {
+    mcp::import_claude().map_err(err)
+}
+
+#[tauri::command]
+fn set_workspace_mcp_servers(app: AppHandle, state: State<AppState>, id: String, mut disabled: Vec<String>) -> CmdResult<Workspace> {
+    disabled.sort();
+    disabled.dedup();
+    let ws = state.db().set_workspace_mcp_servers(&id, &disabled).map_err(err)?;
+    // Existing sessions retain their snapshot; the next new session reads these IDs.
+    emit_workspace(&app, &ws);
+    Ok(ws)
 }
 
 #[tauri::command]
@@ -1486,6 +1529,12 @@ pub fn run() {
             run_skill,
             get_pins,
             set_pins,
+            list_mcp_servers,
+            save_mcp_server,
+            delete_mcp_server,
+            test_mcp_server,
+            import_claude_mcp,
+            set_workspace_mcp_servers,
             list_packs,
             list_skills,
             list_profiles,

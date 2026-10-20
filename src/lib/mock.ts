@@ -6,7 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { McpServer, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
 const now = Date.now();
 const repos: Repo[] = [
@@ -31,6 +31,7 @@ const ws = (id: string, repoId: string, name: string, agent: "claude" | "codex",
   dismissedSeq: 0,
   profile: null,
   disabledPacks: [],
+  disabledMcpServers: [],
   snoozedUntil: 0,
   checksFailed: false,
   checksCommand: null,
@@ -140,6 +141,18 @@ const changes: FileChange[] = [
   { path: "src/onboarding/submit.test.ts", additions: 46, deletions: 0, untracked: true },
   { path: "src/lib/slug.ts", additions: 3, deletions: 1, untracked: false },
 ];
+
+const mcpServers: McpServer[] = [
+  { id: "mcp-files", name: "files", transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "C:/code"], env: {}, url: null, headers: {}, enabled: true },
+  { id: "mcp-docs", name: "docs", transport: "http", command: "", args: [], env: {}, url: "https://example.com/mcp", headers: {}, enabled: true },
+];
+
+function validateMcpServer(server: McpServer) {
+  if (!/^[a-z0-9_-]+$/.test(server.name)) throw "MCP server name must match [a-z0-9_-]+";
+  if (server.transport === "stdio" && !server.command.trim()) throw "stdio MCP servers need a command";
+  if (server.transport === "http" && !server.url?.trim()) throw "HTTP MCP servers need a URL";
+  if (!["stdio", "http"].includes(server.transport)) throw "MCP transport must be stdio or http";
+}
 
 const packs: Pack[] = [
   { name: "shipkit", plugin: "shipkit", description: "Ship work from an Orbit workspace.", path: "", source: null, builtin: true, enabled: true, skillCount: 0, commandCount: 6 },
@@ -1009,6 +1022,36 @@ export function installMockBackend() {
           }
           if (LAUNCH) launchSend(id, (args as { args: string }).args, emitAgentEvent, setLaunchStatus, (args as { skillId: string }).skillId);
           return null;
+        }
+        case "list_mcp_servers":
+          return structuredClone(mcpServers);
+        case "save_mcp_server": {
+          const server = structuredClone((args as { server: McpServer }).server);
+          validateMcpServer(server);
+          server.id ||= crypto.randomUUID();
+          if (mcpServers.some((s) => s.name === server.name && s.id !== server.id)) throw "An MCP server with that name already exists";
+          const index = mcpServers.findIndex((s) => s.id === server.id);
+          if (index < 0) mcpServers.push(server); else mcpServers[index] = server;
+          return structuredClone(server);
+        }
+        case "delete_mcp_server": {
+          const index = mcpServers.findIndex((s) => s.id === id);
+          if (index >= 0) mcpServers.splice(index, 1);
+          return;
+        }
+        case "test_mcp_server": {
+          const server = (args as { server: McpServer }).server;
+          validateMcpServer(server);
+          return { name: server.name, version: "1.0.0-mock" };
+        }
+        case "import_claude_mcp":
+          return structuredClone(mcpServers).map((s) => ({ ...s, id: crypto.randomUUID() }));
+        case "set_workspace_mcp_servers": {
+          const w = workspaces.find((x) => x.id === id);
+          if (!w) throw "Workspace not found";
+          w.disabledMcpServers = [...new Set((args as { disabled: string[] }).disabled)].sort();
+          void emit("workspace", { ...w });
+          return { ...w };
         }
         case "list_packs":
           return packs;

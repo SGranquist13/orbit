@@ -248,6 +248,7 @@ struct State {
 /// `codex app-server`, plus the built-in Ollama provider for a `local:<name>` model.
 pub fn app_server_args(cfg: &SessionConfig) -> Vec<String> {
     let mut a = vec!["app-server".to_string()];
+    a.extend(crate::mcp::codex_args(&cfg.mcp_servers));
     if cfg.model.as_deref().and_then(super::local_model).is_some() {
         a.extend(["-c".into(), "model_provider=\"ollama\"".into()]);
     }
@@ -485,6 +486,23 @@ mod tests {
         assert!(!AgentEvent::TextDelta { text:"hi".into() }.is_persistent());
     }
 
+    #[test]
+    fn mcp_overrides_are_passed_even_for_readonly_sessions() {
+        let server: crate::mcp::McpServer = serde_json::from_value(json!({
+            "id":"one", "name":"docs", "transport":"http", "url":"https://example.com/mcp", "enabled":true
+        })).unwrap();
+        let cfg = SessionConfig {
+            kind: super::super::AgentKind::Codex, cwd: ".".into(), model: None, resume: None,
+            plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: true,
+            permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None,
+            mcp_servers: vec![server.clone()], mcp_config: None,
+        };
+        let mut expected = vec!["app-server".to_string()];
+        expected.extend(crate::mcp::codex_args(&[server]));
+        assert_eq!(app_server_args(&cfg), expected);
+        assert_eq!(app_server_args(&SessionConfig { readonly: false, ..cfg }), expected);
+    }
+
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
         let mut parser = CodexParser::default();
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -554,7 +572,7 @@ mod tests {
         let dir = std::env::temp_dir().join("orbit_codex_live");
         std::fs::create_dir_all(&dir).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
+        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), mcp_servers: vec![], mcp_config: None, local_url: None };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
         handle.send(Command::User { text: "Reply with the single word: pong".into(), images: vec![] });
         let mut seen = Vec::new();
@@ -585,7 +603,7 @@ mod tests {
         let png = dir.join("red.png");
         std::fs::write(&png, base64::engine::general_purpose::STANDARD.decode(crate::images::RED_PNG_B64).unwrap()).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
+        let cfg = SessionConfig { kind: super::super::AgentKind::Codex, cwd: dir, model: None, resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), mcp_servers: vec![], mcp_config: None, local_url: None };
         let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
         handle.send(Command::User {
             text: "What colour is this image? One word.".into(),
