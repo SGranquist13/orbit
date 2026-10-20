@@ -727,6 +727,8 @@ await step("agent-model-lists", async () => {
   if (JSON.stringify(await invoke("agent_models", { agent: "codex", refresh: false })) !== JSON.stringify(codex)) throw new Error("catalog not cached");
   await withSettings({ extraModelsCodex: ["orbit-e2e-custom-model"] }, async () => {
     await js(`location.reload()`);
+    await sleep(1500);
+    await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
     await openSettingsView();
     await waitFor("catalog labels and extra model in default picker", `
       const options = [...(document.querySelector('select[aria-label="Default codex model"]')?.options ?? [])];
@@ -742,6 +744,8 @@ await step("agent-model-lists", async () => {
     await waitFor("palette closed", `return !document.querySelector('[cmdk-root]')`, 5000);
   });
   await js(`location.reload()`);
+    await sleep(1500);
+    await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
 });
 
 await step("settings-branch-prefix", async () => {
