@@ -13,12 +13,31 @@ Ideas being considered, unsorted.
 - **Stacked branches.** Split a large change into a stack of small PRs; release helpers (version bump, tag, changelog).
 - **Teammate tools beyond code.** Per-teammate MCP connectors.
 - **Profiles → Modes?** Profiles work like the "modes" in other agent tools; the name may change to match.
+- **Kanban board.** Workspaces as cards in To do → Running → Review → Done, drag a card to start it.
+- **Start a task from Slack or Linear.** Mention Orbit where the work arrives; a workspace starts and reports back there.
+- **Spec-driven mode.** Requirements → design → tasks documents, then the agent works through the tasks.
+- **Remote and sandboxed workspaces.** Run a workspace on a devbox or in a container, same UI.
 
 ## Shaping
 
 Ideas being worked through: the problem, a sketch, open questions.
 
-_(nothing in shaping right now)_
+### Worktree setup, run and env files (in progress)
+A new worktree is bare: no dependencies, no `.env`, no dev server. Per repo: a **setup script** run when a worktree is created (output shown in the chat, timeout, never blocks the first message forever), a **run script** started from a Run button on a free port (`$PORT` / `$ORBIT_PORT`), and **copy globs** for ignored files (`.env*`) copied from the main checkout. Settings > Repos.
+
+### Open in editor (in progress)
+One button (header, palette) opens the workspace's worktree in VS Code, Cursor, Zed or JetBrains; detected on PATH, overridable as a command in Settings.
+
+### Plan limits (in progress)
+Show the Claude and Codex plan windows (5-hour, weekly) with used share and reset time in Settings > Usage, and a quiet warning near the limit, from the rate-limit information both CLIs already report.
+
+### Next up
+- **MCP servers for both agents:** add a server once, Claude and Codex both get it; per-workspace toggles like skill packs.
+- **Comment on the diff:** comments on lines in the Code view diff and Ship panel go to the agent as one message.
+- **Rewind to any turn:** reset code and conversation to any earlier turn, or branch a new workspace from there.
+- **Automatic review on Ship:** a read-only Reviewer posts inline findings on the PR.
+- **Best of N:** one prompt, several attempts side by side, keep the best.
+- **Agent's plan:** the agent's own todo list pinned above the chat with live progress.
 
 ## Design notes
 
