@@ -174,6 +174,8 @@ await step("keybindings", async () => {
       await js(`document.getElementById('file-${name}').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
       await js(`document.getElementById('file-${name}').click()`);
       await waitFor("active fixture", `return [...document.querySelectorAll('[role="tab"][aria-selected="true"]')].some(t => t.innerText.includes('${name}'))`, 5000);
+      // The tab activates before the file loads; until then the hidden editor still holds the previous file.
+      await waitFor("fixture loaded", `const c = document.querySelector('[data-code-view] .cm-content'); return !!c?.offsetParent && c.innerText.trim() === 'export const value = 1;'`, 5000);
       await js(`document.querySelector('[data-code-view] .cm-content').focus()`);
       await key("End", { ctrl: true });
       await type("\n// keybindings save all\n");
@@ -1695,7 +1697,9 @@ await step("code-live", async () => {
     await until("live turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120000, 500);
     await waitFor("agent gutter", `return !!document.querySelector('.cm-agent-gutter .cm-agent-mark')`, 10000);
     await js(`[...document.querySelectorAll('aside[aria-label="Activity"] button')].find(b => b.innerText.includes('${filename}')).click()`);
-    await waitFor("turn comparison", `return document.querySelector('.code-diff')?.innerText.includes('Before streaming') && document.querySelector('.code-diff')?.innerText.includes('40')`, 10000);
+    // The diff editor only renders lines in view, so check the old text and the first new lines, not line 40.
+    await waitFor("turn comparison", `const t = document.querySelector('.code-diff')?.innerText ?? ''; return t.includes('Before streaming') && /(^|\\n)1\\n+2\\n+3(\\n|$)/.test(t)`, 10000);
+    await waitFor("activity counts the rewrite", `return [...document.querySelectorAll('aside[aria-label="Activity"] button')].some(b => b.innerText.includes('${filename}') && b.innerText.includes('+40'))`, 10000);
     await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Back to file').click()`);
     await js(`document.querySelector('.cm-content').focus()`);
     await key("i", { ctrl: true });

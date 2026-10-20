@@ -345,14 +345,15 @@ export const useCode = create<CodeState>((set, get) => {
     landingTokens.set(key, landing);
     await capture(entry, false);
     try {
-      const file = entry.removed
-        ? { text: "", mtime: Date.now(), binary: false, tooLarge: false }
-        : await codeApi.readFile(entry.root, entry.rel);
+      // Trust the disk over the event: an atomic replace (how agents write) reports a remove too.
+      const onDisk = await codeApi.readFile(entry.root, entry.rel).catch(() => null);
+      entry = { ...entry, removed: !onDisk };
+      const file = onDisk ?? { text: "", mtime: Date.now(), binary: false, tooLarge: false };
       if (file.text === null || landingTokens.get(key) !== landing) return;
       const changes = agentChanges(get().baselines[baselineKey(entry)] ?? "", file.text);
       const latest = get().activity.find((a) => a.id === entry.id && a.root === entry.root && a.rel === entry.rel);
       if (!latest) return;
-      record({ ...latest, additions: changes.additions, deletions: changes.deletions });
+      record({ ...latest, removed: entry.removed, additions: changes.additions, deletions: changes.deletions });
       const turn = get().turns[entry.workspaceId];
       if (turn?.number !== entry.turn) return;
       let root = get().roots.find((r) => r.path === entry.root);
