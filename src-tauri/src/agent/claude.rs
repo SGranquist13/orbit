@@ -3,6 +3,7 @@
 
 use super::{process, push_tail, AgentEvent, Command, EventSink, SessionConfig};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -106,11 +107,25 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
 /// calls), so the context size comes from the last `assistant` message's usage seen before it.
 #[derive(Default)]
 pub struct ClaudeParser {
+    tool_blocks: HashMap<u64, ToolBlock>,
     /// input + cache read + cache creation of the latest assistant message this turn.
     last_context: Option<u64>,
     /// A `/compact` happened this turn, so the context shrank without an assistant message.
     compacted: Option<u64>,
     model: Option<String>,
+}
+
+struct ToolBlock {
+    id: String,
+    name: String,
+    buffer: String,
+    emitted_bytes: usize,
+}
+
+impl ToolBlock {
+    fn draft(&self, input: Value) -> AgentEvent {
+        AgentEvent::ToolDraft { id: self.id.clone(), name: self.name.clone(), input }
+    }
 }
 
 impl ClaudeParser {
@@ -136,6 +151,43 @@ impl ClaudeParser {
             }
             Some("stream_event") => {
                 let ev = &v["event"];
+                let index = ev["index"].as_u64();
+                match ev["type"].as_str() {
+                    Some("message_start" | "message_stop") => self.tool_blocks.clear(),
+                    Some("content_block_start") => {
+                        if let Some(index) = index {
+                            self.tool_blocks.remove(&index);
+                            let b = &ev["content_block"];
+                            if b["type"] == "tool_use" {
+                                if let (Some(id), Some(name)) = (b["id"].as_str(), b["name"].as_str()) {
+                                    if matches!(name, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+                                        self.tool_blocks.insert(index, ToolBlock {
+                                            id: id.into(), name: name.into(), buffer: String::new(), emitted_bytes: 0,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some("content_block_delta") if ev["delta"]["type"] == "input_json_delta" => {
+                        if let Some(block) = index.and_then(|i| self.tool_blocks.get_mut(&i)) {
+                            let fragment = ev["delta"]["partial_json"].as_str().unwrap_or_default();
+                            block.buffer.push_str(fragment);
+                            if block.buffer.len() - block.emitted_bytes >= 40 || fragment.contains("\\n") {
+                                block.emitted_bytes = block.buffer.len();
+                                return vec![block.draft(partial_json_value(&block.buffer))];
+                            }
+                        }
+                    }
+                    Some("content_block_stop") => {
+                        if let Some(block) = index.and_then(|i| self.tool_blocks.remove(&i)) {
+                            if let Ok(input) = serde_json::from_str(&block.buffer) {
+                                return vec![block.draft(input)];
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 if ev["type"] == "content_block_delta" && ev["delta"]["type"] == "text_delta" {
                     let text = ev["delta"]["text"].as_str().unwrap_or_default();
                     return vec![AgentEvent::TextDelta { text: text.to_string() }];
@@ -172,6 +224,7 @@ impl ClaudeParser {
                 })
                 .collect(),
             Some("result") => {
+                self.tool_blocks.clear();
                 let is_error = v["is_error"].as_bool().unwrap_or(false) || v["subtype"] != "success";
                 let mut out = Vec::new();
                 if let Some(usage) = self.usage(&v) {
@@ -217,6 +270,100 @@ impl ClaudeParser {
             model,
         })
     }
+}
+
+/// Repair a JSON prefix without inventing keys or values. Only value strings may be
+/// completed; unfinished object members are discarded. All repaired tokens still
+/// go through serde_json, including escape and Unicode validation.
+pub fn partial_json_value(s: &str) -> Value {
+    struct Prefix<'a> { s: &'a str, pos: usize }
+    impl Prefix<'_> {
+        fn peek(&mut self) -> Option<u8> {
+            while self.s.as_bytes().get(self.pos).is_some_and(u8::is_ascii_whitespace) {
+                self.pos += 1;
+            }
+            self.s.as_bytes().get(self.pos).copied()
+        }
+
+        fn string(&mut self, key: bool) -> Option<String> {
+            let start = self.pos;
+            self.pos += 1;
+            let mut escaped = false;
+            while let Some(&b) = self.s.as_bytes().get(self.pos) {
+                self.pos += 1;
+                if escaped { escaped = false; }
+                else if b == b'\\' { escaped = true; }
+                else if b == b'"' {
+                    let token = &self.s[start..self.pos];
+                    return serde_json::from_str::<Value>(token).ok().map(|_| token.to_string());
+                }
+            }
+            if key { return None; }
+            // Longest valid string prefix: drops a dangling backslash, partial
+            // Unicode escape, or a high surrogate awaiting its low surrogate.
+            let mut end = self.pos;
+            loop {
+                let token = format!("{}\"", &self.s[start..end]);
+                if serde_json::from_str::<Value>(&token).is_ok() { return Some(token); }
+                if end <= start + 1 { return None; }
+                end -= 1;
+                while !self.s.is_char_boundary(end) { end -= 1; }
+            }
+        }
+
+        fn value(&mut self, depth: usize) -> Option<String> {
+            if depth > 128 { return None; }
+            match self.peek()? {
+                b'"' => self.string(false),
+                b'{' | b'[' => {
+                    let object = self.s.as_bytes()[self.pos] == b'{';
+                    self.pos += 1;
+                    let close = if object { b'}' } else { b']' };
+                    let mut members = Vec::new();
+                    loop {
+                        match self.peek() {
+                            Some(b) if b == close => { self.pos += 1; break; }
+                            None => break,
+                            _ => {}
+                        }
+                        let key = if object {
+                            if self.peek() != Some(b'"') { break; }
+                            let Some(key) = self.string(true) else { break; };
+                            if self.peek() != Some(b':') { break; }
+                            self.pos += 1;
+                            Some(key)
+                        } else { None };
+                        let Some(value) = self.value(depth + 1) else { break; };
+                        members.push(match key {
+                            Some(key) => format!("{key}:{value}"),
+                            None => value,
+                        });
+                        if self.peek() != Some(b',') {
+                            if self.peek() == Some(close) { self.pos += 1; }
+                            break;
+                        }
+                        self.pos += 1;
+                    }
+                    let (open, close) = if object { ('{', '}') } else { ('[', ']') };
+                    Some(format!("{open}{}{close}", members.join(",")))
+                }
+                _ => {
+                    let start = self.pos;
+                    while self.s.as_bytes().get(self.pos).is_some_and(|b| !b.is_ascii_whitespace() && !b",]}".contains(b)) {
+                        self.pos += 1;
+                    }
+                    let token = &self.s[start..self.pos];
+                    // Preserve the longest complete primitive prefix, if any.
+                    (1..=token.len()).rev().filter(|&n| token.is_char_boundary(n))
+                        .find_map(|n| serde_json::from_str::<Value>(&token[..n]).ok().map(|_| token[..n].to_string()))
+                }
+            }
+        }
+    }
+    if let Ok(value) = serde_json::from_str(s) { return value; }
+    Prefix { s, pos: 0 }.value(0)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}))
 }
 
 /// Claude reports an interrupted turn as a failed result; after we asked it to stop,
@@ -325,6 +472,132 @@ pub fn spawn(cfg: SessionConfig, sink: EventSink, mut rx: mpsc::UnboundedReceive
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_json_truncated_members_and_containers() {
+        for (source, expected) in [
+            ("", json!({})),
+            ("{", json!({})),
+            (r#"{"file_pa"#, json!({})),
+            (r#"{"a":1,"file_path""#, json!({"a":1})),
+            (r#"{"a":1,"file_path": "#, json!({"a":1})),
+            (r#"{"content":"hello"#, json!({"content":"hello"})),
+            (r#"{"a":1,"b":tru"#, json!({"a":1})),
+            (r#"{"edits":[{"old_string":"a","new_string":"b"},{"old_string":"c","new_str"#,
+             json!({"edits":[{"old_string":"a","new_string":"b"},{"old_string":"c"}]})),
+            (r#"{"edits":[{"old_string":"a","new_string":"b"},"#, json!({"edits":[{"old_string":"a","new_string":"b"}]})),
+            (r#"{"edits":[{"old_string":"a","new_string":"b"#, json!({"edits":[{"old_string":"a","new_string":"b"}]})),
+            (r#"{"a":1,"broken":???}"#, json!({"a":1})),
+        ] {
+            assert_eq!(partial_json_value(source), expected, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn partial_json_escapes_windows_paths_and_unicode() {
+        for (source, expected) in [
+            (r#"{"s":"a\"#, "a"),
+            (r#"{"s":"a\n"#, "a\n"),
+            (r#"{"s":"a\\"#, "a\\"),
+            (r#"{"s":"a\""#, "a\""),
+            (r#"{"s":"a\u00"#, "a"),
+            (r#"{"s":"a\u0041"#, "aA"),
+            (r#"{"s":"a\uD83D\uDE"#, "a"),
+            (r#"{"s":"a\uD83D\uDE80"#, "a🚀"),
+            (r#"{"s":"C:\\Users\\you\\poem.txt"#, r"C:\Users\you\poem.txt"),
+            (r#"{"s":"你好 café 🚀"#, "你好 café 🚀"),
+        ] {
+            assert_eq!(partial_json_value(source), json!({"s":expected}), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn partial_json_every_string_prefix_is_monotonic() {
+        let input = json!({"content": "line\nquote \" slash \\ café 你好 🚀"});
+        let source = input.to_string();
+        let mut previous = String::new();
+        for end in (0..=source.len()).filter(|&end| source.is_char_boundary(end)) {
+            let value = partial_json_value(&source[..end]);
+            let content = value["content"].as_str().unwrap_or_default();
+            assert!(content.starts_with(&previous), "{end}: {value}");
+            assert!(input["content"].as_str().unwrap().starts_with(content));
+            previous = content.into();
+        }
+        assert_eq!(partial_json_value(&source), input);
+    }
+
+    #[test]
+    fn real_streamed_write_edit_drafts_preserve_existing_events() {
+        let source = include_str!("../../tests/fixtures/claude_streamed_write_edit.jsonl");
+        let mut parser = ClaudeParser::default();
+        let events: Vec<_> = source.lines().flat_map(|line| parser.parse(line)).collect();
+        // Removing the new previews must leave exactly the old, stateless parser output,
+        // including text, calls, results, completion and the stateful usage context.
+        let mut baseline = ClaudeParser::default();
+        let original: Vec<_> = source.lines().filter(|line| {
+            let v: Value = serde_json::from_str(line).unwrap();
+            v["type"] != "stream_event" || v["event"]["delta"]["type"] == "text_delta"
+        }).flat_map(|line| baseline.parse(line)).collect();
+        assert_eq!(events.iter().filter(|e| !matches!(e, AgentEvent::ToolDraft { .. })).cloned().collect::<Vec<_>>(), original);
+        for name in ["Write", "Edit"] {
+            let (id, input) = events.iter().find_map(|e| match e {
+                AgentEvent::ToolCall { id, name: n, input } if n == name => Some((id, input)),
+                _ => None,
+            }).unwrap();
+            let drafts: Vec<_> = events.iter().filter_map(|e| match e {
+                AgentEvent::ToolDraft { id: draft_id, name: n, input } if n == name => {
+                    assert_eq!(draft_id, id);
+                    assert!(!e.is_persistent());
+                    Some(input)
+                }
+                _ => None,
+            }).collect();
+            assert!(drafts.len() >= 2);
+            for draft in drafts.iter().skip(2) {
+                assert_eq!(draft["file_path"], input["file_path"]);
+            }
+            if name == "Write" {
+                let mut previous = "";
+                for draft in &drafts {
+                    let content = draft["content"].as_str().unwrap_or_default();
+                    assert!(content.starts_with(previous));
+                    previous = content;
+                }
+                assert_eq!(*drafts.last().unwrap(), input);
+            }
+        }
+        assert!(!events.iter().any(|e| matches!(e, AgentEvent::ToolDraft { name, .. } if name == "Read")));
+        assert_eq!(events.iter().filter(|e| matches!(e, AgentEvent::ToolCall { .. })).count(), 3);
+        assert_eq!(events.iter().filter(|e| matches!(e, AgentEvent::ToolResult { .. })).count(), 3);
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::TextDelta { .. })));
+        assert!(events.iter().any(|e| matches!(e, AgentEvent::Usage { .. })));
+        assert!(matches!(events.last(), Some(AgentEvent::TurnCompleted { is_error: false, .. })));
+    }
+
+    #[test]
+    fn tool_draft_throttling_indices_and_cleanup() {
+        let mut p = ClaudeParser::default();
+        let mut event = |ev: Value| p.parse(&json!({"type":"stream_event","event":ev}).to_string());
+        for (index, name) in [(0, "Write"), (1, "NotebookEdit"), (2, "MultiEdit"), (3, "Read")] {
+            assert!(event(json!({"type":"content_block_start","index":index,"content_block":{"type":"tool_use","id":format!("t{index}"),"name":name,"input":{}}})).is_empty());
+        }
+        let delta = |index, fragment: &str| json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":fragment}});
+        let first = format!("{{\"content\":\"{}", "a".repeat(28)); // exactly 40 bytes
+        assert!(event(delta(0, &first[..39])).is_empty());
+        assert!(matches!(event(delta(0, &first[39..])).as_slice(), [AgentEvent::ToolDraft { id, .. }] if id == "t0"));
+        assert!(event(delta(0, "b")).is_empty());
+        assert_eq!(event(delta(0, r"\n")).len(), 1);
+        for index in [1, 2] {
+            assert_eq!(event(delta(index, r#"{"text":"hi\n"#)).len(), 1);
+        }
+        assert!(event(delta(3, &first)).is_empty());
+        assert!(event(json!({"type":"content_block_stop","index":0})).is_empty()); // invalid/incomplete input
+        assert!(event(delta(0, &first)).is_empty()); // forgotten
+        assert!(event(delta(1, r#""}"#)).is_empty());
+        assert_eq!(event(json!({"type":"content_block_stop","index":1})).len(), 1);
+        event(json!({"type":"message_start"}));
+        assert!(event(delta(2, &first)).is_empty());
+    }
 
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
         let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

@@ -694,6 +694,8 @@ function onSimplify(st: SimplifyState) {
 
 function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
   const { getState: get, setState: set } = useApp;
+  // Live tool-input previews are for the Code view's Watch mode (its own listener), not the chat or inbox.
+  if (event.type === "toolDraft") return;
   if (event.type === "textDelta") {
     set((s) => ({ live: { ...s.live, [id]: (s.live[id] ?? "") + event.text } }));
     return;
