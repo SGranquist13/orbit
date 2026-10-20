@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.

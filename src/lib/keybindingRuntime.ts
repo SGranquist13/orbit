@@ -1,3 +1,4 @@
+import { openSelectedInEditor } from "./openEditor";
 import { useApp } from "../stores/app";
 import { useCode } from "../stores/code";
 import { useTheme } from "./theme";
@@ -24,6 +25,7 @@ export function installKeybindings(hint: (message: string) => void) {
   const off: (() => void)[] = [];
   const add = (id: string, fn: () => unknown) => off.push(registerHandler(id, fn));
   add("workbench.commandPalette", () => useApp.getState().setPaletteOpen(true));
+  add("workbench.openInEditor", () => openSelectedInEditor());
   add("code.quickOpen", () => void showCode(false, true));
   add("code.focusExplorer", () => void showCode(true));
   for (const v of ["inbox", "code", "routines", "teammates", "issues"] as const) {

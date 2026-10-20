@@ -6,9 +6,10 @@ import { explorerAction, type ExplorerAction } from "./code/Explorer";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
-import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
+import { openSelectedInEditor } from "../lib/openEditor";
 import { api, activeProfile, workspacePackItems } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder, requestAttachImage } from "./Chat";
@@ -202,6 +203,9 @@ export function Palette() {
                   onSelect={run(() => void useApp.getState().syncNow(selectedId))}
                 >
                   <GitBranch className="size-3.5" /> Sync with base now
+                </Command.Item>
+                <Command.Item className={item} value="Open in external editor (VS Code, Cursor, Zed)" onSelect={run(() => openSelectedInEditor())}>
+                  <SquareArrowOutUpRight className="size-3.5" /> Open in external editor
                 </Command.Item>
                 <Command.Item
                   className={item}

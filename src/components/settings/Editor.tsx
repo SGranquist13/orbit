@@ -1,10 +1,40 @@
+import { useEffect, useState } from "react";
+import { api, type EditorInfo } from "../../lib/ipc";
 import { Row, Select, TextInput, Toggle, save, useSettings } from "./controls";
 
 export function Editor() {
   const s = useSettings();
+  const [editors, setEditors] = useState<EditorInfo[]>([]);
+  useEffect(() => {
+    api.listEditors().then(setEditors).catch(() => setEditors([]));
+  }, []);
   if (!s) return null;
+  const cmd = s.editorCommand;
+  const isCustom = cmd != null && !editors.some((e) => e.id === cmd);
+  const choice = cmd == null ? "" : isCustom ? "__custom" : cmd;
   return (
     <>
+      <Row
+        label="External editor"
+        field="editorCommand"
+        description="Used by Open in editor. Custom: a command line; {path} marks where the folder goes (added at the end if missing)"
+      >
+        <div className="flex flex-col items-end gap-1.5">
+          <Select
+            label="External editor"
+            value={choice}
+            options={[
+              { value: "", label: "Auto (first detected)" },
+              ...editors.map((e) => ({ value: e.id, label: e.name })),
+              { value: "__custom", label: "Custom…" },
+            ]}
+            onChange={(v) => void save({ editorCommand: v === "" ? null : v === "__custom" ? (isCustom ? cmd : "code {path}") : v })}
+          />
+          {choice === "__custom" && (
+            <TextInput label="Custom editor command" value={cmd ?? ""} placeholder="code {path}" className="w-[260px]" onCommit={(v) => void save({ editorCommand: v.trim() === "" ? null : v })} />
+          )}
+        </div>
+      </Row>
       <Row label="Font size" field="editorFontSize">
         <Select
           label="Editor font size"

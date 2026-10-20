@@ -25,6 +25,8 @@ import {
   Shrink,
   Sparkles,
   Square,
+  SquareArrowOutUpRight,
+  ChevronDown,
   SquareTerminal,
   Wrench,
   X,
@@ -36,8 +38,9 @@ const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
 import { MAX_FILE_BYTES, formatSize, isImageFile, prepareImage, toDataUrl } from "../lib/images";
 import { FileChip, FileRow, ImageRow } from "./ChatImage";
-import { activeProfile, api, workspacePackItems, type Attachment, type FileRef, type ImageRef, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
+import { activeProfile, api, workspacePackItems, type Attachment, type EditorInfo, type FileRef, type ImageRef, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
+import { editorLabel } from "../lib/openEditor";
 import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
@@ -91,6 +94,7 @@ export function Chat({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />
+        <EditorButton ws={ws} />
         <Button title={"Open in Code" + (keyLabel("views.code") ? ` (${keyLabel("views.code")})` : "")} className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
         {focusMode ? (
           <Button onClick={() => useApp.getState().setFocusMode(false)} className="relative shrink-0">
@@ -1083,5 +1087,43 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Header control: open the worktree in the external editor; the arrow picks another detected editor for once. */
+function EditorButton({ ws }: { ws: Workspace }) {
+  const [editors, setEditors] = useState<EditorInfo[]>([]);
+  const [menu, setMenu] = useState(false);
+  const command = useApp((s) => s.settings?.editorCommand);
+  const keyLabel = useKeybindingLabels();
+  useEffect(() => {
+    api.listEditors().then(setEditors).catch(() => setEditors([]));
+  }, []);
+  const open = (editor?: string) => {
+    setMenu(false);
+    api.openInEditor(ws.path, editor).catch((e) => useApp.getState().setError(String(e).replace(/^Error:\s*/, "")));
+  };
+  const name = editorLabel(editors, command);
+  const kb = keyLabel("workbench.openInEditor");
+  return (
+    <span className="relative flex shrink-0 items-center" onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setMenu(false); }}>
+      <Button title={`Open in ${name}` + (kb ? ` (${kb})` : "")} aria-label="Open in editor" className="px-1.5" onClick={() => open()}>
+        <SquareArrowOutUpRight className="size-3.5" />
+      </Button>
+      {editors.length > 1 && (
+        <Button title="Open with another editor" aria-label="Choose editor" className="px-0.5" onClick={() => setMenu((m) => !m)}>
+          <ChevronDown className="size-3" />
+        </Button>
+      )}
+      {menu && (
+        <div role="menu" className="absolute right-0 top-full z-30 mt-1 min-w-[150px] rounded-[4px] border-[1.5px] border-line-strong bg-panel p-1 shadow-hard-sm">
+          {editors.map((e) => (
+            <button key={e.id} role="menuitem" onClick={() => open(e.id)} className="block w-full rounded-[3px] px-2 py-1 text-left text-[12px] hover:bg-hover">
+              {e.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </span>
   );
 }

@@ -1724,6 +1724,17 @@ await step("chief", async () => {
   await sleep(1500);
 });
 
+// Standalone: node scripts/e2e.mjs open-in-editor (renders only; never launches an editor).
+await step("open-in-editor", async () => {
+  await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  await waitFor("Open in editor button", `return !!document.querySelector('button[aria-label="Open in editor"]')`, 10_000);
+  const editors = await invoke("list_editors");
+  if (!Array.isArray(editors)) throw new Error("list_editors did not return an array");
+  await openSettingsView();
+  await waitFor("External editor select", `return !!document.querySelector('select[aria-label="External editor"]')`, 8000);
+  await closeSettingsView();
+});
+
 // Standalone: node scripts/e2e.mjs code-live (one cheap real Haiku edit).
 await step("code-live", async () => {
   const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });

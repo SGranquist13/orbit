@@ -19,6 +19,7 @@ export const commands: Command[] = [
   command("workbench.commandPalette", "Command palette", "General", "global", "ctrl+shift+p", "f1"),
   command("code.quickOpen", "Quick open file", "Code", "global", "ctrl+p"),
   command("code.focusExplorer", "Code view + focus explorer", "Code", "global", "ctrl+shift+e"),
+  command("workbench.openInEditor", "Open in external editor", "General", "global"),
   command("workbench.toggleSidebar", "Toggle sidebar", "General", "global", "ctrl+b"),
   command("code.toggleActivity", "Toggle Activity column", "Code", "global", "ctrl+alt+b"),
   command("workbench.toggleShip", "Toggle Ship panel", "General", "global", "ctrl+shift+g"),
