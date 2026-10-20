@@ -428,6 +428,11 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         .prepare("PRAGMA table_info(repos)")?
         .query_map([], |r| r.get::<_, String>(1))?
         .collect::<Result<_, _>>()?;
+    for column in ["setup_script", "run_script", "copy_globs"] {
+        if !repo_cols.iter().any(|c| c == column) {
+            conn.execute(&format!("ALTER TABLE repos ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
     if !repo_cols.iter().any(|c| c == "check_command") {
         conn.execute("ALTER TABLE repos ADD COLUMN check_command TEXT", [])?;
     }
@@ -596,6 +601,25 @@ impl Db {
 
     pub fn set_check_command(&self, repo_id: &str, cmd: Option<&str>) -> anyhow::Result<()> {
         self.conn.execute("UPDATE repos SET check_command = ?2 WHERE id = ?1", params![repo_id, cmd])?;
+        Ok(())
+    }
+
+    pub fn repo_scripts(&self, repo_id: &str) -> anyhow::Result<crate::setup::RepoScripts> {
+        Ok(self.conn.query_row(
+            "SELECT setup_script, run_script, copy_globs FROM repos WHERE id = ?1", [repo_id], |r| {
+                let globs: Option<String> = r.get(2)?;
+                Ok(crate::setup::RepoScripts {
+                    setup_script: r.get(0)?, run_script: r.get(1)?,
+                    copy_globs: globs.unwrap_or_default().lines().map(String::from).collect(),
+                })
+            })?)
+    }
+
+    pub fn set_repo_scripts(&self, repo_id: &str, scripts: &crate::setup::RepoScripts) -> anyhow::Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET setup_script = ?2, run_script = ?3, copy_globs = ?4 WHERE id = ?1",
+            params![repo_id, scripts.setup_script, scripts.run_script, scripts.copy_globs.join("\n")],
+        )?;
         Ok(())
     }
 

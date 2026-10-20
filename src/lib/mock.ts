@@ -6,8 +6,10 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
 
+const repoScripts: Record<string, RepoScripts> = {};
+const workspaceRuns: Record<string, WorkspaceRunStatus> = {};
 const now = Date.now();
 const repos: Repo[] = [
   { id: "r1", name: "superset", path: "C:/code/superset", baseBranch: "main" },
@@ -309,6 +311,7 @@ let settings: Settings = {
   commitMessages: "prompt",
   checksMode: "block",
   checkTimeoutMinutes: 10,
+  setupTimeoutMinutes: 10,
   installBeforeChecks: true,
   syncMode: "auto",
   simplifyModel: "sonnet",
@@ -1229,6 +1232,21 @@ export function installMockBackend() {
           }
           return list;
         }
+        case "get_repo_scripts":
+          return repoScripts[a.repoId!] ?? { setupScript: null, runScript: null, copyGlobs: [] };
+        case "set_repo_scripts":
+          repoScripts[a.repoId!] = (args as { scripts: RepoScripts }).scripts;
+          return null;
+        case "start_run":
+          workspaceRuns[a.workspaceId!] = { status: "running", port: 3000 };
+          void emit("workspace-run", { workspaceId: a.workspaceId, status: "running" });
+          return 3000;
+        case "stop_run":
+          workspaceRuns[a.workspaceId!] = { status: "stopped", port: 3000 };
+          void emit("workspace-run", { workspaceId: a.workspaceId, status: "stopped" });
+          return null;
+        case "run_status":
+          return workspaceRuns[a.workspaceId!] ?? { status: "stopped", port: null };
         case "get_check_command":
           return { detected: a.repoId === "r1" ? "bun run typecheck" : null, override: checkOverrides[a.repoId!] ?? null };
         case "set_check_command":

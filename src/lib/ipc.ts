@@ -65,6 +65,16 @@ export interface CheckResult {
   durationMs: number;
 }
 
+export interface RepoScripts {
+  setupScript: string | null;
+  runScript: string | null;
+  copyGlobs: string[];
+}
+export type SetupStatus = "running" | "done" | "failed" | "timedOut";
+export interface WorkspaceSetupEvent { workspaceId: string; status: SetupStatus; line?: string }
+export interface WorkspaceRunEvent { workspaceId: string; status: SetupStatus | "stopped"; line?: string }
+export interface WorkspaceRunStatus { status: SetupStatus | "stopped"; port: number | null }
+
 export interface CheckCommandInfo {
   detected: string | null;
   override: string | null;
@@ -377,6 +387,7 @@ export interface Settings {
   commitMessages: "prompt" | "model";
   checksMode: "off" | "warn" | "block";
   checkTimeoutMinutes: number;
+  setupTimeoutMinutes: number;
   installBeforeChecks: boolean;
   syncMode: "off" | "suggest" | "auto";
   simplifyModel: "haiku" | "sonnet" | "opus";
@@ -751,6 +762,11 @@ export const api = {
   prStatus: (id: string) => invoke<PrStatus | null>("pr_status", { id }),
   /** `archived`: Orbit also archived the workspace and removed its worktree. */
   mergePr: (id: string, number: number) => invoke<{ archived: boolean }>("merge_pr", { id, number }),
+  getRepoScripts: (repoId: string) => invoke<RepoScripts>("get_repo_scripts", { repoId }),
+  setRepoScripts: (repoId: string, scripts: RepoScripts) => invoke<void>("set_repo_scripts", { repoId, scripts }),
+  startRun: (workspaceId: string) => invoke<number>("start_run", { workspaceId }),
+  stopRun: (workspaceId: string) => invoke<void>("stop_run", { workspaceId }),
+  runStatus: (workspaceId: string) => invoke<WorkspaceRunStatus>("run_status", { workspaceId }),
   getCheckCommand: (repoId: string) => invoke<CheckCommandInfo>("get_check_command", { repoId }),
   setCheckCommand: (repoId: string, cmd: string | null) => invoke<void>("set_check_command", { repoId, cmd }),
   runChecks: (workspaceId: string) => invoke<CheckResult>("run_checks", { workspaceId }),
@@ -799,6 +815,8 @@ export const events = {
     listen<string>("workspace-archived", (e) => cb(e.payload)),
   /** Routines or their runs changed (a run started or finished, a one-off switched itself off). */
   onRoutinesChanged: (cb: () => void): Promise<UnlistenFn> => listen("routines-changed", () => cb()),
+  onWorkspaceSetup: (cb: (event: WorkspaceSetupEvent) => void): Promise<UnlistenFn> => listen<WorkspaceSetupEvent>("workspace-setup", (e) => cb(e.payload)),
+  onWorkspaceRun: (cb: (event: WorkspaceRunEvent) => void): Promise<UnlistenFn> => listen<WorkspaceRunEvent>("workspace-run", (e) => cb(e.payload)),
   /** A teammate's definition, thread or tasks changed. */
   onTeammateChanged: (cb: (slug: string) => void): Promise<UnlistenFn> => listen<string>("teammate-changed", (e) => cb(e.payload)),
   onSimplify: (cb: (s: SimplifyState) => void): Promise<UnlistenFn> =>

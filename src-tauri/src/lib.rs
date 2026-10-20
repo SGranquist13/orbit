@@ -15,6 +15,7 @@ mod related;
 mod remote;
 mod routines;
 mod settings;
+mod setup;
 mod simplify;
 mod skills;
 mod chief;
@@ -477,6 +478,8 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
             }
         }
     }
+    let scripts = state.db().repo_scripts(&ws.repo_id).map_err(err)?;
+    setup::begin(app, state, &ws, PathBuf::from(&repo.path), scripts);
     emit_workspace(app, &ws);
     Ok(ws)
 }
@@ -769,17 +772,33 @@ fn send_with_images(app: &AppHandle, state: &AppState, id: &str, display: String
         Some(note) => format!("{note}{payload}"),
         None => payload,
     };
+    let gate = setup::gate(id);
+    if let Some(mut gate) = gate {
+        let running = state.db().set_status(id, "running")?;
+        emit_workspace(app, &running);
+        let (app, state) = (app.clone(), state.clone());
+        tokio::spawn(async move {
+            let note = gate.wait().await;
+            let _ = deliver_message(&app, &state, &ws, format!("{note}{payload}"), images);
+        });
+        return Ok(());
+    }
+    deliver_message(app, state, &ws, payload, images)
+}
+
+fn deliver_message(app: &AppHandle, state: &AppState, ws: &Workspace, payload: String, images: Vec<ImageRef>) -> anyhow::Result<()> {
+    let id = &ws.id;
     // A session that cannot start (binary missing, bad cwd) must end the turn visibly: the message is
     // already in the transcript, and callers waiting for TurnCompleted (Simplify, routines) would hang.
     let fail = |e: anyhow::Error| {
         on_agent_event(app, state, id, AgentEvent::TurnCompleted { duration_ms: None, cost_usd: None, is_error: true, error: Some(e.to_string()), interrupted: false });
         e
     };
-    let handle = ensure_session(app, state, &ws).map_err(fail)?;
+    let handle = ensure_session(app, state, ws).map_err(fail)?;
     if !handle.send(Command::User { text: payload.clone(), images: images.clone() }) {
         // Session died between lookup and send: drop it and retry once with a fresh process.
         state.sessions_lock().remove(id);
-        ensure_session(app, state, &ws).map_err(fail)?.send(Command::User { text: payload, images });
+        ensure_session(app, state, ws).map_err(fail)?.send(Command::User { text: payload, images });
     }
     let ws = state.db().set_status(id, "running")?;
     emit_workspace(app, &ws);
@@ -1505,6 +1524,11 @@ pub fn run() {
             discover_related,
             get_related_defaults,
             set_related_default,
+            setup::get_repo_scripts,
+            setup::set_repo_scripts,
+            setup::start_run,
+            setup::stop_run,
+            setup::run_status,
             trunk::get_check_command,
             trunk::set_check_command,
             trunk::run_checks,
@@ -1546,7 +1570,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) { code::pty::close_all(); }
+            if matches!(event, tauri::RunEvent::Exit) { code::pty::close_all(); setup::close_all(); }
         });
 }
 
