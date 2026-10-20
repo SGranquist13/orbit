@@ -1,6 +1,6 @@
 import { FolderPlus, Lock, LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { DEFAULT_PROFILE, api, type AgentKind, type Profile } from "../lib/ipc";
+import { api, type AgentKind, type Profile } from "../lib/ipc";
 import { defaultModelFor, modelLabelFor, modelsFor } from "../lib/settings";
 import { useApp } from "../stores/app";
 import { pickRepo } from "./Sidebar";
@@ -34,9 +34,12 @@ export function NewWorkspace() {
   }, [settings?.localAgents]);
   if (model && !models.includes(model) && !model.startsWith("local:")) models.push(model);
   const profiles = useApp((s) => s.profiles);
-  // Always start from Builder: silently inheriting a read-only profile from last time is a trap.
-  const [profileId, setProfileId] = useState(DEFAULT_PROFILE);
-  const profile = profiles.find((p) => p.id === profileId) ?? profiles.find((p) => p.id === DEFAULT_PROFILE);
+  // Roles are opt-in: no role unless Settings > General names a default, never last time's pick
+  // (silently inheriting a read-only profile is a trap).
+  const [profileId, setProfileId] = useState(() => settings?.defaultProfile ?? "");
+  const profile = profiles.find((p) => p.id === profileId);
+  // Chips stay hidden behind "Add role" unless a default role is configured.
+  const [pickerOpen, setPickerOpen] = useState(() => !!settings?.defaultProfile);
   const [prompt, setPrompt] = useState(() => useApp.getState().newWorkspacePrefill?.prompt ?? "");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -114,14 +117,22 @@ export function NewWorkspace() {
           className="block w-full resize-none bg-transparent px-4 py-3 text-[15px] font-medium leading-relaxed placeholder:text-mute focus:outline-none"
         />
 
-        {profiles.length > 0 && (
+        {profiles.length > 0 && !pickerOpen && (
+          <div className="flex items-center gap-2 border-t border-line px-4 py-2 text-[12px] text-mute">
+            <button data-testid="profile-change" onClick={() => setPickerOpen(true)} className="font-medium text-dim underline-offset-2 hover:text-fg hover:underline">
+              + Add role
+            </button>
+            <span>optional: Builder, Planner, Reviewer…</span>
+          </div>
+        )}
+        {profiles.length > 0 && pickerOpen && (
           <div className="border-t border-line px-3 py-2.5">
             <div className="flex flex-wrap gap-1">
               {profiles.map((p) => (
                 <button
                   key={p.id}
                   data-profile={p.id}
-                  onClick={() => pickProfile(p)}
+                  onClick={() => (profile?.id === p.id ? setProfileId("") : pickProfile(p))}
                   title={p.description}
                   className={cn(
                     "flex h-6 items-center gap-1 rounded-[3px] border-[1.5px] px-2 text-[12px] font-medium transition-colors",
@@ -133,7 +144,7 @@ export function NewWorkspace() {
                 </button>
               ))}
             </div>
-            {profile && <div className="mt-1.5 truncate text-[11.5px] text-mute">{profile.description}</div>}
+            <div className="mt-1.5 truncate text-[11.5px] text-mute">{profile ? profile.description : "No role. Pick one to give the agent a focus; click it again to remove."}</div>
           </div>
         )}
 

@@ -644,14 +644,30 @@ function ProfileMenu({ ws, running }: { ws: Workspace; running: boolean }) {
       <button
         data-profile-trigger
         onClick={() => setOpen((o) => !o)}
-        title={`${current?.description ?? "Choose an available profile"}\n\nSwitch profile`}
+        title={`${current?.description ?? "No role set"}\n\nSwitch profile`}
         className="flex items-center gap-1 rounded-[3px] px-1 text-dim hover:bg-hover hover:text-fg"
       >
         {current?.readonly && <Lock className="size-3" />}
-        {current?.name ?? "Choose profile"}
+        {current?.name ?? "No role"}
       </button>
       {open && (
         <ul className="absolute bottom-full left-0 z-20 mb-2 w-[320px] overflow-hidden rounded-[6px] border-[1.5px] border-line-strong bg-raised p-1 shadow-hard">
+          {current && (
+            <li>
+              <button
+                data-profile=""
+                disabled={running}
+                onClick={() => {
+                  setOpen(false);
+                  void useApp.getState().setProfile(ws.id, null);
+                }}
+                className="flex w-full flex-col rounded-[3px] px-2.5 py-1.5 text-left hover:bg-hover disabled:opacity-40"
+              >
+                <span className="text-[12px] font-medium text-fg">No role</span>
+                <span className="truncate text-[11px] font-normal text-mute">Remove the role instructions</span>
+              </button>
+            </li>
+          )}
           {workspacePackItems(profiles, ws).map((p) => (
             <li key={p.id}>
               <button

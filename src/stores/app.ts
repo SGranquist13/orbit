@@ -148,7 +148,7 @@ interface AppState {
   setRelatedOpen: (open: boolean) => void;
   loadSkills: () => Promise<void>;
   /** Switch a workspace's profile; resolves false (and sets the error) on failure. */
-  setProfile: (workspaceId: string, profile: string) => Promise<boolean>;
+  setProfile: (workspaceId: string, profile: string | null) => Promise<boolean>;
   togglePin: (skillId: string) => Promise<void>;
   runSkill: (workspaceId: string, skillId: string, args?: string) => Promise<void>;
   /** Orbit's ship gate (checks + squash save points), then `shipkit:ship` if allowed. `anyway` skips the checks. */

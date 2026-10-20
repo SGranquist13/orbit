@@ -268,6 +268,7 @@ export function uiHelpers(h) {
     await h.js(`document.querySelector('textarea[placeholder^="Describe the task"]').focus()`);
     await h.type(prompt);
     await h.js(`[...document.querySelectorAll('button')].find(b => b.innerText.trim() === ${JSON.stringify(agent === "codex" ? "Codex" : "Claude")})?.click()`);
+    if (profile) await h.js(`document.querySelector('[data-testid=profile-change]')?.click()`);
     if (profile) await h.js(`document.querySelector('button[data-profile=${JSON.stringify(profile)}]')?.click()`);
     if (model) {
       await h.js(`
