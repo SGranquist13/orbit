@@ -41,6 +41,7 @@ import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block
 import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
 import { ContextMeter } from "./ContextMeter";
+import { LimitsBadge } from "./LimitsBadge";
 import { SchedulePreview, WhenControl } from "./ScheduleControls";
 import { TeammateLabel } from "./TeammateAvatar";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
@@ -1038,6 +1039,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
             <ProfileMenu ws={ws} running={running} />
           </span>
           <span className="flex-1" />
+          <LimitsBadge />
           <ContextMeter ws={ws} running={running} />
           {running && (
             <span className="flex items-center gap-1.5 text-[11px] text-mute">

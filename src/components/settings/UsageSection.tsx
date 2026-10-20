@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type UsageReport, type UsageTotals } from "../../lib/ipc";
 import { formatCost, formatTokens } from "../../lib/transcript";
 import { contextLevel, contextPercent, totalTokens } from "../../lib/usage";
+import { clampPct, limitLevel, resetText, windowLabel } from "../../lib/limits";
 import { useApp } from "../../stores/app";
 import { AgentIcon, agentLabel, cn } from "../ui";
 
@@ -46,6 +47,7 @@ export function UsageSection() {
 
   return (
     <section data-usage-section className="flex flex-col gap-5">
+      <PlanLimits />
       <header className="flex items-end justify-between gap-4">
         <p className="text-[12px] text-mute">Tokens added (input, output, cache writes), cost and context across all workspaces.</p>
         <div role="tablist" className="flex shrink-0 rounded-[4px] border-[1.5px] border-line-strong p-0.5">
@@ -173,6 +175,48 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
     <div title={hint} className="rounded-[4px] border border-line bg-panel px-3 py-2.5">
       <div className="text-[10.5px] font-medium uppercase tracking-wide text-mute">{label}</div>
       <div className="mt-0.5 text-[20px] font-semibold tabular-nums text-fg">{value}</div>
+    </div>
+  );
+}
+
+const limitBar = { ok: "bg-mute", warn: "bg-warn", bad: "bg-bad" } as const;
+
+/** Claude and Codex plan windows (5-hour, weekly), live from the agents' own rate-limit reports. */
+function PlanLimits() {
+  const limits = useApp((s) => s.rateLimits);
+  const rows = (["claude", "codex"] as const).map((a) => limits[a]).filter((l): l is NonNullable<typeof l> => !!l && l.windows.length > 0);
+  return (
+    <div data-plan-limits>
+      <h3 className="mb-2 text-[12px] font-semibold text-fg">Plan limits</h3>
+      {rows.length === 0 ? (
+        <p className="text-[12px] text-mute">Shows up after the first turn.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rows.map((l) => (
+            <div key={l.agent} className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-dim">
+                <AgentIcon agent={l.agent} /> {agentLabel[l.agent]}
+                {l.status === "rejected" && <span className="text-bad">· limit reached</span>}
+              </div>
+              {l.windows.map((w) => {
+                const pct = clampPct(w);
+                const level = l.status === "rejected" ? "bad" : limitLevel(w.usedPercent);
+                const reset = resetText(w.resetsAt);
+                return (
+                  <div key={w.kind} data-limit-window className="grid grid-cols-[64px_1fr_40px_132px] items-center gap-3 text-[11.5px] tabular-nums">
+                    <span className="text-dim">{windowLabel(w.kind)}</span>
+                    <span className="relative h-1 overflow-hidden rounded-[1px] bg-line">
+                      <span className={cn("dither-50 absolute inset-y-0 left-0", limitBar[level])} style={{ width: `${Math.max(pct, 2)}%` }} />
+                    </span>
+                    <span className={cn("text-right", levelText[level])}>{pct}%</span>
+                    <span className="text-mute">{reset ?? ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

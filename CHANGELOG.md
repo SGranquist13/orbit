@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a warning near the limit.
+
 ## 0.2.0 - 2026-10-20
 
 Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.

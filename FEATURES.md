@@ -13,7 +13,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 **Next**
 - Per-repo setup and run scripts, with `.env` and other ignored files copied into new worktrees
 - Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
-- Claude and Codex plan limits (5-hour and weekly windows) in Usage
 - MCP servers added once for both agents
 - Comment on diff lines and send them to the agent
 - Rewind a workspace to any earlier turn
@@ -73,6 +72,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | "Build this plan" from the inbox when a Planner finishes | 🧪 | |
 | Agents and the commands they start stop with Orbit, even after a crash | 🧪 | |
 | Context-window meter, per-turn tokens and cost, Usage report | ✅ | Codex shows tokens (plan billing) |
+| Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a quiet warning in the composer near the limit | 🧪 | |
 | Compact context / New session | ✅ | |
 | Safe launch from inside another Claude Code session (host environment scrubbed) | ✅ | |
 
