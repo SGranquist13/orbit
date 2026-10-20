@@ -232,7 +232,7 @@ export function createHarness({ scratch, port = 9333, only }) {
     process.exit(failed.length ? 1 : 0);
   }
 
-  return { home, launch, quit, cdp, js, waitFor, until, key, chord, type, shot, invoke, autoConfirm, step, finish, results };
+  return { home, launch, quit, cdp, js, waitFor, until, key, chord, type, shot, invoke, setFileInputFiles, autoConfirm, step, finish, results };
 }
 
 // ── UI helpers shared by scenarios ───────────────────────────

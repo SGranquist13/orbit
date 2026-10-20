@@ -15,6 +15,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
+import zlib from "node:zlib";
 import path from "node:path";
 import { TURN_ENDS, createHarness, killLeftovers, resolveScratch, sleep, uiHelpers } from "./e2e-harness.mjs";
 
@@ -1622,6 +1623,117 @@ await step("code-live", async () => {
   } finally {
     if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
   }
+});
+
+// ── Attachments (images and files in chat) ───────────────────
+/** A solid-colour RGB PNG, built with zlib (no dependencies). */
+function solidPng(rgb, size = 16) {
+  const table = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (b) => (~[...b].reduce((r, x) => table[(r ^ x) & 255] ^ (r >>> 8), ~0)) >>> 0;
+  const chunk = (t, d) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(d.length);
+    const body = Buffer.concat([Buffer.from(t), d]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(size, 0);
+  head.writeUInt32BE(size, 4);
+  head[8] = 8; // bit depth
+  head[9] = 2; // RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.concat(Array(size).fill(Buffer.from(rgb)))]);
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", head), chunk("IDAT", zlib.deflateSync(Buffer.concat(Array(size).fill(row)))), chunk("IEND", Buffer.alloc(0))]);
+}
+const RED = [255, 0, 0];
+const attachDir = path.join(scratch, "attach");
+fs.mkdirSync(attachDir, { recursive: true });
+const norm = (p) => String(p).replaceAll("\\", "/").toLowerCase();
+const underHomeImages = (p) => norm(p).startsWith(norm(path.join(home, "images")) + "/");
+const underHomeFiles = (p) => norm(p).startsWith(norm(path.join(home, "files")) + "/");
+const wsEvents = async (id) => (await invoke("load_events", { id })).map((e) => e.event);
+const STRIP_READY = `const s = document.querySelector('[data-pending-strip]'); return !!s && s.children.length > 0 && !s.querySelector('.animate-spin') && ![...s.querySelectorAll('img')].some(i => i.classList.contains('opacity-50'))`;
+const STRIP_GONE = `return !document.querySelector('[data-pending-strip]')`;
+
+/** Fresh workspace (no turn yet), selected in the sidebar. */
+async function attachWs(name, extra = {}) {
+  const ws = await mkWs(name, extra);
+  await waitFor("sidebar row", `${DOM} return !!sidebarRow(${JSON.stringify(name)})`, 10_000);
+  await selectWsInSidebar(name);
+  return ws;
+}
+
+// Attachments go through the composer's real hidden file input (CDP DOM.setFileInputFiles), not a synthetic paste.
+for (const [name, agent] of [["attachments-image", "claude"], ["attachments-codex-image", "codex"]]) {
+  await step(name, async () => {
+    const png = path.join(attachDir, "red.png");
+    fs.writeFileSync(png, solidPng(RED));
+    const ws = await attachWs(`${name} ws`, agent === "codex" ? { agent: "codex", model: null } : {});
+    await h.setFileInputFiles("[data-attach-input]", [png]);
+    await waitFor("thumbnail in the strip", `return !!document.querySelector('[data-pending-strip] [data-pending-image] img')`, 10_000);
+    await waitFor("thumbnail uploaded", STRIP_READY, 20_000);
+    const before = await js(turnEnds);
+    await composerSend("What colour is this image? Answer with one word.");
+    await waitFor("strip cleared after send", STRIP_GONE, 15_000);
+    await waitFor("turn completed", `${turnEnds} > ${before}`, 180_000);
+    const evs = await wsEvents(ws.id);
+    const um = evs.find((e) => e.type === "userMessage" && e.images?.length);
+    if (!um) throw new Error("no userMessage event carries images");
+    if (!underHomeImages(um.images[0].path)) throw new Error(`image path is not under <home>/images: ${um.images[0].path}`);
+    if (!fs.existsSync(um.images[0].path)) throw new Error("stored image is missing on disk");
+    if (um.images[0].data) throw new Error("userMessage image carries inline base64");
+    await waitFor("image in the user bubble", `return !!document.querySelector('[data-user-message] [data-chat-image] img')`, 10_000);
+    const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+    if (!/red/i.test(msg)) {
+      // A Codex account at its usage limit fails the turn: say so instead of a bare assertion failure.
+      const err = evs.filter((e) => e.type === "turnCompleted" && e.isError).at(-1)?.error;
+      throw new Error(agent === "codex" && err ? `Codex turn failed (usage limit or account?): ${String(err).slice(0, 160)}` : `${agent} answered: ${msg.slice(0, 120)}`);
+    }
+    await shot(name);
+  });
+}
+
+await step("attachments-file", async () => {
+  const txt = path.join(attachDir, "secret.txt");
+  fs.writeFileSync(txt, "The secret word is pelican.\n");
+  const ws = await attachWs("attachments-file ws");
+  await h.setFileInputFiles("[data-attach-input]", [txt]);
+  await waitFor("file chip in the strip", `return !!document.querySelector('[data-pending-strip] [data-file-chip]')`, 10_000);
+  await waitFor("file uploaded", STRIP_READY, 20_000);
+  const before = await js(turnEnds);
+  await composerSend("What is the secret word in the attached file? One word.");
+  await waitFor("strip cleared after send", STRIP_GONE, 15_000);
+  await waitFor("turn completed", `${turnEnds} > ${before}`, 180_000);
+  const um = (await wsEvents(ws.id)).find((e) => e.type === "userMessage" && e.files?.length);
+  if (!um) throw new Error("no userMessage event carries files");
+  const f = um.files[0];
+  if (f.name !== "secret.txt" || !underHomeFiles(f.path)) throw new Error(`unexpected file ref: ${JSON.stringify(f)}`);
+  if (!fs.existsSync(f.path)) throw new Error("stored file is missing on disk");
+  await waitFor("file chip in the user bubble", `return !!document.querySelector('[data-user-message] [data-file-chip]')`, 10_000);
+  const msg = await js(`return [...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? ''`);
+  if (!/pelican/i.test(msg)) throw new Error(`claude answered: ${msg.slice(0, 120)}`);
+});
+
+await step("attachments-tool-image", async () => {
+  const ws = await attachWs("attachments-tool-image ws");
+  fs.writeFileSync(path.join(ws.path, "red.png"), solidPng(RED));
+  const before = await js(turnEnds);
+  await composerSend("Use the Read tool on red.png, then reply with one word: done.");
+  await waitFor("turn completed", `${turnEnds} > ${before}`, 180_000);
+  const evs = await wsEvents(ws.id);
+  const results = evs.filter((e) => e.type === "toolResult");
+  const tr = results.find((e) => e.images?.length);
+  if (!tr) throw new Error(`no toolResult event carries images (outputs: ${JSON.stringify(results.map((e) => e.output.slice(0, 60)))})`);
+  if (!underHomeImages(tr.images[0].path)) throw new Error(`tool image path is not under <home>/images: ${tr.images[0].path}`);
+  if (!fs.existsSync(tr.images[0].path)) throw new Error("stored tool image is missing on disk");
+  for (const e of results) if (/"data"\s*:/.test(JSON.stringify(e))) throw new Error('a stored toolResult event still carries a base64 "data" field');
+  await waitFor("thumbnail in the tool group", `return !!document.querySelector('[data-chat-image] img') && !document.querySelector('[data-user-message] [data-chat-image]')`, 10_000);
+  await shot("attachments-tool-image");
 });
 
 await h.finish();

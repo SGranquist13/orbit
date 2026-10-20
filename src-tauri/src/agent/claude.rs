@@ -752,6 +752,39 @@ mod tests {
         assert!(seen.iter().any(|e| matches!(e, AgentEvent::TurnCompleted { is_error: false, .. })));
     }
 
+    /// Sends a red PNG to the real `claude` binary and expects it to name the colour:
+    /// `cargo test -- --ignored live_claude_image_attachment`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_claude_image_attachment() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join("orbit_claude_image_attachment");
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("red.png");
+        std::fs::write(&png, base64::engine::general_purpose::STANDARD.decode(crate::images::RED_PNG_B64).unwrap()).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let cfg = SessionConfig { kind: super::super::AgentKind::Claude, cwd: dir, model: Some("haiku".into()), resume: None, plugin_dirs: vec![], add_dirs: vec![], instructions: None, readonly: false, permission_mode: "bypassPermissions".into(), sandbox: "danger-full-access".into(), local_url: None };
+        let handle = super::super::spawn(cfg, 0, std::sync::Arc::new(move |ev| { let _ = tx.send(ev); })).unwrap();
+        handle.send(Command::User {
+            text: "What colour is this image? One word.".into(),
+            images: vec![ImageRef { path: png.to_string_lossy().to_string(), media_type: "image/png".into(), data: None }],
+        });
+        let mut seen = Vec::new();
+        let done = tokio::time::timeout(std::time::Duration::from_secs(180), async {
+            while let Some(ev) = rx.recv().await {
+                let end = matches!(ev, AgentEvent::TurnCompleted { .. } | AgentEvent::Exited { .. });
+                seen.push(ev);
+                if end { break; }
+            }
+        })
+        .await;
+        handle.send(Command::Shutdown);
+        eprintln!("{seen:#?}");
+        assert!(done.is_ok(), "timed out");
+        assert!(seen.iter().any(|e| matches!(e, AgentEvent::TurnCompleted { is_error: false, .. })), "turn failed");
+        assert!(seen.iter().any(|e| matches!(e, AgentEvent::Message { text } if text.to_lowercase().contains("red"))), "no message naming red");
+    }
+
     #[test]
     fn auth_error_surfaces_as_failed_turn() {
         // Recorded from a real CLI with an expired login.

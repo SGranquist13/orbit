@@ -230,6 +230,10 @@ pub fn files_block(files: &[FileRef]) -> String {
     s
 }
 
+/// A 16x16 solid red PNG, for live agent tests.
+#[cfg(test)]
+pub const RED_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP4z8BAEiJN9aiGUQ1DSgMAkPn/Afnh+ngAAAAASUVORK5CYII=";
+
 #[cfg(test)]
 mod tests {
     use super::*;
