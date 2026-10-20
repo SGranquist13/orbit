@@ -11,6 +11,12 @@ What Orbit does today and where it's heading. For how features were designed, an
 ## Roadmap
 
 **Next**
+- Per-repo setup and run scripts, with `.env` and other ignored files copied into new worktrees
+- Open a workspace in your editor (VS Code, Cursor, Zed, JetBrains)
+- Claude and Codex plan limits (5-hour and weekly windows) in Usage
+- MCP servers added once for both agents
+- Comment on diff lines and send them to the agent
+- Rewind a workspace to any earlier turn
 - Linked pull requests across repositories (ship an attached project's changes alongside the main PR)
 - Your installed Claude plugins in `/` autocomplete and as pinnable chips
 - Teammates and archived workspaces mirrored to the phone app
