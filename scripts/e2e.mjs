@@ -763,6 +763,60 @@ await step("settings-branch-prefix", async () => {
   if (plain.branch.startsWith("e2e-pre/")) throw new Error(`prefix was not restored: ${plain.branch}`);
 });
 
+await step("roles-opt-in", async () => {
+  // Roles are opt-in: New workspace starts with no role, Settings > General can name a default,
+  // and the chat footer can remove a role (no agent turn needed).
+  if ((await invoke("get_settings")).defaultProfile !== "") throw new Error("default role is not empty");
+  const NEW_WS = `return !!document.querySelector('textarea[placeholder^="Describe the task"]')`;
+  const openNew = async () => {
+    if (await js(`return !!document.querySelector('[data-code-view]')`)) await key("1", { alt: true });
+    await js(`document.activeElement?.blur()`);
+    await key("n", { ctrl: true });
+    await waitFor("new workspace dialog", NEW_WS, 5000);
+  };
+  const closeNew = async () => {
+    await key("Escape");
+    await waitFor("new workspace dialog closed", `return !document.querySelector('textarea[placeholder^="Describe the task"]')`, 5000);
+  };
+  await openNew();
+  if (!(await js(`return !!document.querySelector('[data-testid=profile-change]') && !document.querySelector('button[data-profile]')`))) {
+    throw new Error("New workspace does not start with no role behind + Add role");
+  }
+  await closeNew();
+
+  const planner = (await invoke("list_profiles")).find((p) => p.id === "shipkit:planner");
+  const before = await invoke("get_settings");
+  try {
+    await openSettingsView();
+    await waitFor("Default role picker", `return !!document.querySelector('select[aria-label="Default role"]')`, 5000);
+    await js(`
+      const sel = document.querySelector('select[aria-label="Default role"]');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(sel, 'shipkit:planner');
+      sel.dispatchEvent(new Event('change', { bubbles: true }));`);
+    await until("default role saved", async () => (await invoke("get_settings")).defaultProfile === "shipkit:planner", 5000, 250);
+    await closeSettingsView();
+    await openNew();
+    await waitFor("Planner pre-selected", `return !document.querySelector('[data-testid=profile-change]') && document.body.innerText.includes(${JSON.stringify(planner.description)})`, 5000);
+    await closeNew();
+  } finally {
+    await invoke("update_settings", { patch: { defaultProfile: before.defaultProfile } });
+    await js(`location.reload()`);
+    await sleep(1500);
+    await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
+  }
+
+  // The profiles step left its workspace on Builder; "No role" in the footer clears it.
+  const planWs = (await invoke("list_workspaces")).find((w) => w.name.includes("PLAN_TEST.md"));
+  if (!planWs) throw new Error("needs the full suite (the profiles step's workspace)");
+  await selectWsInSidebar(planWs.name);
+  await js(`document.querySelector('button[data-profile-trigger]').click()`);
+  await waitFor("No role option", `return !!document.querySelector('button[data-profile=""]')`, 5000);
+  await js(`document.querySelector('button[data-profile=""]').click()`);
+  await waitFor("footer shows No role", `return [...document.querySelectorAll('button[data-profile-trigger]')].some(b => b.innerText.includes('No role'))`, 5000);
+  const cleared = (await invoke("list_workspaces")).find((w) => w.id === planWs.id);
+  if (cleared.profile) throw new Error(`profile not cleared: ${cleared.profile}`);
+});
+
 await step("settings-accept-edits", async () => {
   // Accept edits allows file edits but denies shell commands. (A bare `echo > file` is auto-approved by the
   // Claude CLI in this mode as a "file edit", so the denied command is a node one-liner.)
