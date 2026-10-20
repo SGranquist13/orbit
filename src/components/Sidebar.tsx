@@ -1,3 +1,4 @@
+import { useKeybindingLabels } from "../lib/useKeybinding";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { ChevronDown, ChevronRight, Code2, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
@@ -22,6 +23,7 @@ export async function pickRepo() {
 }
 
 export function Sidebar() {
+  const keyLabel = useKeybindingLabels();
   const repos = useApp((s) => s.repos);
   const workspaces = useApp((s) => s.workspaces);
   const running = workspaces.filter((w) => w.status === "running").length;
@@ -47,7 +49,7 @@ export function Sidebar() {
         )}
         <button
           onClick={() => useApp.getState().setSidebarCollapsed(true)}
-          title="Collapse sidebar (Ctrl B)"
+          title={"Collapse sidebar" + (keyLabel("workbench.toggleSidebar") ? ` (${keyLabel("workbench.toggleSidebar")})` : "")}
           className={cn(
             "grid size-7 shrink-0 place-items-center rounded-[4px] text-mute hover:bg-hover hover:text-fg",
             running === 0 && "ml-auto",
@@ -59,11 +61,11 @@ export function Sidebar() {
       <div className="border-t-[1.5px] border-line" />
 
       <nav className="space-y-0.5 px-2 py-2">
-        <NavItem icon={<Code2 className="size-3.5" />} label="Code" kbd="Ctrl Shift O" active={view === "code"} onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} />
+        <NavItem icon={<Code2 className="size-3.5" />} label="Code" kbd={keyLabel("views.code")} active={view === "code"} onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} />
         <NavItem
           icon={<Inbox className="size-3.5" strokeWidth={2.5} />}
           label="Inbox"
-          kbd="Ctrl I"
+          kbd={keyLabel("views.inbox")}
           active={view === "inbox"}
           count={needsYou}
           onClick={() => useApp.getState().setView(view === "inbox" ? "workspace" : "inbox")}
@@ -71,7 +73,7 @@ export function Sidebar() {
         <NavItem
           icon={<Clock className="size-3.5" strokeWidth={2.5} />}
           label="Routines"
-          kbd="Ctrl Shift E"
+          kbd={keyLabel("views.routines")}
           active={view === "routines"}
           count={activeRoutines}
           onClick={() => useApp.getState().setView(view === "routines" ? "workspace" : "routines")}
@@ -79,7 +81,7 @@ export function Sidebar() {
         <NavItem
           icon={<Users className="size-3.5" strokeWidth={2.5} />}
           label="Teammates"
-          kbd="Ctrl Shift T"
+          kbd={keyLabel("views.teammates")}
           active={view === "teammate"}
           count={teammatesNeedYou}
           onClick={() => useApp.getState().setView(view === "teammate" ? "workspace" : "teammate")}
@@ -87,12 +89,12 @@ export function Sidebar() {
         <NavItem
           icon={<CircleDot className="size-3.5" strokeWidth={2.5} />}
           label="Issues"
-          kbd="Ctrl Shift G"
+          kbd={keyLabel("views.issues")}
           active={view === "issues"}
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
         />
-        <NavItem icon={<Plus className="size-3.5" strokeWidth={2.5} />} label="New workspace" kbd="Ctrl N" onClick={() => useApp.getState().setNewWorkspaceOpen(true)} />
-        <NavItem icon={<Search className="size-3.5" strokeWidth={2.5} />} label="Command palette" kbd="Ctrl K" onClick={() => useApp.getState().setPaletteOpen(true)} />
+        <NavItem icon={<Plus className="size-3.5" strokeWidth={2.5} />} label="New workspace" kbd={keyLabel("workbench.newWorkspace")} onClick={() => useApp.getState().setNewWorkspaceOpen(true)} />
+        <NavItem icon={<Search className="size-3.5" strokeWidth={2.5} />} label="Command palette" kbd={keyLabel("workbench.commandPalette")} onClick={() => useApp.getState().setPaletteOpen(true)} />
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -124,6 +126,7 @@ export function Sidebar() {
 
 /** Icon-only sidebar: nav actions plus one status dot per workspace. */
 function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number; teammatesNeedYou: number }) {
+  const keyLabel = useKeybindingLabels();
   const view = useApp((s) => s.view);
   const selectedId = useApp((s) => s.selectedId);
   const summaries = useApp((s) => s.summaries);
@@ -131,16 +134,16 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
   return (
     <aside className="flex h-full w-[52px] shrink-0 flex-col items-center border-r-[1.5px] border-line bg-panel">
       <div className="grid h-12 place-items-center" data-tauri-drag-region>
-        <button onClick={() => useApp.getState().setSidebarCollapsed(false)} title="Expand sidebar (Ctrl B)">
+        <button onClick={() => useApp.getState().setSidebarCollapsed(false)} title={"Expand sidebar" + (keyLabel("workbench.toggleSidebar") ? ` (${keyLabel("workbench.toggleSidebar")})` : "")}>
           <OrbitMark size={30} zoom={1.75} />
         </button>
       </div>
       <div className="dither-rule w-full bg-line-strong" />
       <nav className="flex flex-col items-center gap-0.5 py-2 text-dim">
-        <button title="Code (Ctrl Shift O)" onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} className={cn(btn, view === "code" && "bg-raised text-fg")}><Code2 className="size-3.5" /></button>
+        <button title={"Code" + (keyLabel("views.code") ? ` (${keyLabel("views.code")})` : "")} onClick={() => useApp.getState().setView(view === "code" ? "workspace" : "code")} className={cn(btn, view === "code" && "bg-raised text-fg")}><Code2 className="size-3.5" /></button>
         <button
           onClick={() => useApp.getState().setView(view === "inbox" ? "workspace" : "inbox")}
-          title="Inbox (Ctrl I)"
+          title={"Inbox" + (keyLabel("views.inbox") ? ` (${keyLabel("views.inbox")})` : "")}
           className={cn(btn, view === "inbox" && "bg-raised text-fg")}
         >
           <Inbox className="size-3.5" strokeWidth={2.5} />
@@ -152,7 +155,7 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
         </button>
         <button
           onClick={() => useApp.getState().setView(view === "routines" ? "workspace" : "routines")}
-          title="Routines (Ctrl Shift E)"
+          title={"Routines" + (keyLabel("views.routines") ? ` (${keyLabel("views.routines")})` : "")}
           className={cn(btn, view === "routines" && "bg-raised text-fg")}
         >
           <Clock className="size-3.5" strokeWidth={2.5} />
@@ -164,7 +167,7 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
         </button>
         <button
           onClick={() => useApp.getState().setView(view === "teammate" ? "workspace" : "teammate")}
-          title="Teammates (Ctrl Shift T)"
+          title={"Teammates" + (keyLabel("views.teammates") ? ` (${keyLabel("views.teammates")})` : "")}
           className={cn(btn, view === "teammate" && "bg-raised text-fg")}
         >
           <Users className="size-3.5" strokeWidth={2.5} />
@@ -176,15 +179,15 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
         </button>
         <button
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
-          title="Issues (Ctrl Shift G)"
+          title={"Issues" + (keyLabel("views.issues") ? ` (${keyLabel("views.issues")})` : "")}
           className={cn(btn, view === "issues" && "bg-raised text-fg")}
         >
           <CircleDot className="size-3.5" strokeWidth={2.5} />
         </button>
-        <button onClick={() => useApp.getState().setNewWorkspaceOpen(true)} title="New workspace (Ctrl N)" className={btn}>
+        <button onClick={() => useApp.getState().setNewWorkspaceOpen(true)} title={"New workspace" + (keyLabel("workbench.newWorkspace") ? ` (${keyLabel("workbench.newWorkspace")})` : "")} className={btn}>
           <Plus className="size-3.5" strokeWidth={2.5} />
         </button>
-        <button onClick={() => useApp.getState().setPaletteOpen(true)} title="Command palette (Ctrl K)" className={btn}>
+        <button onClick={() => useApp.getState().setPaletteOpen(true)} title={"Command palette" + (keyLabel("workbench.commandPalette") ? ` (${keyLabel("workbench.commandPalette")})` : "")} className={btn}>
           <Search className="size-3.5" strokeWidth={2.5} />
         </button>
       </nav>
@@ -211,11 +214,12 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
 }
 
 function SettingsButton() {
+  const keyLabel = useKeybindingLabels();
   const active = useApp((s) => s.view === "settings");
   return (
     <button
       onClick={() => (active ? useApp.getState().closeSettings() : useApp.getState().openSettings())}
-      title="Settings (Ctrl ,)"
+      title={"Settings" + (keyLabel("workbench.settings") ? ` (${keyLabel("workbench.settings")})` : "")}
       aria-label="Settings"
       className={cn("grid size-7 shrink-0 place-items-center rounded-[4px] hover:bg-hover hover:text-fg", active ? "bg-raised text-fg" : "text-dim")}
     >

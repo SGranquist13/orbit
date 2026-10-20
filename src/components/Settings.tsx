@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp } from "../stores/app";
 import { Button, Kbd, cn } from "./ui";
 import { Editor } from "./settings/Editor";
@@ -33,6 +33,14 @@ export function Settings() {
   const [active, setActive] = useState(SECTIONS[0].id);
   const settingsLoaded = useApp((s) => s.settings !== null);
   const settingsError = useApp((s) => s.settingsError);
+
+  const requestedSection = useApp((s) => s.settingsSection);
+  useLayoutEffect(() => {
+    if (!settingsLoaded || !requestedSection) return;
+    scroller.current?.querySelector(`[data-section="${requestedSection}"]`)?.scrollIntoView({ block: "start" });
+    setActive(requestedSection);
+    useApp.setState({ settingsSection: null });
+  }, [settingsLoaded, requestedSection]);
 
   // Highlight the last section whose top has passed the upper part of the viewport.
   const onScroll = () => {

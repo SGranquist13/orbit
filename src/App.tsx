@@ -5,10 +5,10 @@ import { NewWorkspace } from "./components/NewWorkspace";
 import { Palette } from "./components/Palette";
 import { RightPanel } from "./components/RightPanel";
 import { Sidebar, pickRepo } from "./components/Sidebar";
-import { Button, Kbd } from "./components/ui";
+import { Button } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
-import { useTheme } from "./lib/theme";
-import { useCode } from "./stores/code";
+import { installKeybindings } from "./lib/keybindingRuntime";
+import { KeybindingHint } from "./components/KeybindingHint";
 import { useApp } from "./stores/app";
 
 const CodeView = lazy(() => import("./components/code/CodeView").then((m) => ({ default: m.CodeView })));
@@ -47,75 +47,8 @@ export default function App() {
     useApp.getState().init().catch((e) => useApp.getState().setError(String(e)));
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const s = useApp.getState();
-      const key = e.key.toLowerCase();
-      if (e.altKey) return;
-      if (e.shiftKey) {
-        // Shifted bindings are matched explicitly; anything else (notably Ctrl+Shift+I, which
-        // WebView2 reserves for DevTools in dev builds) does nothing here.
-        if (key === "l") {
-          e.preventDefault();
-          useTheme.getState().toggle();
-        } else if (key === "o") {
-          e.preventDefault();
-          const ws = s.workspaces.find((w) => w.id === s.selectedId);
-          if (s.view === "workspace" && ws) {
-            void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => s.setView("code"));
-          } else s.setView(s.view === "code" ? "workspace" : "code");
-        } else if (key === "g") {
-          e.preventDefault();
-          s.setView(s.view === "issues" ? "workspace" : "issues");
-        } else if (key === "e") {
-          // Routines. Not Ctrl+Shift+R (reload) or Ctrl+Shift+J (DevTools console) in WebView2.
-          e.preventDefault();
-          s.setView(s.view === "routines" ? "workspace" : "routines");
-        } else if (key === "t") {
-          // Teammates view. "Ask a teammate…" stays in the palette.
-          e.preventDefault();
-          s.setView(s.view === "teammate" ? "workspace" : "teammate");
-        }
-        return;
-      }
-      if (key === "k") {
-        // CodeMirror owns Mod-K only while its source editor has focus.
-        if (s.view === "code" && (e.target as HTMLElement)?.closest?.(".cm-editor, [aria-label='Ask about selection']")) return;
-        e.preventDefault();
-        s.setPaletteOpen(!s.paletteOpen);
-      } else if (e.key === ",") {
-        e.preventDefault();
-        if (s.view === "settings") s.closeSettings();
-        else s.openSettings();
-      } else if (key === "i") {
-        e.preventDefault();
-        s.setView(s.view === "inbox" ? "workspace" : "inbox");
-      } else if (e.key === ".") {
-        e.preventDefault();
-        s.setShipOpen(!s.shipOpen);
-      } else if (key === "b") {
-        e.preventDefault();
-        s.setSidebarCollapsed(!s.sidebarCollapsed);
-      } else if (e.key === "\\") {
-        e.preventDefault();
-        s.setFocusMode(!s.focusMode);
-      } else if (key === "n") {
-        e.preventDefault();
-        s.setNewWorkspaceOpen(true);
-      } else if (/^[1-9]$/.test(e.key)) {
-        // Ctrl+1..9 jumps to the nth workspace in sidebar order.
-        const ordered = s.repos.flatMap((r) => s.workspaces.filter((w) => w.repoId === r.id));
-        const target = ordered[Number(e.key) - 1];
-        if (target) {
-          e.preventDefault();
-          s.select(target.id);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const [chordHint, setChordHint] = useState("");
+  useEffect(() => installKeybindings(setChordHint), []);
 
   return (
     <div className="flex h-full">
@@ -152,6 +85,7 @@ export default function App() {
       {paletteOpen && <Palette />}
       {packsOpen && <Lazy fallback={null}><Packs /></Lazy>}
       {ticketOpen && <Lazy fallback={null}><NewTicket /></Lazy>}
+      {chordHint && <div role="status" className="fixed bottom-2 left-2 z-[70] rounded-[4px] border border-line bg-raised px-3 py-2 font-sans text-[12px] text-mute">{chordHint}</div>}
       <ErrorToast />
     </div>
   );
@@ -170,7 +104,7 @@ function Empty() {
         <div className="mt-6" />
         {hasRepos ? (
           <Button variant="primary" onClick={() => useApp.getState().setNewWorkspaceOpen(true)}>
-            <Plus className="size-3.5" /> New workspace <Kbd>Ctrl N</Kbd>
+            <Plus className="size-3.5" /> New workspace <KeybindingHint command="workbench.newWorkspace" />
           </Button>
         ) : (
           <Button variant="primary" onClick={() => void pickRepo()}>

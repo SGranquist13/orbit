@@ -295,6 +295,7 @@ let settings: Settings = {
   simplifyLowRiskButton: true,
   editorFontSize: 13,
   editorTabSize: 2,
+  keybindings: {},
   editorWordWrap: false,
   editorAutosave: "off",
   editorFollowAgent: true,

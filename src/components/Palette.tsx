@@ -1,22 +1,22 @@
+import { commands, executeCommand } from "../lib/keybindings";
+import { useKeybindingLabels } from "../lib/useKeybinding";
 import { isTauri } from "../lib/env";
 import { useCode } from "../stores/code";
-import { openCodeFolder } from "./code/FolderSwitcher";
 import { explorerAction, type ExplorerAction } from "./code/Explorer";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
-import { AlarmClock, Archive, CalendarClock, Check, CircleDot, Clock, Cpu, Focus, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, Inbox, ListChecks, Minimize2, Package, PanelLeft, Plus, Rocket, RotateCcw, Settings, Shrink, Smartphone, Sparkles, Square, SunMoon, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { api, activeProfile } from "../lib/ipc";
-import { useTheme } from "../lib/theme";
 import { useApp } from "../stores/app";
 import { pickAttachFolder } from "./Chat";
 import { pickRepo } from "./Sidebar";
 import { TeammateAvatar } from "./TeammateAvatar";
 import { AgentIcon, StatusDot, TeammateDot } from "./ui";
-
 export function Palette() {
+  const keyLabel = useKeybindingLabels();
   const codeView = useApp((s) => s.view === "code");
   const codeRoot = useCode((s) => s.roots.find((r) => r.path === s.activeRoot));
   const codeRel = codeRoot?.activeRel;
@@ -49,12 +49,10 @@ export function Palette() {
     close();
     fn();
   };
-
   const item =
     "flex h-9 cursor-default items-center gap-2.5 rounded-[3px] px-2.5 text-[12.5px] font-medium text-dim data-[selected=true]:bg-accent data-[selected=true]:text-accent-fg data-[selected=true]:[&_*]:text-accent-fg";
   const heading =
     "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-mute";
-
   return (
     <div className="fixed inset-0 z-50 grid place-items-start justify-center bg-overlay pt-[14vh]" onMouseDown={close}>
       <Command
@@ -86,38 +84,30 @@ export function Palette() {
           )}
           {scope !== "teammates" && (
           <>
+          <Command.Group heading="Commands" className={heading}>
+            {commands.map((c) => <Command.Item key={c.id} value={`${c.title} ${c.id} Open ${c.title} Toggle ${c.title}`} className={item} onSelect={run(() => {
+              // Restore the editor after the palette unmounts before invoking editor commands.
+              window.setTimeout(() => executeCommand(c.id), 0);
+            })}><span className="min-w-0 flex-1">{c.title}</span><span className="text-[11px] text-mute">{keyLabel(c.id)}</span></Command.Item>)}
+          </Command.Group>
           <Command.Group heading="Code" className={heading}>
-            <Command.Item className={item} value="Open Code" onSelect={run(() => useApp.getState().setView("code"))}><FolderSymlink className="size-3.5" />Open Code<span className="ml-auto text-mute">Ctrl Shift O</span></Command.Item>
-            <Command.Item className={item} value="Open folder in Code" onSelect={run(() => { void openCodeFolder(); })}><FolderPlus className="size-3.5" />Open folder in Code</Command.Item>
             {selected && (["Open this workspace in Code", "Watch the agent"] as const).map((title) => <Command.Item key={title} className={item} value={title} onSelect={run(() => { void useCode.getState().openRoot(selected.path, { workspaceId: selected.id }).then(() => { if (title === "Watch the agent") useCode.getState().setMode(useCode.getState().activeRoot!, "watch"); useApp.getState().setView("code"); }); })}>{title}</Command.Item>)}
             {codeView && <>
-              <Command.Item className={item} value="Quick open file" onSelect={run(() => useCode.getState().setQuickOpen(true))}>Quick open file<span className="ml-auto text-mute">Ctrl P</span></Command.Item>
               {codeRoot && <>
                 {([
-                  ["New terminal", () => useCode.getState().newTerminal()],
-                  ["Toggle terminal", () => useCode.getState().toggleTerminal()],
-                  ["Search in files", () => useCode.getState().openSearch()],
-                  ["Toggle diff", () => useCode.getState().toggleDiff()],
-                  ["Toggle Watch / Manual", () => useCode.getState().toggleMode()],
-                  ["Toggle activity", () => useCode.setState((s) => ({ activityOpen: !s.activityOpen }))],
                   ["Clear marks", () => useCode.getState().clearMarks()],
                 ] as [string, () => void][]).map(([title, action]) => (
                   <Command.Item key={title} className={item} value={title} onSelect={run(action)}>{title}</Command.Item>
                 ))}
-                <Command.Item className={item} value="Save all files" onSelect={run(() => { void useCode.getState().saveAll(); })}>Save all files</Command.Item>
                 <Command.Item className={item} value="Close folder in Code" onSelect={run(() => { void useCode.getState().closeRoot(codeRoot.path); })}>Close folder in Code</Command.Item>
-                {([["new-file", "New file"], ["new-folder", "New folder"], ["rename", "Rename entry"], ["delete", "Delete entry"], ["copy-path", "Copy relative path"], ["reveal", "Reveal in Explorer"]] as [ExplorerAction, string][]).map(([action, title]) => <Command.Item key={action} className={item} value={title} onSelect={run(() => explorerAction(action))}>{title}</Command.Item>)}
+                {([["new-folder", "New folder"], ["rename", "Rename entry"], ["delete", "Delete entry"], ["copy-path", "Copy relative path"], ["reveal", "Reveal in Explorer"]] as [ExplorerAction, string][]).map(([action, title]) => <Command.Item key={action} className={item} value={title} onSelect={run(() => explorerAction(action))}>{title}</Command.Item>)}
               </>}
               {codeRoot && !isTauri() && <Command.Item className={item} value="Simulate agent edit (mock)" onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-simulate-agent-edit")))}>Simulate agent edit (mock)</Command.Item>}
               {codeRel && <>
-                <Command.Item className={item} value="Ask about selection" onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" })))}>Ask about selection<span className="ml-auto text-mute">Ctrl K</span></Command.Item>
-                <Command.Item className={item} value="Save file" onSelect={run(() => { void useCode.getState().save(codeRel); })}>Save file</Command.Item>
-                <Command.Item className={item} value="Close file tab" onSelect={run(() => { void useCode.getState().closeTab(codeRel); })}>Close file tab</Command.Item>
                 <Command.Item className={item} value="Pin preview tab" onSelect={run(() => useCode.getState().pin(codeRel))}>Pin preview tab</Command.Item>
                 <Command.Item className={item} value="Reload file from disk" onSelect={run(() => { void useCode.getState().reloadFromDisk(codeRel, undefined, true); })}>Reload file from disk</Command.Item>
                 <Command.Item className={item} value="Open file externally" onSelect={run(() => { void openPath(`${codeRoot!.path}/${codeRel}`).catch((e) => useApp.getState().setError(String(e))); })}>Open file externally</Command.Item>
                 {codeBuffer?.dirty && codeBuffer.diskChanged && <Command.Item className={item} value="Keep mine (overwrite on next save)" onSelect={run(() => { void useCode.getState().keepMine(codeRel); })}>Keep mine (overwrite on next save)</Command.Item>}
-                {["Find in file", "Replace in file", "Go to line"].map((title) => <Command.Item key={title} className={item} value={title} onSelect={run(() => window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: title })))}>{title}</Command.Item>)}
               </>}
             </>}
           </Command.Group>
@@ -135,18 +125,6 @@ export function Palette() {
             <Command.Item className={item} value="New teammate" onSelect={run(() => useApp.getState().setTeammateEditor("new"))}>
               <Plus className="size-3.5" /> New teammate
             </Command.Item>
-            <Command.Item className={item} value="Open teammates" onSelect={run(() => useApp.getState().setView("teammate"))}>
-              <Users className="size-3.5" /> Open teammates
-            </Command.Item>
-            <Command.Item className={item} onSelect={run(() => useApp.getState().setView("inbox"))}>
-              <Inbox className="size-3.5" /> Open inbox
-            </Command.Item>
-            <Command.Item className={item} onSelect={run(() => useApp.getState().setView("issues"))}>
-              <CircleDot className="size-3.5" /> Open issues
-            </Command.Item>
-            <Command.Item className={item} value="Routines (scheduled messages)" onSelect={run(() => useApp.getState().setView("routines"))}>
-              <Clock className="size-3.5" /> Routines
-            </Command.Item>
             <Command.Item className={item} value="New routine (schedule a message)" onSelect={run(() => useApp.getState().newRoutine())}>
               <Plus className="size-3.5" /> New routine
             </Command.Item>
@@ -158,9 +136,6 @@ export function Palette() {
               })}
             >
               <Plus className="size-3.5" /> New ticket
-            </Command.Item>
-            <Command.Item className={item} onSelect={run(() => useApp.getState().setNewWorkspaceOpen(true))}>
-              <Plus className="size-3.5" /> New workspace
             </Command.Item>
             <Command.Item className={item} onSelect={run(() => void pickRepo())}>
               <FolderPlus className="size-3.5" /> Add repository
@@ -302,9 +277,6 @@ export function Palette() {
                 </Command.Item>
               </>
             )}
-            <Command.Item className={item} onSelect={run(() => useApp.getState().openSettings())}>
-              <Settings className="size-3.5" /> Open settings
-            </Command.Item>
             <Command.Item
               className={item}
               value="Pair a phone (Mobile settings)"
@@ -332,23 +304,8 @@ export function Palette() {
             <Command.Item className={item} value="Clean up merged worktrees" onSelect={run(() => openSettingsAt("data"))}>
               <Trash2 className="size-3.5" /> Clean up merged worktrees
             </Command.Item>
-            <Command.Item className={item} value="Toggle theme (dark / light)" onSelect={run(() => useTheme.getState().toggle())}>
-              <SunMoon className="size-3.5" /> Toggle theme
-            </Command.Item>
             <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
               <Package className="size-3.5" /> Manage skill packs
-            </Command.Item>
-            <Command.Item className={item} onSelect={run(() => useApp.getState().setShipOpen(!useApp.getState().shipOpen))}>
-              <Rocket className="size-3.5" /> Toggle Ship panel
-            </Command.Item>
-            <Command.Item
-              className={item}
-              onSelect={run(() => useApp.getState().setSidebarCollapsed(!useApp.getState().sidebarCollapsed))}
-            >
-              <PanelLeft className="size-3.5" /> Toggle sidebar
-            </Command.Item>
-            <Command.Item className={item} onSelect={run(() => useApp.getState().setFocusMode(!useApp.getState().focusMode))}>
-              <Focus className="size-3.5" /> Toggle focus mode
             </Command.Item>
           </Command.Group>
           {selectedId && !!currentProfile && profiles.length > 1 && (

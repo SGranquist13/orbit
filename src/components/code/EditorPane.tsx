@@ -1,10 +1,11 @@
+import { editorKeymap, plainBindings } from "../../lib/code/keymap";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Annotation, Compartment, EditorState, Prec, Transaction } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { searchKeymap, search, gotoLine, openSearchPanel } from "@codemirror/search";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from "@codemirror/language";
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, completeAnyWord } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { codeApi } from "../../lib/ipc";
 import { samePath } from "../../lib/code/agentEdits";
@@ -142,39 +143,20 @@ export function EditorPane() {
             bracketMatching(),
             closeBrackets(),
             indentOnInput(),
-            autocompletion({ override: [completeAnyWord] }),
             search({ top: true }),
             config.of([]),
             language.of([]),
             keymap.of([
-              {
-                key: "Mod-k",
-                preventDefault: true,
-                stopPropagation: true,
-                run: () => {
-                  window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" }));
-                  return true;
-                },
-              },
-              { key: "Mod-g", run: gotoLine },
-              { key: "Mod-h", run: openSearchPanel },
               ...closeBracketsKeymap,
-              ...defaultKeymap,
-              ...historyKeymap,
-              ...searchKeymap,
-              ...foldKeymap,
-              ...completionKeymap,
+              ...plainBindings(defaultKeymap),
+              ...plainBindings(historyKeymap),
+              ...plainBindings(searchKeymap),
+              ...plainBindings(foldKeymap),
               indentWithTab,
             ]),
             Prec.highest(
               EditorView.domEventHandlers({
                 keydown: (event, editor) => {
-                  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.shiftKey && !event.altKey) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    window.dispatchEvent(new CustomEvent("orbit-code-editor", { detail: "Ask about selection" }));
-                    return true;
-                  }
                   if (
                     editor.state.readOnly &&
                     ((event.key.length === 1 && !event.ctrlKey && !event.metaKey) ||
@@ -242,13 +224,14 @@ export function EditorPane() {
     if (!editor || !visible || !cached || currentKey.current !== key) return;
     editor.dispatch({
       effects: cached.settings.reconfigure([
+        editorKeymap(settings?.keybindings),
         EditorState.tabSize.of(tabSize),
         indentUnit.of(" ".repeat(tabSize)),
         wrap ? EditorView.lineWrapping : [],
         EditorView.theme({ "&": { fontSize: `${fontSize}px` } }),
       ]),
     });
-  }, [key, visible, fontSize, tabSize, wrap]);
+  }, [key, visible, fontSize, tabSize, wrap, settings?.keybindings]);
   useLayoutEffect(() => {
     const editor = view.current;
     if (!editor || !buffer || !visible || currentKey.current !== key || editor.state.doc.toString() === buffer.text) return;

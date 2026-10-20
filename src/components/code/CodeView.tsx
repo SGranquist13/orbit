@@ -1,17 +1,22 @@
+import { commands, registerHandler } from "../../lib/keybindings";
+import { runEditorCommand } from "../../lib/code/keymap";
 import { useEffect } from "react";
 import { FolderOpen, Search } from "lucide-react";
 import { useCode } from "../../stores/code";
 import { useApp } from "../../stores/app";
-import { Button, Kbd } from "../ui";
+import { Button } from "../ui";
 import { FolderSwitcher, openCodeFolder } from "./FolderSwitcher";
 import { Explorer } from "./Explorer";
 import { EditorTabs } from "./EditorTabs";
 import { EditorPane } from "./EditorPane";
 import { BottomPanel } from "./BottomPanel";
 import { AgentStrip, ActivityTimeline } from "./AgentActivity";
+import { KeybindingHint } from "../KeybindingHint";
 import { QuickOpen } from "./QuickOpen";
 
 export function CodeView() {
+  const explorerHidden = useCode((s) => s.explorerHidden);
+  const explorerFocus = useCode((s) => s.explorerFocus);
   const active = useApp((s) => s.view === "code");
   const root = useCode((s) => s.activeRoot),
     width = useCode((s) => s.explorerWidth),
@@ -20,40 +25,19 @@ export function CodeView() {
     activityWidth = useCode((s) => s.activityWidth);
   const workspaces = useApp((s) => s.workspaces);
   useEffect(() => {
-    void useCode.getState().init();
+    if (active && explorerFocus && root) {
+      document.querySelector<HTMLElement>('[role="tree"]')?.focus();
+      useCode.setState({ explorerFocus: 0 });
+    }
+  }, [active, explorerFocus, root]);
+  useEffect(() => {
+    const off = commands.filter((c) => c.when === "editor").map((c) => registerHandler(c.id, () => runEditorCommand(c.id)));
+    return () => off.forEach((unregister) => unregister());
   }, []);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (useApp.getState().view !== "code") return;
-      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "w") {
-        e.preventDefault();
-        useCode.getState().toggleMode();
-        return;
-      }
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      const s = useCode.getState(),
-        rel = s.roots.find((r) => r.path === s.activeRoot)?.activeRel;
-      if (e.code === "Backquote" || e.key === "`") {
-        e.preventDefault();
-        s.toggleTerminal();
-      } else if (e.shiftKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        s.openSearch();
-      } else if (e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        if (e.shiftKey) void s.saveAll();
-        else if (rel) void s.save(rel);
-      } else if (e.key.toLowerCase() === "w" && !e.shiftKey) {
-        e.preventDefault();
-        if (rel) void s.closeTab(rel);
-      } else if (e.key.toLowerCase() === "p" && !e.shiftKey) {
-        e.preventDefault();
-        s.setQuickOpen(true);
-      }
-    };
-    window.addEventListener("keydown", key, true);
-    return () => window.removeEventListener("keydown", key, true);
+    void useCode.getState().init();
   }, []);
+
   return (
     <main data-code-view={active ? "" : undefined} className="flex min-w-0 flex-1 flex-col bg-bg">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b-[1.5px] border-line px-3" data-tauri-drag-region>
@@ -66,7 +50,8 @@ export function CodeView() {
             onClick={() => useCode.getState().setQuickOpen(true)}
           >
             <Search className="size-3.5" />
-            Find file<Kbd>Ctrl P</Kbd>
+            Find file
+            <KeybindingHint command="code.quickOpen" />
           </button>
         )}
       </header>
@@ -90,10 +75,15 @@ export function CodeView() {
         </div>
       )}
       <div className={root ? "flex min-h-0 flex-1" : "hidden"}>
-        <aside style={{ width }} className="flex min-w-0 shrink-0 flex-col">
+        <aside
+          hidden={explorerHidden}
+          style={{ width: explorerHidden ? 0 : width }}
+          className={explorerHidden ? "hidden" : "flex min-w-0 shrink-0 flex-col"}
+        >
           <Explorer />
         </aside>
         <div
+          hidden={explorerHidden}
           role="separator"
           aria-label="Explorer width"
           aria-orientation="vertical"

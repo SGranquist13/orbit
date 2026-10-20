@@ -27,6 +27,8 @@ pub const SIMPLIFY_MODELS: &[&str] = &["haiku", "sonnet", "opus"];
 pub struct Settings {
     pub editor_font_size: u32,
     pub editor_tab_size: u32,
+    #[serde(default)]
+    pub keybindings: std::collections::BTreeMap<String, Vec<String>>,
     pub editor_word_wrap: bool,
     pub editor_autosave: String,
     pub editor_follow_agent: bool,
@@ -107,6 +109,7 @@ impl Default for Settings {
         Self {
             editor_font_size: 13,
             editor_tab_size: 2,
+            keybindings: Default::default(),
             editor_word_wrap: false,
             editor_autosave: "off".into(),
             editor_follow_agent: true,
@@ -242,6 +245,9 @@ impl Settings {
 
     /// Rejects unknown enum values and tidies free-form fields.
     pub fn validated(mut self) -> Result<Self, String> {
+        if self.keybindings.len() > 500 || self.keybindings.values().flatten().any(|key| key.chars().count() > 64) {
+            return Err("keybindings exceeds size limit".into());
+        }
         check("claudePermissionMode", &self.claude_permission_mode, PERMISSION_MODES)?;
         check("codexSandbox", &self.codex_sandbox, SANDBOXES)?;
         check("mergeMethod", &self.merge_method, MERGE_METHODS)?;

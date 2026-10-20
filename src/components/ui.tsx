@@ -1,3 +1,4 @@
+import { useKeybindingLabels } from "../lib/useKeybinding";
 import { Hexagon, Moon, Sun } from "lucide-react";
 import { cn } from "../lib/cn";
 import type { AgentKind, TeammateStatus, WorkspaceStatus } from "../lib/ipc";
@@ -82,13 +83,14 @@ export function Button({
 
 /** Dark/light toggle. */
 export function ThemeToggle() {
+  const keyLabel = useKeybindingLabels();
   const toggle = useTheme((s) => s.toggle);
   useTheme((s) => s.mode); // re-render on mode change
   const dark = resolvedTheme() === "dark";
   return (
     <button
       onClick={toggle}
-      title={`Switch to ${dark ? "light" : "dark"} mode (Ctrl Shift L)`}
+      title={`Switch to ${dark ? "light" : "dark"} mode${keyLabel("workbench.theme") ? ` (${keyLabel("workbench.theme")})` : ""}`}
       className="grid size-7 place-items-center rounded-[4px] text-dim hover:bg-hover hover:text-fg"
     >
       {dark ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}

@@ -1,3 +1,4 @@
+import { useKeybindingLabels } from "../lib/useKeybinding";
 import { bufferKey, useCode } from "../stores/code";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
@@ -23,6 +24,7 @@ import { diffTotals, useApp } from "../stores/app";
 import { Button, DiffStat, cn } from "./ui";
 
 export function RightPanel({ ws }: { ws: Workspace }) {
+  const keyLabel = useKeybindingLabels();
   const files = useApp((s) => s.changes[ws.id]);
   const repo = useApp((s) => s.repos.find((r) => r.id === ws.repoId));
   const totals = diffTotals(files);
@@ -59,7 +61,7 @@ export function RightPanel({ ws }: { ws: Workspace }) {
         <Button onClick={() => void archive()} title="Archive workspace" className="px-1.5">
           <Archive className="size-3.5" />
         </Button>
-        <Button onClick={() => useApp.getState().setShipOpen(false)} title="Close (Ctrl .)" className="px-1.5">
+        <Button onClick={() => useApp.getState().setShipOpen(false)} title={"Close" + (keyLabel("workbench.toggleShip") ? ` (${keyLabel("workbench.toggleShip")})` : "")} className="px-1.5">
           <X className="size-3.5" />
         </Button>
       </div>
