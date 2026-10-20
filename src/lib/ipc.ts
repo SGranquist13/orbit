@@ -136,6 +136,8 @@ export type AgentEvent =
   | { type: "textDelta"; text: string }
   | { type: "message"; text: string }
   | { type: "toolCall"; id: string; name: string; input: unknown }
+  // Live input preview; never persisted or rendered in the chat transcript.
+  | { type: "toolDraft"; id: string; name: string; input: Record<string, unknown> }
   | { type: "toolResult"; id: string; output: string; isError: boolean }
   | { type: "turnCompleted"; durationMs: number | null; costUsd: number | null; isError: boolean; error: string | null; interrupted?: boolean }
   | {

@@ -150,6 +150,13 @@ fn emit_workspace(app: &AppHandle, ws: &Workspace) {
 
 /// Handles one normalized event: persist, update workspace status, notify, forward to UI.
 fn on_agent_event(app: &AppHandle, state: &AppState, ws_id: &str, ev: AgentEvent) {
+    // Drafts are desktop UI previews only: bypass persistence and all turn bookkeeping hooks.
+    // They stay off the mobile bridge: the phone protocol (ide_mobile/docs/protocol.md) has no such event.
+    if matches!(ev, AgentEvent::ToolDraft { .. }) {
+        let payload = AgentEventPayload { workspace_id: ws_id.to_string(), seq: None, ts: db::now(), event: ev };
+        let _ = app.emit("agent-event", payload);
+        return;
+    }
     // The process died on its own (not our Shutdown, which has no exit code) while a turn was in flight:
     // end that turn as an error first, so the UI, routines and Simplify never wait on a TurnCompleted
     // that will not come.

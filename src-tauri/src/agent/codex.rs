@@ -20,6 +20,11 @@ pub fn parse_notification(method: &str, p: &Value) -> Vec<AgentEvent> {
         "item/agentMessage/delta" => vec![AgentEvent::TextDelta {
             text: p["delta"].as_str().unwrap_or_default().to_string(),
         }],
+        "item/fileChange/patchUpdated" => vec![AgentEvent::ToolDraft {
+            id: p["itemId"].as_str().unwrap_or_default().to_string(),
+            name: "Edit".into(),
+            input: json!({ "files": change_paths(p), "changes": p["changes"] }),
+        }],
         "item/started" => item_started(&p["item"]).into_iter().collect(),
         "item/completed" => item_completed(&p["item"]).into_iter().collect(),
         "turn/completed" => {
@@ -399,6 +404,31 @@ async fn flush_queue(rpc: &mut Rpc, st: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_change_patch_updated_draft() {
+        // Hand-written from FileChangePatchUpdatedNotification; no recorded Codex stream exists.
+        let params = json!({
+            "threadId":"thread-1", "turnId":"turn-1", "itemId":"edit-1",
+            "changes":[
+                {"path":"src/main.rs","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-old\n+new"},
+                {"path":"poem.txt","kind":{"type":"add"},"diff":"+hello"}
+            ]
+        });
+        let events = CodexParser::default().parse("item/fileChange/patchUpdated", &params);
+        assert_eq!(events, vec![AgentEvent::ToolDraft {
+            id: "edit-1".into(), name: "Edit".into(),
+            input: json!({"files":["src/main.rs","poem.txt"],"changes":params["changes"]}),
+        }]);
+        assert!(!events[0].is_persistent());
+        let wire = serde_json::to_value(&events[0]).unwrap();
+        assert_eq!(wire["type"], "toolDraft");
+        assert_eq!(serde_json::from_value::<AgentEvent>(wire).unwrap(), events[0]);
+        let final_call = item_started(&json!({"id":"edit-1","type":"fileChange","changes":params["changes"]})).unwrap();
+        assert!(final_call.is_persistent());
+        assert!(matches!(final_call, AgentEvent::ToolCall { input, .. } if input["files"] == json!(["src/main.rs","poem.txt"])));
+        assert!(!AgentEvent::TextDelta { text:"hi".into() }.is_persistent());
+    }
 
     fn parse_fixture(name: &str) -> Vec<AgentEvent> {
         let mut parser = CodexParser::default();

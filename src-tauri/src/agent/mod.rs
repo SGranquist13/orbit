@@ -44,6 +44,8 @@ pub enum AgentEvent {
     TextDelta { text: String },
     Message { text: String },
     ToolCall { id: String, name: String, input: Value },
+    /// Live tool input; the final ToolCall replaces it in history.
+    ToolDraft { id: String, name: String, input: Value },
     ToolResult { id: String, output: String, is_error: bool },
     TurnCompleted {
         duration_ms: Option<u64>,
@@ -74,9 +76,9 @@ pub enum AgentEvent {
 }
 
 impl AgentEvent {
-    /// Deltas are only useful live; the final `Message` replaces them in history.
+    /// Drafts and deltas are only useful live; final calls/messages replace them in history.
     pub fn is_persistent(&self) -> bool {
-        !matches!(self, AgentEvent::TextDelta { .. })
+        !matches!(self, AgentEvent::TextDelta { .. } | AgentEvent::ToolDraft { .. })
     }
 }
 
