@@ -12,7 +12,23 @@ use tauri::{AppHandle, State};
 static OPERATIONS: Mutex<()> = Mutex::new(());
 static RETIRED: std::sync::LazyLock<Mutex<HashSet<u64>>> = std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
-pub(crate) fn operation_lock() -> MutexGuard<'static, ()> { relock(&OPERATIONS) }
+thread_local! { static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// Reentrant per thread: a send that fails ends its turn through `on_agent_event`, which takes this
+/// lock again on the same thread. A plain Mutex would deadlock there.
+pub(crate) struct OperationGuard(Option<MutexGuard<'static, ()>>);
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        if self.0.take().is_some() { HELD.with(|h| h.set(false)); }
+    }
+}
+
+pub(crate) fn operation_lock() -> OperationGuard {
+    if HELD.with(|h| h.get()) { return OperationGuard(None); }
+    let guard = relock(&OPERATIONS);
+    HELD.with(|h| h.set(true));
+    OperationGuard(Some(guard))
+}
 pub(crate) fn retired(generation: u64) -> bool { relock(&RETIRED).contains(&generation) }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -215,5 +231,18 @@ mod tests {
         let note = handover(&rows, &kept);
         assert!(note.contains("after turn 1") && note.contains("make b") && note.contains("User: make a"));
         assert!(target(&rows, 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    #[test]
+    fn operation_lock_is_reentrant_on_one_thread() {
+        let outer = super::operation_lock();
+        let inner = super::operation_lock();
+        drop(inner);
+        drop(outer);
+        // Released: another thread can take it.
+        std::thread::spawn(|| drop(super::operation_lock())).join().unwrap();
     }
 }
