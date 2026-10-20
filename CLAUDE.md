@@ -57,6 +57,13 @@ Claude orchestrates; Codex (through the Claude Code `codex` plugin) is a second 
 - **`VERIFICATION.md` (local) is the source of truth for how each feature is proven; `FEATURES.md` is its public summary.** When you build or verify a feature, update both: a new feature is 🧪 Preview in FEATURES.md until it works in the real app, then ✅ Available.
 - Rust: `cmd //c "scripts\\cargo.cmd test"` (or `build`) from bash; it wraps the VS 2022 toolchain. Add `-- --include-ignored` for live tests against real agent CLIs.
 
+## Releases
+A release train, not a release per merge, so the version history shows a steady cadence.
+- **Versions:** semver on 0.x. A minor (`0.3.0`) ships new features; a patch (`0.2.1`) only fixes. The version lives in `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `Cargo.lock`: never bump by hand, use `bun run release <version>`. (The `shipkit` pack has its own version in its `plugin.json`.)
+- **Between releases:** features are built on branches and merged to `main` only after their e2e passes. Every user-facing merge adds a line under `## Unreleased` in `CHANGELOG.md`, in the public tone of FEATURES.md (🧪 features say "Preview:").
+- **Cutting a release:** when a set of features is done, or about every two weeks when `Unreleased` has something worth shipping. Full `bun run e2e`, `bun run e2e:github` and `cargo test` on `main`, then `bun run release X.Y.Z` (refuses a dirty tree other than CHANGELOG.md, an empty Unreleased section, or a version that isn't newer), commit `chore(release): vX.Y.Z`, `git tag -a vX.Y.Z`, push `main` and the tag. A fix-only patch release can go out any time.
+- **Tag push → `.github/workflows/release.yml`:** checks the tag against `package.json`, builds the NSIS installer on Windows, and creates a **draft** GitHub release with the installer and that version's changelog section. Smoke-test the installer (install, launch, one turn, uninstall), then publish the draft. Update FEATURES.md's Platform row to the new version.
+
 ## Architecture
 - `src/lib/keybindings.ts` — pure command registry, effective bindings, context resolution and chord dispatcher. `keybindingRuntime.ts` registers app handlers; `lib/code/keymap.ts` generates live CodeMirror bindings. Settings `keybindings` stores full-map overrides, including empty arrays to unbind.
 - `src-tauri/src/agent/` — each agent CLI is driven over stdio and normalized into `AgentEvent` (`mod.rs`). **The UI never sees agent-specific shapes.**

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+## 0.2.0 - 2026-10-20
+
+Two headline features: a built-in code editor that lets you watch agents work, and images and files in chat.
+
+### Code view (Alt+2)
+- A built-in editor on CodeMirror 6: explorer, tabs, quick open (Ctrl+P), find and replace, go to line, themed for Void and Paper. Opens any repo, workspace or folder.
+- Integrated terminal with several tabs (Ctrl+\`), project search with regex, case, whole-word and glob filters (Ctrl+Shift+F), git gutter, and side-by-side diffs against HEAD or the base branch.
+- **Watch mode** follows the agent as it edits, with change flashes, gutter marks and a per-turn activity timeline; the editor is read-only while the agent runs.
+- Ask about a selection (Ctrl+I) sends the lines and your question to the workspace's agent; Open in Code from the chat header, Ship panel and palette.
+- Preview: live typing (the agent's edits stream in as they are written), a "Watch an agent" picker on any folder, Manual mode that never overwrites unsaved work silently (Reload, Keep mine, Compare), and Settings > Editor.
+
+### Images and files in chat
+- Paste, drop or attach images and files in the composer. Images go to Claude and Codex natively; files are passed as paths the agent reads with its own tools. Thumbnails, file chips and a lightbox in the chat.
+- Preview: images from the agent (screenshots it reads, Codex image view and generation, markdown images) shown in the chat.
+
+### Agents and skills
+- Model lists come from the agent CLIs (Codex's model catalog, Claude's aliases) plus custom model ids; refresh in Settings > Agents or the palette.
+- Preview: per-workspace skill pack toggles.
+
+### Look and feel
+- Preview: VS Code keybindings everywhere (Ctrl+K chords included), rebindable in Settings > Keyboard shortcuts with key recording, conflict detection and reset.
+
+### Fixes
+- Cancelling "discard uncommitted changes" when archiving no longer shows an error.
+- An agent's atomic file replace no longer shows up as a deleted file in the Code view.
+
 ## 0.1.0 - 2026-10-18
 
 First public release. Windows 10/11, unsigned installer. Features below are the ones verified in the real app (see [FEATURES.md](FEATURES.md) for everything available, in preview and on the roadmap).

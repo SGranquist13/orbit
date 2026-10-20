@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run a fleet of coding agents (Claude Code, Codex) in parallel git worktrees and ship.",
   "license": "MIT",
   "author": "SGranquist13",
