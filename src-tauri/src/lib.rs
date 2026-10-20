@@ -102,8 +102,8 @@ impl Inner {
         });
     }
 
-    /// Attached folders change `--add-dir`, which is fixed at spawn, so an idle session is
-    /// dropped; the next message respawns it with `--resume` and the new folders.
+    /// Spawn configuration changes (folders, packs, roles) mean an idle session is
+    /// dropped; the next message respawns it with `--resume` and the new configuration.
     fn restart_session_if_idle(&self, workspace_id: &str) {
         let running = self.db().workspace(workspace_id).map(|w| w.status == "running").unwrap_or(false);
         if running {
@@ -286,7 +286,7 @@ fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], pr
 
 /// The workspace's active profile: the stored id, else (or if it has vanished) shipkit:builder.
 fn resolve_profile(state: &AppState, ws: &Workspace) -> Option<skills::Profile> {
-    let all = skills::list_profiles(&state.packs().ok()?);
+    let all = skills::list_profiles(&skills::effective_packs(&state.packs().ok()?, &ws.disabled_packs));
     let find = |id: &str| all.iter().find(|p| p.id == id).cloned();
     ws.profile.as_deref().and_then(find).or_else(|| find(DEFAULT_PROFILE))
 }
@@ -299,7 +299,7 @@ fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::
     let repo = state.db().repo(&ws.repo_id)?;
     // Only Claude loads plugins; Codex gets skills expanded inline by `run_skill`.
     let plugin_dirs = match kind {
-        AgentKind::Claude => state.packs()?.into_iter().filter(|p| p.enabled).map(|p| PathBuf::from(p.path)).collect(),
+        AgentKind::Claude => skills::effective_packs(&state.packs()?, &ws.disabled_packs).into_iter().map(|p| PathBuf::from(p.path)).collect(),
         AgentKind::Codex => vec![],
     };
     let attachments = state.live_attachments(&ws.id);
@@ -827,10 +827,11 @@ async fn run_skill(app: AppHandle, state: State<'_, AppState>, id: String, skill
 /// (routines append their unattended-run note there).
 pub(crate) fn run_skill_with(app: &AppHandle, state: &AppState, id: &str, skill_id: &str, display_args: &str, payload_args: &str) -> CmdResult<()> {
     let ws = state.db().workspace(id).map_err(err)?;
-    let skill = skills::list_skills(&state.packs().map_err(err)?)
+    let packs = skills::effective_packs(&state.packs().map_err(err)?, &ws.disabled_packs);
+    let skill = skills::list_skills(&packs)
         .into_iter()
         .find(|s| s.id == skill_id)
-        .ok_or_else(|| format!("skill {skill_id} not found or its pack is disabled"))?;
+        .ok_or_else(|| format!("Skill {skill_id} is unavailable: it was not found or its pack is disabled globally or in this workspace"))?;
     let (display, args) = (display_args.trim().to_string(), payload_args.trim().to_string());
     let payload = match AgentKind::parse(&ws.agent) {
         Some(AgentKind::Codex) => skills::expand(&skill, &args).map_err(err)?,
@@ -864,8 +865,25 @@ fn list_skills(state: State<AppState>) -> CmdResult<Vec<skills::Skill>> {
 }
 
 #[tauri::command]
-fn list_profiles(state: State<AppState>) -> CmdResult<Vec<skills::Profile>> {
-    Ok(skills::list_profiles(&state.packs().map_err(err)?))
+fn list_profiles(state: State<AppState>, workspace_id: Option<String>) -> CmdResult<Vec<skills::Profile>> {
+    let disabled = match workspace_id {
+        Some(id) => state.db().workspace(&id).map_err(err)?.disabled_packs,
+        None => vec![],
+    };
+    Ok(skills::list_profiles(&skills::effective_packs(&state.packs().map_err(err)?, &disabled)))
+}
+
+#[tauri::command]
+fn set_workspace_packs(app: AppHandle, state: State<AppState>, id: String, mut disabled: Vec<String>) -> CmdResult<Workspace> {
+    disabled.sort();
+    disabled.dedup();
+    // Release the db guard before the restart helper reads the workspace again.
+    let ws = state.db().set_workspace_packs(&id, &disabled).map_err(err)?;
+    // Keep agent_session_id for resume, and leave a running turn alone. The next spawn
+    // reads the saved overrides; late Exited callbacks retain their generation check.
+    state.restart_session_if_idle(&id);
+    emit_workspace(&app, &ws);
+    Ok(ws)
 }
 
 #[tauri::command]
@@ -1218,6 +1236,11 @@ async fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: serd
 }
 
 #[tauri::command]
+async fn agent_models(agent: AgentKind, refresh: bool) -> Vec<agent::models::ModelInfo> {
+    agent::models::list(agent, refresh).await
+}
+
+#[tauri::command]
 async fn environment_info(state: State<'_, AppState>) -> CmdResult<maintenance::EnvironmentInfo> {
     Ok(maintenance::environment_info(&state.home).await)
 }
@@ -1436,6 +1459,7 @@ pub fn run() {
             get_settings,
             update_settings,
             environment_info,
+            agent_models,
             list_archived_workspaces,
             restore_workspace,
             cleanup_merged_worktrees,
@@ -1462,6 +1486,7 @@ pub fn run() {
             update_pack,
             remove_pack,
             set_pack_enabled,
+            set_workspace_packs,
             pr_status,
             merge_pr,
             mark_pr_ready,

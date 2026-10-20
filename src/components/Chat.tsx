@@ -36,7 +36,7 @@ const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
 import { MAX_FILE_BYTES, formatSize, isImageFile, prepareImage, toDataUrl } from "../lib/images";
 import { FileChip, FileRow, ImageRow } from "./ChatImage";
-import { activeProfile, api, type Attachment, type FileRef, type ImageRef, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
+import { activeProfile, api, workspacePackItems, type Attachment, type FileRef, type ImageRef, type Schedule, type PrStatus, type Related, type Skill, type Workspace } from "../lib/ipc";
 import { fold, formatCost, formatDuration, formatTokens, toolSummary, type Block, type ToolCallView } from "../lib/transcript";
 import { useCode } from "../stores/code";
 import { useApp } from "../stores/app";
@@ -548,7 +548,7 @@ function SkillChips({ ws, text, onRun }: { ws: Workspace; text: string; onRun: (
   const [preview, setPreview] = useState<Skill | null>(null);
   // A profile with its own skills replaces the global pins.
   const own = activeProfile(profiles, ws)?.skills ?? [];
-  const pinned = (own.length > 0 ? own : pins).map((id) => skills.find((s) => s.id === id)).filter((s): s is Skill => !!s);
+  const pinned = workspacePackItems((own.length > 0 ? own : pins).map((id) => skills.find((s) => s.id === id)).filter((s): s is Skill => !!s), ws);
   const args = text.trim();
   const run = (s: Skill) => {
     setPreview(null);
@@ -637,22 +637,22 @@ function ProfileMenu({ ws, running }: { ws: Workspace; running: boolean }) {
     };
   }, [open]);
 
-  if (!current) return null;
+  if (workspacePackItems(profiles, ws).length === 0) return null;
   return (
     <span ref={ref} className="relative flex items-center gap-1.5">
       <span className="text-mute">·</span>
       <button
         data-profile-trigger
         onClick={() => setOpen((o) => !o)}
-        title={`${current.description}\n\nSwitch profile`}
+        title={`${current?.description ?? "Choose an available profile"}\n\nSwitch profile`}
         className="flex items-center gap-1 rounded-[3px] px-1 text-dim hover:bg-hover hover:text-fg"
       >
-        {current.readonly && <Lock className="size-3" />}
-        {current.name}
+        {current?.readonly && <Lock className="size-3" />}
+        {current?.name ?? "Choose profile"}
       </button>
       {open && (
         <ul className="absolute bottom-full left-0 z-20 mb-2 w-[320px] overflow-hidden rounded-[6px] border-[1.5px] border-line-strong bg-raised p-1 shadow-hard">
-          {profiles.map((p) => (
+          {workspacePackItems(profiles, ws).map((p) => (
             <li key={p.id}>
               <button
                 data-profile={p.id}
@@ -660,11 +660,11 @@ function ProfileMenu({ ws, running }: { ws: Workspace; running: boolean }) {
                 title={running ? "Wait for the current turn to finish" : undefined}
                 onClick={() => {
                   setOpen(false);
-                  if (p.id !== current.id) void useApp.getState().setProfile(ws.id, p.id);
+                  if (p.id !== current?.id) void useApp.getState().setProfile(ws.id, p.id);
                 }}
                 className={cn(
                   "flex w-full flex-col rounded-[3px] px-2.5 py-1.5 text-left hover:bg-hover disabled:opacity-40",
-                  p.id === current.id && "bg-hover",
+                  p.id === current?.id && "bg-hover",
                 )}
               >
                 <span className="flex items-center gap-1.5 text-[12px] font-medium text-fg">
@@ -869,7 +869,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
 
   // Autocomplete only while typing the first token of a slash command.
   const slashQuery = /^\/(\S*)$/.exec(text)?.[1];
-  const matches = slashQuery === undefined ? [] : rankSkills(skills, slashQuery).slice(0, 8);
+  const matches = slashQuery === undefined ? [] : rankSkills(workspacePackItems(skills, ws), slashQuery).slice(0, 8);
   useEffect(() => setHighlight(0), [slashQuery]);
 
   // Draft is per workspace and survives switching away.

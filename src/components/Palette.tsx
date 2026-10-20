@@ -9,7 +9,7 @@ import { useState } from "react";
 import { AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Plus, Rocket, RotateCcw, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
-import { api, activeProfile } from "../lib/ipc";
+import { api, activeProfile, workspacePackItems } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { pickAttachFolder, requestAttachImage } from "./Chat";
 import { pickRepo } from "./Sidebar";
@@ -112,6 +112,9 @@ export function Palette() {
             </>}
           </Command.Group>
           <Command.Group heading="Actions" className={heading}>
+            <Command.Item className={item} value="Refresh model lists" onSelect={run(() => { void useApp.getState().loadModels(true); })}>
+              <Cpu className="size-3.5" /> Refresh model lists
+            </Command.Item>
             <Command.Item
               className={item}
               value="Ask a teammate… (hand off a task)"
@@ -317,11 +320,16 @@ export function Palette() {
             <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
               <Package className="size-3.5" /> Manage skill packs
             </Command.Item>
+            {selected && (
+              <Command.Item className={item} onSelect={run(() => useApp.getState().setPacksOpen(true))}>
+                <Package className="size-3.5" /> Skill packs for this workspace
+              </Command.Item>
+            )}
           </Command.Group>
-          {selectedId && !!currentProfile && profiles.length > 1 && (
+          {selectedId && workspacePackItems(profiles, selected).length > 0 && (
             <Command.Group heading="Profile" className={heading}>
-              {profiles
-                .filter((p) => p.id !== currentProfile.id)
+              {workspacePackItems(profiles, selected)
+                .filter((p) => p.id !== currentProfile?.id)
                 .map((p) => (
                   <Command.Item
                     key={p.id}
@@ -338,7 +346,7 @@ export function Palette() {
           )}
           {selectedId && skills.length > 0 && (
             <Command.Group heading="Run skill in this workspace" className={heading}>
-              {skills.map((s) => (
+              {workspacePackItems(skills, selected).map((s) => (
                 <Command.Item
                   key={s.id}
                   value={`/${s.id} ${s.description}`}

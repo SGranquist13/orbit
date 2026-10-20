@@ -4,6 +4,7 @@
 pub mod claude;
 pub mod codex;
 pub mod job;
+pub mod models;
 pub mod process;
 
 use serde::{Deserialize, Serialize};

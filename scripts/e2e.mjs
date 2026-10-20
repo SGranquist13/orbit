@@ -721,6 +721,35 @@ const selectWsInSidebar = async (name) => {
   await waitFor("workspace selected", `return document.querySelector('header h1')?.innerText === ${JSON.stringify(name)}`, 10_000);
 };
 
+await step("agent-model-lists", async () => {
+  const claude = await invoke("agent_models", { agent: "claude", refresh: false });
+  if (claude.map((m) => m.id).join(",") !== "opus,sonnet,haiku") throw new Error("unexpected Claude aliases");
+  const codex = await invoke("agent_models", { agent: "codex", refresh: true });
+  if (!codex.length || codex.some((m) => !m.id || !m.label || !Array.isArray(m.efforts))) throw new Error("invalid Codex catalog/fallback");
+  if (JSON.stringify(await invoke("agent_models", { agent: "codex", refresh: false })) !== JSON.stringify(codex)) throw new Error("catalog not cached");
+  await withSettings({ extraModelsCodex: ["orbit-e2e-custom-model"] }, async () => {
+    await js(`location.reload()`);
+    await sleep(1500);
+    await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
+    await openSettingsView();
+    await waitFor("catalog labels and extra model in default picker", `
+      const options = [...(document.querySelector('select[aria-label="Default codex model"]')?.options ?? [])];
+      return options.some(o => o.value === 'orbit-e2e-custom-model') &&
+        ${JSON.stringify(codex)}.every(m => options.some(o => o.value === m.id && o.text === m.label));`, 15_000);
+    await waitFor("refresh models action ready", `return [...document.querySelectorAll('#settings-agents button')].some(b => b.innerText === 'Refresh models' && !b.disabled)`, 15_000);
+    await js(`document.querySelector('#settings-agents').scrollIntoView(); [...document.querySelectorAll('#settings-agents button')].find(b => b.innerText === 'Refresh models').click()`);
+    await waitFor("model refresh finished", `return [...document.querySelectorAll('#settings-agents button')].some(b => b.innerText === 'Refresh models' && !b.disabled)`, 15_000);
+    await closeSettingsView();
+    await key("p", { ctrl: true, shift: true });
+    await waitFor("refresh palette action", `return [...document.querySelectorAll('[cmdk-item]')].some(el => el.innerText.includes('Refresh model lists'))`, 5000);
+    await js(`[...document.querySelectorAll('[cmdk-item]')].find(el => el.innerText.includes('Refresh model lists')).click()`);
+    await waitFor("palette closed", `return !document.querySelector('[cmdk-root]')`, 5000);
+  });
+  await js(`location.reload()`);
+    await sleep(1500);
+    await waitFor("sidebar after reload", `return !!document.querySelector('aside')`, 15_000);
+});
+
 await step("settings-branch-prefix", async () => {
   // The prefix from Settings > General names the branch of the next workspace (no agent turn needed).
   await withSettings({ branchPrefix: "e2e-pre/" }, async () => {
@@ -1106,6 +1135,66 @@ await step("packs-install-lifecycle", async () => {
     await removePackQuietly();
     await h.autoConfirm(false);
   }
+});
+
+await step("workspace-pack-toggles", async () => {
+  await withPack(async () => {
+    const ws = await mkWs("pack switch claude");
+    const other = await mkWs("pack switch codex", { agent: "codex", model: null });
+    const pins = await invoke("get_pins");
+    try {
+      await invoke("set_pins", { pins: [...pins, "e2epack:hello"] });
+      await reloadUi();
+      await selectWsInSidebar("pack switch claude");
+      await paletteRun("Skill packs for this workspace", "Skill packs for this workspace");
+      const toggle = `document.querySelector('[role="switch"][aria-label="Enable e2e-pack in this workspace"]')`;
+      await waitFor("workspace switch", `return !!(${toggle})`, 5000);
+      await js(`(${toggle}).click()`);
+      await until("workspace override saved", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.disabledPacks.includes("e2e-pack"), 5000, 100);
+      if (!(await hasSkill("e2epack:hello"))) throw new Error("workspace toggle changed global skills");
+      await closePacksDialog();
+      await setComposer("/e2epack");
+      await sleep(300);
+      if (await autocompleteHas("e2epack:hello")) throw new Error("workspace-disabled skill in autocomplete");
+      if (await js(`return [...document.querySelectorAll('button')].some((b) => b.innerText.trim() === 'HELLO')`)) throw new Error("workspace-disabled pinned chip visible");
+      await setComposer("");
+      await key("p", { ctrl: true, shift: true });
+      await type("e2epack:hello");
+      await sleep(300);
+      if (await js(`return [...document.querySelectorAll('[cmdk-item]')].some((i) => i.innerText.includes('/e2epack:hello'))`)) throw new Error("workspace-disabled palette skill visible");
+      await key("Escape");
+      let rejected = false;
+      try { await invoke("run_skill", { id: ws.id, skillId: "e2epack:hello", args: "" }); }
+      catch (e) { rejected = String(e).includes("disabled"); }
+      if (!rejected) throw new Error("disabled Claude skill was not rejected");
+      await selectWsInSidebar("pack switch codex");
+      await setComposer("/e2epack");
+      await waitFor("other workspace still offers skill", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+      await setComposer("");
+      await invoke("set_workspace_packs", { id: other.id, disabled: ["e2e-pack", "shipkit"] });
+      if ((await invoke("list_profiles", { workspaceId: other.id })).some((p) => p.pack === "shipkit")) throw new Error("workspace-disabled profiles offered");
+      rejected = false;
+      try { await invoke("run_skill", { id: other.id, skillId: "e2epack:hello", args: "" }); }
+      catch (e) { rejected = String(e).includes("disabled"); }
+      if (!rejected) throw new Error("disabled Codex skill was not rejected");
+      await invoke("set_pack_enabled", { name: "e2e-pack", enabled: false });
+      await invoke("set_workspace_packs", { id: other.id, disabled: [] });
+      if (await hasSkill("e2epack:hello")) throw new Error("workspace override enabled a globally disabled pack");
+      await invoke("set_pack_enabled", { name: "e2e-pack", enabled: true });
+      await selectWsInSidebar("pack switch claude");
+      await openPacksDialog();
+      await js(`(${toggle}).click()`);
+      await until("workspace override cleared", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.disabledPacks.length === 0, 5000, 100);
+      await closePacksDialog();
+      await setComposer("/e2epack");
+      await waitFor("workspace autocomplete restored", `return [...document.querySelectorAll('ul li button')].some((b) => b.innerText.includes('/e2epack:hello'))`, 5000);
+      await setComposer("");
+    } finally {
+      await invoke("set_pins", { pins });
+      await invoke("set_workspace_packs", { id: ws.id, disabled: [] });
+      await invoke("set_workspace_packs", { id: other.id, disabled: [] });
+    }
+  });
 });
 
 await step("pins-and-palette-skill", async () => {

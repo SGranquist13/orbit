@@ -12,8 +12,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 **Next**
 - Linked pull requests across repositories (ship an attached project's changes alongside the main PR)
-- Model lists loaded from the agent CLIs instead of a built-in list
-- Per-workspace skill pack toggles
 - Your installed Claude plugins in `/` autocomplete and as pinnable chips
 - Teammates and archived workspaces mirrored to the phone app
 - Public release of the iPhone companion app
@@ -62,6 +60,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Images from the agent (a screenshot it reads, Codex image view / generation, markdown images) shown in the chat | 🧪 | |
 | Steer Codex mid-turn; Claude queues messages sent mid-turn | ✅ | |
 | Model picker per workspace | ✅ | |
+| Model lists from the agent CLIs | ✅ | Codex catalog, Claude aliases, custom model ids; refresh in Settings > Agents or the palette |
 | Workspace context in the agent's system prompt (branch, base, linked issue) | ✅ | |
 | **Profiles**: Builder, Debugger, Planner, Reviewer, Shipper, Ticket writer | ✅ | Switch mid-session; the agent is told its new role |
 | Read-only profiles enforced by the agent's sandbox and tool allowlist, not just by the prompt | ✅ | |
@@ -81,6 +80,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Skills in the command palette | ✅ | |
 | Claude runs pack skills natively; Orbit inlines them for Codex | ✅ | |
 | Install any skill pack by git URL; enable, disable, update, remove | ✅ | |
+| Per-workspace skill pack toggles | 🧪 | Turn off globally enabled packs for a workspace; skills and profiles follow the workspace selection |
 | **Attach folders** to a workspace so agents can read related projects | ✅ | Read-only by default |
 | Make an attached project editable (its own worktree and branch) | ✅ | Shipping it as a linked PR is on the roadmap |
 | Related-project discovery (package.json, Cargo.toml, pyproject, go.mod) with one-click attach | ✅ | |

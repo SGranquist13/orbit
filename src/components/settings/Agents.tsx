@@ -3,6 +3,7 @@ import type { EnvironmentInfo } from "../../lib/ipc";
 import { Button } from "../ui";
 import { Cards, Dot, Row, Select, SubHeading, TagInput, save, useSettings } from "./controls";
 import { useEnvironment } from "./env";
+import { useApp } from "../../stores/app";
 
 type Tone = "ok" | "warn" | "bad";
 
@@ -26,6 +27,7 @@ export function codexTone(i: EnvironmentInfo["codex"]): Tone {
 
 export function Agents() {
   const s = useSettings();
+  const modelsLoading = useApp((s) => s.modelsLoading);
   const { info, loading, error, refresh } = useEnvironment();
   if (!s) return null;
   return (
@@ -81,7 +83,13 @@ export function Agents() {
         />
       </Row>
 
-      <SubHeading>Extra models</SubHeading>
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-1 pt-5">
+        <h3 className="label text-mute">Extra models</h3>
+        <Button variant="outline" disabled={modelsLoading} onClick={() => void useApp.getState().loadModels(true)}>
+          {modelsLoading ? <LoaderCircle className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          {modelsLoading ? "Loading models…" : "Refresh models"}
+        </Button>
+      </div>
       <Row stacked field="extraModelsClaude" label="Claude model ids" description="Added to the model pickers, for example a dated snapshot. Press Enter to add.">
         <TagInput label="Extra Claude models" values={s.extraModelsClaude} placeholder="claude-opus-4-1-20250805" onChange={(v) => void save({ extraModelsClaude: v })} />
       </Row>
