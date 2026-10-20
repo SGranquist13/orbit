@@ -32,8 +32,6 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
 
-const DEFAULT_PROFILE: &str = "shipkit:builder";
-
 type CmdResult<T> = Result<T, String>;
 
 /// Command error text. `{:#}` keeps anyhow's context chain (and is plain `Display` for other errors).
@@ -284,11 +282,11 @@ fn workspace_context(ws: &Workspace, repo: &Repo, attachments: &[Attachment], pr
     s
 }
 
-/// The workspace's active profile: the stored id, else (or if it has vanished) shipkit:builder.
+/// The workspace's active profile: the stored id; none (no role) when unset or vanished.
 fn resolve_profile(state: &AppState, ws: &Workspace) -> Option<skills::Profile> {
     let all = skills::list_profiles(&skills::effective_packs(&state.packs().ok()?, &ws.disabled_packs));
     let find = |id: &str| all.iter().find(|p| p.id == id).cloned();
-    ws.profile.as_deref().and_then(find).or_else(|| find(DEFAULT_PROFILE))
+    ws.profile.as_deref().and_then(find)
 }
 
 fn ensure_session(app: &AppHandle, state: &AppState, ws: &Workspace) -> anyhow::Result<SessionHandle> {
@@ -560,7 +558,6 @@ async fn start_issue(
     agent: String,
     model: Option<String>,
 ) -> CmdResult<Workspace> {
-    let profile = profile.filter(|p| !p.is_empty()).or_else(|| Some(DEFAULT_PROFILE.to_string()));
     let ws = create_workspace(app.clone(), state.clone(), repo_id, title, agent, model, None, Some(number), profile).await?;
     // start-issue implements; a read-only role (e.g. Planner) is asked for a plan instead.
     if resolve_profile(&state, &ws).is_some_and(|p| p.readonly) {
@@ -613,19 +610,30 @@ pub(crate) fn switch_profile(app: &AppHandle, state: &AppState, id: &str, profil
     state.restart_session_if_idle(id);
     // A resumed agent keeps following the role it saw earlier in the conversation unless told
     // otherwise, so the next message carries an explicit hand-over note.
-    if let (Some(old), Some(new)) = (before, resolve_profile(state, &ws)) {
-        if old.id != new.id {
+    let note = match (before, resolve_profile(state, &ws)) {
+        (Some(old), Some(new)) if old.id != new.id => {
             let access = if new.readonly {
                 "You are now read-only: do not create, edit or delete files."
             } else {
                 "You may now edit files in this workspace; earlier read-only restrictions no longer apply."
             };
-            let note = format!(
+            Some(format!(
                 "[Orbit: this workspace switched from the {} role to the {} role. Follow your new role instructions in the system prompt; they replace the earlier role. {access}]\n\n",
                 old.name, new.name
-            );
-            state.notices_lock().insert(id.to_string(), note);
+            ))
         }
+        (None, Some(new)) => Some(format!(
+            "[Orbit: this workspace now has the {} role. Follow its role instructions in the system prompt.]\n\n",
+            new.name
+        )),
+        (Some(old), None) => Some(format!(
+            "[Orbit: the {} role was removed; this workspace has no role now. Ignore its role instructions. You may edit files in this workspace; earlier read-only restrictions no longer apply.]\n\n",
+            old.name
+        )),
+        _ => None,
+    };
+    if let Some(note) = note {
+        state.notices_lock().insert(id.to_string(), note);
     }
     emit_workspace(app, &ws);
     Ok(ws)

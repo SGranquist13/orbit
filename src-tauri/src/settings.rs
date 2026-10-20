@@ -39,6 +39,8 @@ pub struct Settings {
     pub default_agent: String,
     pub default_model_claude: String,
     pub default_model_codex: String,
+    /// Profile id pre-selected in New workspace; empty = no role (opt-in).
+    pub default_profile: String,
     pub notifications: bool,
     pub notify_only_unfocused: bool,
     // agents
@@ -120,6 +122,7 @@ impl Default for Settings {
             default_agent: "claude".into(),
             default_model_claude: String::new(),
             default_model_codex: String::new(),
+            default_profile: String::new(),
             notifications: true,
             notify_only_unfocused: true,
             claude_permission_mode: "bypassPermissions".into(),

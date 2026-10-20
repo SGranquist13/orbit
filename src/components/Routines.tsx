@@ -1,7 +1,7 @@
 import { ChevronRight, Clock, LoaderCircle, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { confirmAction } from "../lib/confirm";
-import { DEFAULT_PROFILE, api, type AgentKind, type Routine, type RoutineMode, type RoutineRun, type RunStatus, type Schedule } from "../lib/ipc";
+import { api, type AgentKind, type Routine, type RoutineMode, type RoutineRun, type RunStatus, type Schedule } from "../lib/ipc";
 import { SIMPLIFY_NAME, TEMPLATES, actionText, defaultSchedule, describeSchedule, formatNext, textToAction } from "../lib/routines";
 import { defaultAgentModel, modelLabelFor, modelsFor } from "../lib/settings";
 import { timeAgo } from "../lib/attention";
@@ -344,7 +344,7 @@ function Editor({ routine }: { routine: Routine | null }) {
                 label="Profile"
                 className="min-w-[220px]"
                 value={profile}
-                options={[{ value: "", label: "Builder (default)" }, ...profiles.filter((p) => p.id !== DEFAULT_PROFILE).map((p) => ({ value: p.id, label: p.name }))]}
+                options={[{ value: "", label: "No role" }, ...profiles.map((p) => ({ value: p.id, label: p.name }))]}
                 onChange={setProfile}
               />
             </Labeled>

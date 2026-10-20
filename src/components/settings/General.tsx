@@ -10,6 +10,7 @@ export function General() {
   const keyLabel = useKeybindingLabels();
   const s = useSettings();
   const mode = useTheme((t) => t.mode);
+  const profiles = useApp((a) => a.profiles);
   if (!s) return null;
 
   const modelSelect = (agent: AgentKind) => {
@@ -52,6 +53,14 @@ export function General() {
             { value: "codex", label: "Codex" },
           ]}
           onChange={(v) => void save({ defaultAgent: v })}
+        />
+      </Row>
+      <Row label="Default role" field="defaultProfile" description="Role pre-selected in New workspace. None by default: add a role per workspace when you want one.">
+        <Select
+          label="Default role"
+          value={s.defaultProfile}
+          options={[{ value: "", label: "No role" }, ...profiles.map((p) => ({ value: p.id, label: p.name }))]}
+          onChange={(v) => void save({ defaultProfile: v })}
         />
       </Row>
       {modelSelect("claude")}

@@ -293,6 +293,7 @@ let settings: Settings = {
   defaultAgent: "claude",
   defaultModelClaude: "",
   defaultModelCodex: "",
+  defaultProfile: "",
   notifications: true,
   notifyOnlyUnfocused: true,
   claudePermissionMode: "bypassPermissions",
@@ -1095,7 +1096,7 @@ export function installMockBackend() {
         }
         case "set_workspace_profile": {
           const w = workspaces.find((x) => x.id === id)!;
-          w.profile = (args as { profile: string }).profile;
+          w.profile = (args as { profile: string | null }).profile || null;
           return { ...w };
         }
         case "list_issues":
