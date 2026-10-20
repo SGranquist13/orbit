@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+n- Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
 
 ## 0.2.0 - 2026-10-20
 

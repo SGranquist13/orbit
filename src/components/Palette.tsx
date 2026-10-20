@@ -198,6 +198,13 @@ export function Palette() {
                 </Command.Item>
                 <Command.Item
                   className={item}
+                  value="Rewind to previous turn (restore code and conversation)"
+                  onSelect={run(() => void useApp.getState().rewindOneTurn(selectedId))}
+                >
+                  <History className="size-3.5" /> Rewind to previous turn
+                </Command.Item>
+                <Command.Item
+                  className={item}
                   value="Sync with base now (rebase onto the base branch)"
                   onSelect={run(() => void useApp.getState().syncNow(selectedId))}
                 >

@@ -15,6 +15,7 @@ import {
   Image as ImageIcon,
   Folder,
   GitBranch,
+  History,
   Globe,
   LoaderCircle,
   Lock,
@@ -30,7 +31,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const MarkdownText = lazy(() => import("./MarkdownText"));
 import { defaultSchedule, describeShort, textToAction } from "../lib/routines";
@@ -324,6 +325,7 @@ export function requestAttachImage() {
 
 function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[]; live: string; running: boolean; loading: boolean; wsId: string }) {
   const loadError = useApp((s) => s.transcriptErrors[wsId]);
+  const rewound = useApp((s) => s.rewound[wsId]);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -357,7 +359,16 @@ function Transcript({ blocks, live, running, loading, wsId }: { blocks: Block[];
           </div>
         )}
         {blocks.map((b, i) => (
-          <BlockView key={b.key} block={b} wsId={wsId} active={running && i === lastTools && i === blocks.length - 1} />
+          <Fragment key={b.key}>
+            <BlockView block={b} wsId={wsId} active={running && i === lastTools && i === blocks.length - 1} />
+            {rewound && b.key === String(rewound.seq) && (
+              <div data-rewind-divider className="flex items-center gap-3 text-[11px] font-medium text-mute">
+                <span className="dither-rule flex-1 bg-line-strong" />
+                <span>Rewound to turn {rewound.turn}</span>
+                <span className="dither-rule flex-1 bg-line-strong" />
+              </div>
+            )}
+          </Fragment>
         ))}
         {live && (
           <div className="prose-chat streaming-caret selectable whitespace-pre-wrap text-fg">{live}</div>
@@ -377,7 +388,8 @@ const BlockView = memo(function BlockView({ block, active, wsId }: { block: Bloc
   switch (block.kind) {
     case "user":
       return (
-        <div className="flex justify-end">
+        <div className="group/user flex items-start justify-end gap-1.5">
+          {block.rewindSeq !== undefined && <RewindActions wsId={wsId} seq={block.rewindSeq} />}
           <div data-user-message className="selectable max-w-[80%] whitespace-pre-wrap rounded-[16px] rounded-br-[5px] border border-line bg-hover px-4 py-2.5 text-[14px] leading-relaxed text-fg">
             {block.skill && (
               <span className="mr-1.5 inline-flex items-center gap-1 rounded-[6px] border border-line-strong/60 bg-raised px-1.5 py-px align-[1px] text-[11.5px] font-medium text-dim">
@@ -439,6 +451,22 @@ const BlockView = memo(function BlockView({ block, active, wsId }: { block: Bloc
       );
   }
 });
+
+/** Hover actions on one of your messages: restore code and conversation to just before it, or branch from there. */
+function RewindActions({ wsId, seq }: { wsId: string; seq: number }) {
+  const busy = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.status === "running");
+  const btn = "grid size-6 place-items-center rounded-[4px] text-mute hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40";
+  return (
+    <div className="mt-2 flex gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/user:opacity-100">
+      <button type="button" data-rewind-here title={busy ? "Stop the agent to rewind" : "Rewind to here"} aria-label="Rewind to here" disabled={busy} className={btn} onClick={() => void useApp.getState().rewindTo(wsId, seq)}>
+        <History className="size-3.5" />
+      </button>
+      <button type="button" data-branch-here title="Branch from here" aria-label="Branch from here" className={btn} onClick={() => void useApp.getState().branchFromTurn(wsId, seq)}>
+        <GitBranch className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 function ToolGroup({ calls, active, wsId }: { calls: ToolCallView[]; active: boolean; wsId: string }) {
   const [open, setOpen] = useState(false);

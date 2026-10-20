@@ -16,7 +16,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 - Claude and Codex plan limits (5-hour and weekly windows) in Usage
 - MCP servers added once for both agents
 - Comment on diff lines and send them to the agent
-- Rewind a workspace to any earlier turn
 - Linked pull requests across repositories (ship an attached project's changes alongside the main PR)
 - Your installed Claude plugins in `/` autocomplete and as pinnable chips
 - Teammates and archived workspaces mirrored to the phone app
@@ -114,6 +113,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | **Routines** (Alt+3): a message on a schedule (once, hourly, daily, weekdays, weekly, or cron), in a fresh or standing workspace | ✅ | Run now, history; runs while Orbit is open, missed runs catch up once; no-op runs tidy themselves away |
 | Weekly Simplify routine (opens a `refactor/` draft PR) | 🧪 | |
 | Save points after every turn with changes, squashed before Ship; Undo last turn | ✅ | |
+| Rewind a workspace to any earlier turn, or branch a new workspace from it (hover a message of yours) | 🧪 | Preview |
 | Per-repo check command, auto-detected or set by you | ✅ | Timeout and one-time dependency install |
 | Ship gate: checks run before Ship (Off / Warn / Block) with "Ship anyway" | ✅ | |
 | After merge: archive, remove the worktree, delete the branch | ✅ | Each step is a setting |

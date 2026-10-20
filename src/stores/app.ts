@@ -154,6 +154,11 @@ interface AppState {
   /** Orbit's ship gate (checks + squash save points), then `shipkit:ship` if allowed. `anyway` skips the checks. */
   ship: (workspaceId: string, anyway?: boolean) => Promise<void>;
   undoLastTurn: (workspaceId: string) => Promise<void>;
+  /** Last rewind per workspace (for the transcript divider). */
+  rewound: Record<string, { seq: number; turn: number }>;
+  rewindTo: (workspaceId: string, seq: number) => Promise<void>;
+  branchFromTurn: (workspaceId: string, seq: number) => Promise<void>;
+  rewindOneTurn: (workspaceId: string) => Promise<void>;
   syncNow: (workspaceId: string) => Promise<void>;
   /** Workspace pairs that edit the same files. */
   overlaps: Overlap[];
@@ -202,6 +207,7 @@ export const useApp = create<AppState>((set, get) => ({
   workspaces: [],
   selectedId: null,
   transcripts: {},
+  rewound: {},
   live: {},
   changes: {},
   summaries: {},
@@ -567,6 +573,48 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       await api.undoLastTurn(workspaceId);
       void get().refreshChanges(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  rewindTo: async (workspaceId, seq) => {
+    try {
+      const pv = await api.rewindPreview(workspaceId, seq);
+      const files = pv.files.length ? `${pv.files.length} file${pv.files.length === 1 ? "" : "s"} will change${pv.files.length <= 6 ? `: ${pv.files.join(", ")}` : ""}.` : "No files change.";
+      const n = pv.droppedTurns.length;
+      const ok = await confirmAction(`Rewind to turn ${pv.target.turnIndex}?
+
+${n} turn${n === 1 ? "" : "s"} dropped. ${files}
+Uncommitted work is saved as a commit first.`, "Rewind");
+      if (!ok) return;
+      get().upsertWorkspace(await api.rewindWorkspace(workspaceId, seq));
+      await get().loadTranscript(workspaceId);
+      set((s) => ({ rewound: { ...s.rewound, [workspaceId]: { seq, turn: pv.target.turnIndex } } }));
+      void get().refreshChanges(workspaceId);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  branchFromTurn: async (workspaceId, seq) => {
+    try {
+      const ws = await api.branchFromTurn(workspaceId, seq);
+      get().upsertWorkspace(ws);
+      get().select(ws.id);
+    } catch (e) {
+      get().setError(String(e));
+    }
+  },
+
+  rewindOneTurn: async (workspaceId) => {
+    try {
+      const points = await api.workspaceTurnPoints(workspaceId);
+      if (points.length < 2) {
+        get().setError("There is no earlier turn with a saved checkpoint to rewind to.");
+        return;
+      }
+      await get().rewindTo(workspaceId, points[points.length - 2].seq);
     } catch (e) {
       get().setError(String(e));
     }
