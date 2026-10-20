@@ -268,6 +268,7 @@ export interface PlanItem {
 }
 
 export type PlanEvent = Extract<AgentEvent, { type: "plan" }>;
+
 export interface TurnPoint {
   seq: number;
   turnIndex: number;

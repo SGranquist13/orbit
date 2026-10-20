@@ -62,13 +62,10 @@ export function Inbox() {
   const all: Row[] = useMemo(
     () =>
       workspaces
+        .filter((ws) => !(ws.attemptGroup && attemptGroups[ws.attemptGroup]?.status === "running"))
         .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits, reviews[ws.id]?.review) }))
         .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
-    [workspaces, summaries, prs, staleLimits, reviews],
-        .filter((ws) => !(ws.attemptGroup && attemptGroups[ws.attemptGroup]?.status === "running"))
-        .map((ws) => ({ ws, summary: summaries[ws.id], reason: attentionReason(ws, summaries[ws.id], prs[ws.id], staleLimits) }))
-        .sort((a, b) => (b.summary?.lastActivityTs ?? 0) - (a.summary?.lastActivityTs ?? 0)),
-    [workspaces, summaries, prs, staleLimits, attemptGroups],
+    [workspaces, summaries, prs, staleLimits, reviews, attemptGroups],
   );
   // Best of N groups whose attempts all finished and have their check results: ready to compare.
   const readyGroups = useMemo(

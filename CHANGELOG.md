@@ -2,16 +2,13 @@
 
 ## Unreleased
 - Preview: comment on lines in the diff and send them to the agent as one message.
-
 - Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains
 - Preview: Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a warning near the limit.
 - Preview: per-repo setup and run scripts; `.env` and other ignored files are copied into new worktrees.
 - Preview: the agent's own plan pinned above the chat with live progress.
 - Preview: add MCP servers once and both Claude and Codex get them, with per-workspace toggles.
-
 - Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
 - Preview: an AI review after Ship, shown in Orbit or posted to the PR, with findings you can send to the agent.
-
 - Preview: Best of N: run one prompt as several attempts side by side and keep the best.
 
 ## 0.2.0 - 2026-10-20

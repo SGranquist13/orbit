@@ -827,6 +827,8 @@ await step("agent-plan", async () => {
   const plan = await invoke("latest_plan", { workspaceId: ws.id });
   if (!plan || plan.items.length < 1) throw new Error(`no plan recorded: ${JSON.stringify(plan)}`);
   await waitFor("plan card", `return !!document.querySelector('[data-testid=plan-card]') && /Plan · \d+\/\d+/.test(document.querySelector('[data-testid=plan-card]').innerText)`, 10_000);
+});
+
 await step("best-of-n", async () => {
   // One prompt, two Claude attempts side by side; both finish, summaries land, picking A archives B.
   const repoId = (await invoke("list_repos"))[0].id;
@@ -2022,6 +2024,9 @@ await step("worktree-setup", async () => {
   } finally {
     if (giOrig === null) fs.rmSync(giPath, { force: true }); else fs.writeFileSync(giPath, giOrig);
     await invoke("set_repo_scripts", { repoId, scripts: { setupScript: null, runScript: null, copyGlobs: [] } });
+  }
+});
+
 // Standalone: node scripts/e2e.mjs mcp-servers (one cheap real Haiku turn).
 await step("mcp-servers", async () => {
   const stub = path.join(scratch, "orbit-mcp-stub.cjs");
@@ -2049,6 +2054,8 @@ await step("mcp-servers", async () => {
   } finally {
     await invoke("delete_mcp_server", { id: saved.id });
   }
+});
+
 await step("rewind", async () => {
   // Two cheap turns that each create a file; rewind to after turn 1, then branch from it.
   const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "Create a file REWIND_ONE.md containing the word one. Don't commit it." });

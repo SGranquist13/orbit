@@ -68,7 +68,6 @@ pub struct RateLimits {
     pub status: Option<String>,
 }
 
-/// Normalized event stream shared by all agents. Persisted (except live/account events) and sent to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum PlanStatus {
@@ -83,7 +82,7 @@ pub struct PlanItem {
     pub status: PlanStatus,
 }
 
-/// Normalized event stream shared by all agents. Persisted (except deltas) and sent to the UI.
+/// Normalized event stream shared by all agents. Persisted (except deltas and live/account events) and sent to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum AgentEvent {

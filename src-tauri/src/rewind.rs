@@ -174,7 +174,7 @@ pub async fn branch_from_turn(app: AppHandle, state: State<'_, AppState>, worksp
         repo_id: ws.repo_id,
         name: name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} from turn {}", ws.name, kept.turn_index)),
         agent: ws.agent, model: ws.model, issue_number: ws.issue_number, profile: ws.profile,
-        routine_id: None, branch_prefix: None, teammate: ws.teammate, start_ref: Some(kept.sha),
+        routine_id: None, branch_prefix: None, teammate: ws.teammate, start_ref: Some(kept.sha), attempt_group: None, branch_suffix: None,
     }).await?;
     state.db().set_setting(&format!("rewind_note:{}", new.id), &note).map_err(err)?;
     Ok(new)

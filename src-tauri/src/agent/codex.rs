@@ -542,6 +542,9 @@ mod tests {
         assert!(events[0].is_persistent());
         assert_eq!(serde_json::from_value::<AgentEvent>(wire).unwrap(), events[0]);
         assert_eq!(events[1], AgentEvent::Plan { items: vec![], explanation: None });
+    }
+
+    #[test]
     fn mcp_overrides_are_passed_even_for_readonly_sessions() {
         let server: crate::mcp::McpServer = serde_json::from_value(json!({
             "id":"one", "name":"docs", "transport":"http", "url":"https://example.com/mcp", "enabled":true

@@ -6,10 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
-import type { McpServer, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
-import type { AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, Review, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
-import type { AttemptGroup, StartAttemptsArgs, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage } from "./ipc";
+import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage, McpServer, Review, AttemptGroup, StartAttemptsArgs } from "./ipc";
 
 const mockReviews = new Map<string, Review>();
 function fakeReview(workspaceId: string): Review {
@@ -1105,17 +1102,17 @@ export function installMockBackend() {
         case "list_workspaces":
           return [...workspaces];
         case "load_events":
-          return LAUNCH ? launchEvents(id, transcript) : transcript;
+          return rewoundMockEvents.get(id) ?? (LAUNCH ? launchEvents(id, transcript) : transcript);
         case "latest_plan": {
           const workspaceId = a.workspaceId ?? "";
           if (latestPlans.has(workspaceId)) return latestPlans.get(workspaceId);
-          const history = LAUNCH ? launchEvents(workspaceId, transcript) : transcript;
+          const history = rewoundMockEvents.get(workspaceId) ?? (LAUNCH ? launchEvents(workspaceId, transcript) : transcript);
           for (const { event } of [...history].reverse()) {
             if (event.type === "plan") return event;
             if (event.type === "sessionReset" || event.type === "turnStarted") break;
           }
           return null;
-          return rewoundMockEvents.get(id) ?? (LAUNCH ? launchEvents(id, transcript) : transcript);
+        }
         case "workspace_turn_points":
           return mockTurnPoints(a.workspaceId ?? "");
         case "rewind_preview":

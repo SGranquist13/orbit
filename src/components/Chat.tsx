@@ -512,6 +512,10 @@ function PlanCard({ wsId, running }: { wsId: string; running: boolean }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
 /** Hover actions on one of your messages: restore code and conversation to just before it, or branch from there. */
 function RewindActions({ wsId, seq }: { wsId: string; seq: number }) {
   const busy = useApp((s) => s.workspaces.find((w) => w.id === wsId)?.status === "running");

@@ -117,6 +117,7 @@ export function Git() {
       {repos.length === 0 && <p className="py-3 text-[12px] text-mute">Add a repository to set its check command.</p>}
 
       <WorktreeSetup />
+
       <SubHeading>Review</SubHeading>
       <Row
         label="Review after Ship"

@@ -549,14 +549,12 @@ impl Db {
 
     pub fn insert_workspace(&self, ws: &Workspace) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs, disabled_mcp_servers)
-            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs, attempt_group)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO workspaces (id, repo_id, name, branch, path, agent, model, status, issue_number, created_at, updated_at, profile, routine_id, teammate, disabled_packs, disabled_mcp_servers, attempt_group)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 ws.id, ws.repo_id, ws.name, ws.branch, ws.path, ws.agent, ws.model, ws.status,
                 ws.issue_number, ws.created_at, ws.updated_at, ws.profile, ws.routine_id, ws.teammate,
-                serde_json::to_string(&ws.disabled_packs)?, serde_json::to_string(&ws.disabled_mcp_servers)?
-                serde_json::to_string(&ws.disabled_packs)?, ws.attempt_group
+                serde_json::to_string(&ws.disabled_packs)?, serde_json::to_string(&ws.disabled_mcp_servers)?, ws.attempt_group
             ],
         )?;
         Ok(())

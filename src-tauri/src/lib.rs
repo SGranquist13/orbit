@@ -852,11 +852,6 @@ fn deliver_message(app: &AppHandle, state: &AppState, ws: &Workspace, payload: S
         // Session died between lookup and send: drop it and retry once with a fresh process.
         state.sessions_lock().remove(id);
         ensure_session(app, state, ws).map_err(fail)?.send(Command::User { text: payload, images });
-    let handle = ensure_session(app, state, &ws)?;
-    if !handle.send(Command::User { text: payload.clone(), images: images.clone() }) {
-        // Session died between lookup and send: drop it and retry once with a fresh process.
-        state.sessions_lock().remove(id);
-        ensure_session(app, state, &ws)?.send(Command::User { text: payload, images });
     }
     state.db().set_setting(&format!("rewind_note:{id}"), "")?;
     let ws = state.db().set_status(id, "running")?;

@@ -751,6 +751,9 @@ mod tests {
             LimitWindow { kind: "fiveHour".into(), used_percent: 0.0, resets_at: None },
         ]);
         assert_eq!(limits.status, None);
+    }
+
+    #[test]
     fn todo_write_normalizes_plan_and_keeps_tool_calls() {
         // Synthetic: no recorded fixture contains TodoWrite. Input follows Claude's
         // documented input: https://code.claude.com/docs/en/agent-sdk/python#todowrite

@@ -90,6 +90,7 @@ const expected: Record<string, string> = {
   "workbench.keyboardShortcuts": "ctrl+k ctrl+s",
   "workbench.theme": "ctrl+k ctrl+t",
   "workbench.focusMode": "ctrl+k z",
+  "workbench.openInEditor": "",
   "agent.openChat": "ctrl+alt+i",
   "agent.askSelection": "ctrl+i",
   "review.addComment": "",
