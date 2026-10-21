@@ -8,6 +8,7 @@ import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
 import { installKeybindings } from "./lib/keybindingRuntime";
+import { VoiceSetup } from "./components/voice/VoiceSetup";
 import { initVoice } from "./stores/voice";
 import { KeybindingHint } from "./components/KeybindingHint";
 import { useApp } from "./stores/app";
@@ -93,6 +94,7 @@ export default function App() {
       {packsOpen && <Lazy fallback={null}><Packs /></Lazy>}
       {ticketOpen && <Lazy fallback={null}><NewTicket /></Lazy>}
       {chordHint && <div role="status" className="fixed bottom-2 left-2 z-[70] rounded-[4px] border border-line bg-raised px-3 py-2 font-sans text-[12px] text-mute">{chordHint}</div>}
+      <VoiceSetup />
       <ErrorToast />
     </div>
   );

@@ -247,3 +247,13 @@ export function insertAtCursor(value: string, selStart: number, selEnd: number, 
   const trail = after && !/^\s/.test(after) ? " " : "";
   return { value: before + lead + text + trail + after, cursor: before.length + lead.length + text.length + trail.length };
 }
+
+
+export type VoiceSetupAction = "dictate" | "handsfree" | "readAloud";
+
+/** Speech input needs Whisper; the optional natural voice is offered until setup is dismissed. */
+export function needsSetup({ sttInstalled, ttsInstalled, dismissed, action }: {
+  sttInstalled: boolean; ttsInstalled: boolean; dismissed: boolean; action: VoiceSetupAction;
+}): boolean {
+  return (action !== "readAloud" && !sttInstalled) || (!ttsInstalled && !dismissed);
+}

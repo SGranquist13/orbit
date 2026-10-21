@@ -1081,9 +1081,9 @@ async function mockVoiceDownload(id: VoiceModelId) {
   const steps = 30;
   for (let i = 1; i <= steps; i++) {
     await voiceSleep(100);
+    if (i === steps) m.installed = true;
     void emit("voice-download", { id, received: Math.round((m.sizeBytes * i) / steps), total: m.sizeBytes, ...(i === steps ? { done: true } : {}) });
   }
-  m.installed = true;
 }
 
 export function installMockBackend() {

@@ -6,6 +6,8 @@ import { api, events, voiceApi, type VoiceDownload, type VoiceModel, type VoiceM
 import * as tts from "../lib/tts";
 import {
   classifyUtterance,
+  needsSetup,
+  type VoiceSetupAction,
   f32ToBase64,
   handsFreePhase,
   hfInitial,
@@ -54,14 +56,17 @@ interface VoiceStore {
   handsFree: { workspaceId: string | null; phase: HandsFreePhase; heard: Heard | null };
   /** Id of the assistant message being read aloud (or "reply" for hands-free speech). */
   speakingId: string | null;
-  /** Set when the natural voice was wanted but is not downloaded: a notice offers the download. */
-  kokoroMissing: boolean;
+  setup: { then?: () => void } | null;
+  setupLoading: boolean;
+  setupError: string | null;
+  openSetup: (then?: () => void) => void;
+  closeSetup: (complete?: boolean) => void;
+  ensureSetup: (then?: () => void, action?: VoiceSetupAction) => boolean;
 
   refreshModels: () => Promise<void>;
   download: (id: VoiceModelId) => Promise<void>;
   deleteModel: (id: VoiceModelId) => Promise<void>;
   clearError: () => void;
-  dismissKokoroMissing: () => void;
   toggleDictation: (workspaceId: string) => Promise<void>;
   startHold: (workspaceId: string) => void;
   endHold: () => void;
@@ -82,6 +87,8 @@ const MISSED_MS = 2000;
 
 const log = (...args: unknown[]) => console.debug("[voice]", ...args);
 
+let setupDismissed = false;
+
 export const useVoice = create<VoiceStore>((set, get) => ({
   status: "idle",
   workspaceId: null,
@@ -92,22 +99,49 @@ export const useVoice = create<VoiceStore>((set, get) => ({
   downloads: {},
   handsFree: { workspaceId: null, phase: "off", heard: null },
   speakingId: null,
-  kokoroMissing: false,
+  setup: null,
+  setupLoading: false,
+  setupError: null,
+
+  openSetup: (then) => {
+    if (get().setup) return;
+    set({ setup: { then }, setupLoading: true, setupError: null });
+    void get().refreshModels().finally(() => set({ setupLoading: false }));
+  },
+  closeSetup: (complete = false) => {
+    const then = get().setup?.then;
+    setupDismissed = true;
+    // Choosing a subset is also a decision to keep the system voice.
+    try { localStorage.setItem("orbit.voice.setupDismissed", "1"); } catch { /* storage unavailable */ }
+    set({ setup: null });
+    if (complete) then?.();
+  },
+  ensureSetup: (then, action = "dictate") => {
+    if (get().setup) return false;
+    const models = get().models;
+    const model = useApp.getState().settings?.voiceModel ?? "base.en";
+    let dismissed = setupDismissed;
+    try { dismissed ||= localStorage.getItem("orbit.voice.setupDismissed") === "1"; } catch { /* storage unavailable */ }
+    if (!needsSetup({ sttInstalled: !!models.find((m) => m.id === model)?.installed,
+      ttsInstalled: !!models.find((m) => m.id === "kokoro")?.installed, dismissed, action })) return true;
+    get().openSetup(then);
+    return false;
+  },
 
   refreshModels: async () => {
     try {
-      set({ models: await voiceApi.models() });
-    } catch {
-      /* the settings page shows an empty list */
+      set({ models: await voiceApi.models(), setupError: null });
+    } catch (e) {
+      set({ setupError: errorText(e) });
     }
   },
 
   download: async (id) => {
+    if (get().downloads[id] && !get().downloads[id]?.error) return;
     const total = get().models.find((m) => m.id === id)?.sizeBytes ?? 0;
     set((s) => ({
       downloads: { ...s.downloads, [id]: { id, received: 0, total } },
       error: s.error?.kind === "noModel" ? null : s.error,
-      kokoroMissing: id === "kokoro" ? false : s.kokoroMissing,
     }));
     try {
       await voiceApi.download(id);
@@ -132,20 +166,21 @@ export const useVoice = create<VoiceStore>((set, get) => ({
   },
 
   clearError: () => set({ error: null }),
-  dismissKokoroMissing: () => set({ kokoroMissing: false }),
 
   toggleDictation: async (workspaceId) => {
     const s = get();
     if (s.status === "listening" && s.mode === "dictate") return stopDictation();
     if (s.status !== "idle" && s.status !== "error") return;
     if (s.handsFree.phase !== "off") return;
+    if (!s.ensureSetup(() => { void get().toggleDictation(workspaceId); })) return;
     await startDictation(workspaceId);
   },
 
   startHold: (workspaceId) => {
     if (holdAt !== null) return; // key auto-repeat
-    holdAt = Date.now();
     const s = get();
+    if (s.status !== "listening" && !s.ensureSetup(() => { void get().toggleDictation(workspaceId); })) return;
+    holdAt = Date.now();
     if (s.status === "listening" && s.mode === "dictate") {
       // A tap earlier toggled recording on; this press toggles it off.
       holdSwallow = true;
@@ -182,6 +217,7 @@ export const useVoice = create<VoiceStore>((set, get) => ({
     if (hf) return stopHandsFree();
     const s = get();
     if (s.status !== "idle" && s.status !== "error") return;
+    if (!s.ensureSetup(() => { void get().toggleHandsFree(workspaceId); }, "handsfree")) return;
     await startHandsFree(workspaceId);
   },
 
@@ -189,6 +225,7 @@ export const useVoice = create<VoiceStore>((set, get) => ({
     if (get().speakingId === messageId) return get().stopSpeaking();
     const text = speakable(markdown);
     if (!text) return;
+    if (!get().ensureSetup(() => { void speakAloud(text, messageId); }, "readAloud")) return;
     void speakAloud(text, messageId);
   },
 
@@ -225,7 +262,9 @@ function classify(e: unknown): VoiceErrorKind {
 function fail(e: unknown, workspaceId: string | null) {
   const message = e instanceof MicError ? e.message : errorText(e);
   log("error", message);
-  useVoice.setState({ error: { kind: classify(e), message, workspaceId }, status: "idle", mode: null, level: 0 });
+  const kind = classify(e);
+  useVoice.setState({ error: kind === "noModel" ? null : { kind, message, workspaceId }, status: "idle", mode: null, level: 0 });
+  if (kind === "noModel") useVoice.getState().openSetup(workspaceId ? () => { void useVoice.getState().toggleDictation(workspaceId); } : undefined);
 }
 
 /** Level updates at most ~20 per second. */
@@ -419,8 +458,13 @@ async function transcribeUtterance(audio: Float32Array, token: number) {
     hfDispatch({ type: "transcribed", text: r.text, dropped: r.dropped }, token);
   } catch (e) {
     if (!hf || hf.token !== token) return;
-    // An inline message, never the end of the loop: the mic and the detector keep running.
+    // A missing model pauses the loop for setup; other transcription errors stay inline.
     log("hands-free: transcription failed", errorText(e));
+    if (classify(e) === "noModel") {
+      await stopHandsFree();
+      useVoice.getState().openSetup(() => { void useVoice.getState().toggleHandsFree(workspaceId); });
+      return;
+    }
     useVoice.setState({ error: { kind: classify(e), message: errorText(e), workspaceId } });
     hfDispatch({ type: "transcribeFailed" }, token);
   }
@@ -448,13 +492,12 @@ async function speakAloud(text: string, id: string): Promise<void> {
   const s = useApp.getState().settings;
   useVoice.setState({ speakingId: id });
   try {
-    const r = await tts.speak(text, {
+    await tts.speak(text, {
       engine: s?.voiceTtsEngine ?? "kokoro",
       kokoroVoice: s?.voiceKokoroVoice,
       systemVoice: s?.voiceTtsVoice,
       speed: s?.voiceTtsRate,
     });
-    if (r.fellBack?.notInstalled) useVoice.setState({ kokoroMissing: true });
   } catch (e) {
     log("speech failed", errorText(e));
   } finally {

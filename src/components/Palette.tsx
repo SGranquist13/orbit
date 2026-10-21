@@ -384,6 +384,9 @@ export function Palette() {
             <Command.Item className={item} value="Stop speaking (cancel read aloud)" onSelect={run(() => useVoice.getState().stopSpeaking())}>
               <Square className="size-3.5" /> Stop speaking
             </Command.Item>
+            <Command.Item className={item} value="Set up voice… (download speech recognition natural voice models)" onSelect={run(() => useVoice.getState().openSetup())}>
+              <Mic className="size-3.5" /> Set up voice…
+            </Command.Item>
             <Command.Item className={item} value="Voice settings (microphone, speech model, read aloud)" onSelect={run(() => openSettingsAt("voice"))}>
               <Mic className="size-3.5" /> Voice settings
             </Command.Item>

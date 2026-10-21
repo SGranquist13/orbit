@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyUtterance, f32ToBase64, handsFreePhase, hfInitial, hfReduce, insertAtCursor, isStopWord, resampleLinear, rms, speakable, type HfEffect, type HfEvent, type HfState } from "./voice";
+import { needsSetup, classifyUtterance, f32ToBase64, handsFreePhase, hfInitial, hfReduce, insertAtCursor, isStopWord, resampleLinear, rms, speakable, type HfEffect, type HfEvent, type HfState } from "./voice";
 
 /** Runs events through the reducer, returning the final state and every effect in order. */
 function run(events: HfEvent[], start: HfState = { ...hfInitial, on: true }) {
@@ -232,4 +232,22 @@ describe("insertAtCursor", () => {
     expect(insertAtCursor("abc", 1, 1, "  ")).toEqual({ value: "abc", cursor: 1 });
     expect(insertAtCursor("abc", 99, 99, "d").value).toBe("abc d");
   });
+});
+
+
+describe("voice setup prompting", () => {
+  for (const action of ["dictate", "handsfree", "readAloud"] as const) {
+    for (const sttInstalled of [false, true]) {
+      for (const ttsInstalled of [false, true]) {
+        for (const dismissed of [false, true]) {
+          test(`${action}: speech=${sttInstalled}, natural=${ttsInstalled}, dismissed=${dismissed}`, () => {
+            const expected = action === "readAloud"
+              ? !ttsInstalled && !dismissed
+              : !sttInstalled || (!ttsInstalled && !dismissed);
+            expect(needsSetup({ sttInstalled, ttsInstalled, dismissed, action })).toBe(expected);
+          });
+        }
+      }
+    }
+  }
 });
