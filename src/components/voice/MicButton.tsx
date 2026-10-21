@@ -91,7 +91,7 @@ export function VoiceNotice({ wsId }: { wsId: string }) {
   }
   if (!error) return null;
   return (
-    <p role="alert" className="mx-auto mb-2 flex max-w-[880px] flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-medium text-bad">
+    <p role="alert" className={cn("mx-auto mb-2 flex max-w-[880px] flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-medium", error.kind === "noModel" ? "text-mute" : "text-bad")}>
       <CircleAlert className="size-3.5 shrink-0" />
       <span className="selectable">
         {error.kind === "noModel"
