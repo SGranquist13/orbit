@@ -1,55 +1,194 @@
 import { describe, expect, test } from "bun:test";
-import { handsFreeNext, insertAtCursor, isStopWord, speakable, type HandsFreeEvent, type HandsFreeState } from "./voice";
+import { classifyUtterance, f32ToBase64, handsFreePhase, hfInitial, hfReduce, insertAtCursor, isStopWord, resampleLinear, rms, speakable, type HfEffect, type HfEvent, type HfState } from "./voice";
 
-const run = (start: HandsFreeState, events: HandsFreeEvent[]) => events.reduce(handsFreeNext, start);
+/** Runs events through the reducer, returning the final state and every effect in order. */
+function run(events: HfEvent[], start: HfState = { ...hfInitial, on: true }) {
+  let state = start;
+  const effects: HfEffect[] = [];
+  for (const e of events) {
+    const r = hfReduce(state, e);
+    state = r.state;
+    effects.push(...r.effects);
+  }
+  return { state, effects, phase: handsFreePhase(state) };
+}
+const say = (text: string, dropped = false): HfEvent[] => [{ type: "speechStart", bargeIn: true }, { type: "speechEnd" }, { type: "transcribed", text, dropped }];
 
-describe("handsFreeNext", () => {
-  test("full loop", () => {
-    expect(
-      run("off", [
-        { type: "start" },
-        { type: "result", text: "add a test" },
-        { type: "sent" },
-        { type: "turnCompleted", text: "Done." },
-        { type: "spoken" },
-      ]),
-    ).toBe("listening");
+describe("hands-free loop", () => {
+  test("starts listening and stops from anywhere", () => {
+    expect(run([{ type: "start" }], hfInitial).phase).toBe("listening");
+    const r = run([{ type: "turnCompleted", reply: "Done." }, { type: "stop" }]);
+    expect(r.state).toEqual(hfInitial);
+    expect(r.effects).toContainEqual({ type: "stopSpeech" });
   });
-  test("states along the way", () => {
-    expect(run("off", [{ type: "start" }])).toBe("listening");
-    expect(run("listening", [{ type: "transcribing" }])).toBe("transcribing");
-    expect(run("listening", [{ type: "result", text: "go" }])).toBe("sending");
-    expect(run("sending", [{ type: "sent" }])).toBe("waiting");
-    expect(run("waiting", [{ type: "turnCompleted", text: "ok" }])).toBe("speaking");
+  test("an utterance goes hearing -> transcribing -> working with one send", () => {
+    expect(run([{ type: "speechStart", bargeIn: true }]).phase).toBe("hearing");
+    expect(run([{ type: "speechStart", bargeIn: true }, { type: "speechEnd" }]).phase).toBe("transcribing");
+    const r = run(say("add a test"));
+    expect(r.effects).toEqual([{ type: "send", text: "add a test" }]);
+    expect(r.phase).toBe("working");
   });
-  test("empty result and stop word keep listening", () => {
-    expect(run("listening", [{ type: "result", text: "  " }])).toBe("listening");
-    expect(run("waiting", [{ type: "result", text: "stop" }])).toBe("waiting");
-    expect(run("listening", [{ type: "result", text: "Stop." }])).toBe("listening");
+  test("speaking the reply returns to listening", () => {
+    const r = run([...say("go"), { type: "turnCompleted", reply: "All done." }]);
+    expect(r.phase).toBe("speaking");
+    expect(r.effects).toContainEqual({ type: "speak", text: "All done." });
+    expect(run([...say("go"), { type: "turnCompleted", reply: "All done." }, { type: "speechDone" }]).phase).toBe("listening");
   });
-  test("an empty reply skips speaking", () => {
-    expect(run("waiting", [{ type: "turnCompleted", text: "" }])).toBe("listening");
+  test("no reply to speak goes straight back to listening", () => {
+    expect(run([...say("go"), { type: "turnCompleted", reply: null }]).phase).toBe("listening");
   });
-  test("stop and error end it from anywhere", () => {
-    for (const s of ["listening", "transcribing", "sending", "waiting", "speaking"] as const) {
-      expect(handsFreeNext(s, { type: "stop" })).toBe("off");
-      expect(handsFreeNext(s, { type: "error" })).toBe("off");
-    }
-  });
-  test("irrelevant events are ignored", () => {
-    expect(handsFreeNext("off", { type: "turnCompleted", text: "x" })).toBe("off");
-    expect(handsFreeNext("listening", { type: "start" })).toBe("listening");
-    expect(handsFreeNext("speaking", { type: "sent" })).toBe("speaking");
+  test("a failed transcription or send never leaves the loop deaf", () => {
+    expect(run([{ type: "speechStart", bargeIn: true }, { type: "speechEnd" }, { type: "transcribeFailed" }]).phase).toBe("listening");
+    const r = run([...say("go"), { type: "sendFailed" }]);
+    expect(r.phase).toBe("listening");
+    expect(r.state.on).toBe(true);
+    // ...and the next utterance is still heard
+    expect(run([...say("go"), { type: "sendFailed" }, ...say("again")]).effects.filter((e) => e.type === "send").length).toBe(2);
   });
 });
 
-describe("isStopWord", () => {
-  test("matches stop and cancel only", () => {
-    expect(isStopWord("Stop.")).toBe(true);
-    expect(isStopWord(" cancel! ")).toBe(true);
-    expect(isStopWord("STOP")).toBe(true);
-    expect(isStopWord("stop the build")).toBe(false);
-    expect(isStopWord("")).toBe(false);
+describe("dropped and empty transcripts", () => {
+  test("a dropped transcript does nothing", () => {
+    const r = run(say("Thank you.", true));
+    expect(r.effects).toEqual([]);
+    expect(r.phase).toBe("listening");
+    expect(r.state.working).toBe(false);
+  });
+  test("an empty transcript does nothing", () => {
+    expect(run(say("   ")).effects).toEqual([]);
+  });
+  test("a misfire (too short to be speech) returns to listening", () => {
+    const r = run([{ type: "speechStart", bargeIn: true }, { type: "speechMisfire" }]);
+    expect(r.phase).toBe("listening");
+    expect(r.effects).toEqual([]);
+  });
+});
+
+describe("stop words", () => {
+  test("recognised alone, ignoring case and punctuation", () => {
+    for (const t of ["stop", "Stop.", " CANCEL! ", "wait", "Wait...", "hold on", "Hold on!"]) expect(isStopWord(t)).toBe(true);
+    for (const t of ["stop the build", "wait for the tests", "hold on to that", "", "don't stop", "waiting"]) expect(isStopWord(t)).toBe(false);
+  });
+  test("classify", () => {
+    expect(classifyUtterance("stop", false)).toBe("stop");
+    expect(classifyUtterance("fix the bug", false)).toBe("send");
+    expect(classifyUtterance("fix the bug", true)).toBe("ignore");
+    expect(classifyUtterance("", false)).toBe("ignore");
+  });
+  test("a stop word interrupts the agent and speech, and sends nothing", () => {
+    const working = run(say("do the thing"));
+    const r = run(say("stop"), working.state);
+    expect(r.effects).toEqual([{ type: "interrupt" }]);
+    expect(r.state.working).toBe(false);
+    expect(r.phase).toBe("listening");
+    const speaking = run([...say("go"), { type: "turnCompleted", reply: "Hello there." }]);
+    const s2 = run([{ type: "speechStart", bargeIn: false }, { type: "speechEnd" }, { type: "transcribed", text: "wait", dropped: false }], speaking.state);
+    expect(s2.effects).toContainEqual({ type: "interrupt" });
+    expect(s2.effects).toContainEqual({ type: "stopSpeech" });
+  });
+});
+
+describe("sending while the agent works", () => {
+  test("each utterance is sent, one after the other", () => {
+    const r = run([...say("first part"), ...say("and second part"), ...say("and a third")]);
+    expect(r.effects.filter((e) => e.type === "send")).toEqual([
+      { type: "send", text: "first part" },
+      { type: "send", text: "and second part" },
+      { type: "send", text: "and a third" },
+    ]);
+    expect(r.phase).toBe("working");
+  });
+  test("a turn that started elsewhere still marks the agent as working", () => {
+    expect(run([{ type: "turnStarted" }]).phase).toBe("working");
+  });
+  test("speech is heard even while a turn is running", () => {
+    const r = run([{ type: "turnStarted" }, ...say("also rename it")]);
+    expect(r.effects).toEqual([{ type: "send", text: "also rename it" }]);
+  });
+});
+
+describe("barge-in", () => {
+  const speaking = () => run([...say("go"), { type: "turnCompleted", reply: "A long answer." }]).state;
+  test("speech start while Orbit speaks cuts the speech immediately", () => {
+    const r = run([{ type: "speechStart", bargeIn: true }], speaking());
+    expect(r.effects).toEqual([{ type: "stopSpeech" }]);
+    expect(r.state.speaking).toBe(false);
+    expect(r.phase).toBe("hearing");
+  });
+  test("the barged-in utterance is then sent normally", () => {
+    const r = run([{ type: "speechStart", bargeIn: true }, { type: "speechEnd" }, { type: "transcribed", text: "actually use tabs", dropped: false }], speaking());
+    expect(r.effects).toEqual([{ type: "stopSpeech" }, { type: "send", text: "actually use tabs" }]);
+  });
+  test("with barge-in off, speech during Orbit's reply is ignored and the reply keeps playing", () => {
+    const r = run([{ type: "speechStart", bargeIn: false }, { type: "speechEnd" }], speaking());
+    expect(r.effects).toEqual([]);
+    expect(r.state.speaking).toBe(true);
+    expect(r.state.transcribing).toBe(0);
+    expect(r.phase).toBe("speaking");
+  });
+  test("with barge-in off, the user can still start speaking once Orbit is done", () => {
+    const r = run([{ type: "speechDone" }, ...say("next")], speaking());
+    expect(r.effects).toEqual([{ type: "send", text: "next" }]);
+  });
+  test("speech start when Orbit is silent has nothing to cut", () => {
+    expect(run([{ type: "speechStart", bargeIn: true }]).effects).toEqual([]);
+  });
+});
+
+describe("a reply that finishes while the user is talking", () => {
+  const midUtterance: HfEvent[] = [{ type: "speechStart", bargeIn: true }];
+  test("waits until they finish", () => {
+    const r = run([...midUtterance, { type: "turnCompleted", reply: "Done." }]);
+    expect(r.effects).toEqual([]);
+    expect(r.state.pending).toBe("Done.");
+    expect(r.phase).toBe("hearing");
+  });
+  test("is spoken after a misfire or a dropped utterance", () => {
+    expect(run([...midUtterance, { type: "turnCompleted", reply: "Done." }, { type: "speechMisfire" }]).effects).toEqual([{ type: "speak", text: "Done." }]);
+    const dropped = run([...midUtterance, { type: "turnCompleted", reply: "Done." }, { type: "speechEnd" }, { type: "transcribed", text: "um", dropped: true }]);
+    expect(dropped.effects).toEqual([{ type: "speak", text: "Done." }]);
+    expect(dropped.phase).toBe("speaking");
+  });
+  test("is skipped when they then send something new", () => {
+    const r = run([...midUtterance, { type: "turnCompleted", reply: "Done." }, { type: "speechEnd" }, { type: "transcribed", text: "one more thing", dropped: false }]);
+    expect(r.effects).toEqual([{ type: "send", text: "one more thing" }]);
+    expect(r.state.pending).toBeNull();
+    expect(r.phase).toBe("working");
+  });
+  test("waits while a transcription is still in flight", () => {
+    const r = run([{ type: "speechStart", bargeIn: true }, { type: "speechEnd" }, { type: "turnCompleted", reply: "Done." }]);
+    expect(r.effects).toEqual([]);
+    expect(r.state.pending).toBe("Done.");
+  });
+  test("is skipped when they say stop", () => {
+    const r = run([...midUtterance, { type: "turnCompleted", reply: "Done." }, { type: "speechEnd" }, { type: "transcribed", text: "stop", dropped: false }]);
+    expect(r.effects).toEqual([{ type: "interrupt" }]);
+    expect(r.state.pending).toBeNull();
+  });
+});
+
+describe("events are ignored while off", () => {
+  test("nothing happens", () => {
+    expect(hfReduce(hfInitial, { type: "turnCompleted", reply: "x" })).toEqual({ state: hfInitial, effects: [] });
+    expect(hfReduce(hfInitial, { type: "speechStart", bargeIn: true }).effects).toEqual([]);
+  });
+});
+
+describe("audio helpers", () => {
+  test("f32ToBase64 is little-endian float32", () => {
+    expect(f32ToBase64(new Float32Array([1, -2]))).toBe("AACAPwAAAMA=");
+    expect(f32ToBase64(new Float32Array([]))).toBe("");
+  });
+  test("resampleLinear changes the length by the rate ratio and keeps equal rates untouched", () => {
+    const a = new Float32Array(48000).fill(0.5);
+    expect(resampleLinear(a, 48000, 16000).length).toBe(16000);
+    expect(resampleLinear(a, 16000, 16000)).toBe(a);
+    expect(Array.from(resampleLinear(new Float32Array([0, 1, 0, 1]), 4, 2))).toEqual([0.5, 0.5]);
+    expect(Array.from(resampleLinear(new Float32Array([0, 1]), 1, 2)).length).toBe(4);
+  });
+  test("rms", () => {
+    expect(rms(new Float32Array([]))).toBe(0);
+    expect(rms(new Float32Array([0.5, -0.5, 0.5, -0.5]))).toBeCloseTo(0.5);
   });
 });
 
