@@ -28,6 +28,7 @@ mod handoff;
 mod teammates;
 mod trunk;
 mod usage;
+mod voice;
 
 use agent::{AgentEvent, AgentKind, Command, FileRef, ImageRef, SessionConfig, SessionHandle};
 use db::{Attachment, Db, Repo, StoredEvent, Workspace};
@@ -1559,6 +1560,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            voice::voice_models,
+            voice::voice_download,
+            voice::voice_delete_model,
+            voice::voice_devices,
+            voice::voice_start,
+            voice::voice_stop,
+            voice::voice_cancel,
             code::fs::code_list_dir,
             code::fs::code_read_file,
             code::fs::code_write_file,

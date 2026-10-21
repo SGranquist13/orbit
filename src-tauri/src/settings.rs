@@ -25,6 +25,14 @@ pub const SIMPLIFY_MODELS: &[&str] = &["haiku", "sonnet", "opus"];
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    pub voice_model: String,
+    pub voice_device: String,
+    pub voice_auto_send: bool,
+    pub voice_silence_ms: u32,
+    pub voice_read_aloud: String,
+    pub voice_tts_voice: String,
+    pub voice_tts_rate: f64,
+    pub model_voice_tidy: String,
     pub editor_font_size: u32,
     pub editor_tab_size: u32,
     #[serde(default)]
@@ -116,6 +124,14 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            voice_model: "base.en".into(),
+            voice_device: String::new(),
+            voice_auto_send: false,
+            voice_silence_ms: 1200,
+            voice_read_aloud: "handsfree".into(),
+            voice_tts_voice: String::new(),
+            voice_tts_rate: 1.0,
+            model_voice_tidy: "off".into(),
             editor_font_size: 13,
             editor_tab_size: 2,
             keybindings: Default::default(),
@@ -261,6 +277,15 @@ impl Settings {
 
     /// Rejects unknown enum values and tidies free-form fields.
     pub fn validated(mut self) -> Result<Self, String> {
+        crate::voice::models::lookup(&self.voice_model)?;
+        check("voiceReadAloud", &self.voice_read_aloud, &["off", "handsfree", "always"])?;
+        check_task_model("modelVoiceTidy", &self.model_voice_tidy, true)?;
+        if !(300..=5000).contains(&self.voice_silence_ms) {
+            return Err("invalid voiceSilenceMs (expected 300-5000)".into());
+        }
+        if !(0.5..=2.0).contains(&self.voice_tts_rate) {
+            return Err("invalid voiceTtsRate (expected 0.5-2.0)".into());
+        }
         if self.keybindings.len() > 500 || self.keybindings.values().flatten().any(|key| key.chars().count() > 64) {
             return Err("keybindings exceeds size limit".into());
         }
@@ -276,7 +301,7 @@ impl Settings {
             return Err(format!("invalid syncIntervalMinutes {} (expected 1-1440)", self.sync_interval_minutes));
         }
         check("localProvider", &self.local_provider, LOCAL_PROVIDERS)?;
-        // Suggestions and workspace names are optional; the rest fall back to Claude, so "off" is invalid.
+        // Suggestions, workspace names and voice tidy are optional; required tasks fall back to Claude.
         check_task_model("modelSuggestions", &self.model_suggestions, true)?;
         check_task_model("modelWorkspaceName", &self.model_workspace_name, true)?;
         check_task_model("modelCommitMessage", &self.model_commit_message, false)?;
@@ -352,6 +377,30 @@ impl Settings {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn voice_settings_patch() {
+        let d = Settings::default();
+        assert_eq!(d.voice_model, "base.en");
+        assert_eq!(d.model_voice_tidy, "off");
+        assert_eq!(d.voice_silence_ms, 1200);
+        assert!(!d.voice_auto_send);
+        assert_eq!(d.voice_read_aloud, "handsfree");
+        assert_eq!(d.voice_tts_rate, 1.0);
+        let s = d.patched(&json!({"voiceModel":"tiny.en", "voiceDevice":"Mic", "voiceAutoSend":true,
+            "voiceSilenceMs":300, "voiceReadAloud":"always", "voiceTtsVoice":"Voice",
+            "voiceTtsRate":2.0, "modelVoiceTidy":"local:small"})).unwrap();
+        assert_eq!(s.voice_device, "Mic");
+        assert_eq!(s.voice_tts_voice, "Voice");
+        assert!(s.voice_auto_send);
+        for patch in [json!({"voiceModel":"bad"}), json!({"voiceSilenceMs":299}),
+            json!({"voiceSilenceMs":5001}), json!({"voiceReadAloud":"bad"}),
+            json!({"voiceTtsRate":0.49}), json!({"voiceTtsRate":2.01}),
+            json!({"modelVoiceTidy":"local:"})] {
+            assert!(d.patched(&patch).is_err(), "{patch}");
+        }
+        assert!(d.patched(&json!({"voiceSilenceMs":5000,"voiceTtsRate":0.5,"modelVoiceTidy":"default"})).is_ok());
+    }
 
     #[test]
     fn defaults_match_previous_hardcoded_behaviour() {
