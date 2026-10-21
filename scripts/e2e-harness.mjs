@@ -80,9 +80,14 @@ export function createHarness({ scratch, port = 9333, only }) {
         ...process.env,
         ORBIT_HOME: home,
         WEBVIEW2_USER_DATA_FOLDER: path.join(scratch, "webview2"),
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
-        // Voice capture plays this recording instead of the microphone ("Reply with the word pong.").
-        ORBIT_VOICE_FAKE_WAV: path.resolve(import.meta.dirname, "fixtures", "voice-pong.wav"),
+        // The fake microphone plays this recording once per capture ("Reply with the word pong."), and
+        // getUserMedia is granted without a prompt.
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: [
+          `--remote-debugging-port=${port}`,
+          "--use-fake-ui-for-media-stream",
+          "--use-fake-device-for-media-stream",
+          `--use-file-for-fake-audio-capture=${path.resolve(import.meta.dirname, "fixtures", "voice-pong.wav")}%noloop`,
+        ].join(" "),
       },
       stdio: "ignore",
     });

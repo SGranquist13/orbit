@@ -2091,19 +2091,21 @@ await step("rewind", async () => {
 });
 
 await step("voice", async () => {
-  // Speech comes from scripts/fixtures/voice-pong.wav (ORBIT_VOICE_FAKE_WAV, set by the harness) through the real Whisper.
-  // tiny.en is downloaded once into a cache outside the scratch dir, then copied into each run's ORBIT_HOME.
-  const cached = path.join(os.tmpdir(), "orbit-e2e-cache", "whisper", "ggml-tiny.en.bin");
-  const installed = path.join(home, "models", "whisper", "ggml-tiny.en.bin");
-  if (fs.existsSync(cached)) {
-    fs.mkdirSync(path.dirname(installed), { recursive: true });
-    fs.copyFileSync(cached, installed);
-  } else {
-    await invoke("voice_download", { id: "tiny.en" });
-    fs.mkdirSync(path.dirname(cached), { recursive: true });
-    fs.copyFileSync(installed, cached);
+  // The harness's fake microphone plays scripts/fixtures/voice-pong.wav once per capture, through the
+  // webview's real getUserMedia, VAD and the real Whisper. Models are downloaded once into a cache outside
+  // the scratch dir (tiny.en 78 MB, Kokoro ~100 MB) and copied into each run's ORBIT_HOME.
+  const cache = path.join(os.tmpdir(), "orbit-e2e-cache");
+  const models = path.join(home, "models");
+  for (const [id, rel] of [["tiny.en", "whisper"], ["kokoro", "kokoro"]]) {
+    const cached = path.join(cache, rel === "whisper" ? "whisper-tiny" : rel);
+    const target = rel === "whisper" ? path.join(models, "whisper") : path.join(models, rel);
+    if (fs.existsSync(cached)) fs.cpSync(cached, target, { recursive: true });
+    else {
+      await invoke("voice_download", { id });
+      fs.cpSync(target, cached, { recursive: true });
+    }
   }
-  await invoke("update_settings", { patch: { voiceModel: "tiny.en", voiceReadAloud: "handsfree", voiceAutoSend: false, modelVoiceTidy: "off" } });
+  await invoke("update_settings", { patch: { voiceModel: "tiny.en", voiceTtsEngine: "kokoro", voiceReadAloud: "handsfree", voiceAutoSend: false, modelVoiceTidy: "off" } });
   await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
   const composer = `document.querySelector('textarea[placeholder*="Claude"]')`;
 
@@ -2119,12 +2121,12 @@ await step("voice", async () => {
   await ui.waitTurn(before);
   await waitFor("pong reply", `return /pong/i.test([...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? '')`, 10_000);
 
-  // Read aloud with a Windows voice.
+  // Read aloud with the natural (Kokoro) voice.
   await js(`[...document.querySelectorAll('button[aria-label="Read aloud"]')].at(-1).click()`);
-  await waitFor("reading aloud", `return speechSynthesis.speaking || !!document.querySelector('button[aria-label="Stop reading"]')`, 5000);
-  await js(`speechSynthesis.cancel()`);
+  await waitFor("reading aloud", `return !!document.querySelector('button[aria-label="Stop reading"]')`, 30_000);
+  await js(`document.querySelector('button[aria-label="Stop reading"]').click()`);
 
-  // Hands-free: hears the recording, sends it, reads the reply back; stop before it listens a third time.
+  // Hands-free: hears the recording once, sends it, reads the reply back.
   const users = `return document.querySelectorAll('[data-user-message]').length`;
   const sent = await js(users);
   await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
@@ -2133,7 +2135,6 @@ await step("voice", async () => {
   await shot("voice");
   await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
   await waitFor("hands-free off", `return !document.querySelector('[data-hands-free]')`, 5000);
-  // The recording replayed while Claude worked must not have been sent as a steering message.
   const total = await js(users);
   if (total !== sent + 1) throw new Error(`hands-free sent ${total - sent} messages, expected 1`);
 });
