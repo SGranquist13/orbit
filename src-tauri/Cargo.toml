@@ -58,11 +58,10 @@ dunce = "1"
 regex = "1"
 # voice input (src/voice/)
 whisper-rs = "0.16"
-cpal = "0.18"
-hound = "3.5"
 
 [dev-dependencies]
 tempfile = "3"
+hound = "3.5"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

@@ -31,6 +31,10 @@ pub struct Settings {
     pub voice_silence_ms: u32,
     pub voice_read_aloud: String,
     pub voice_tts_voice: String,
+    pub voice_tts_engine: String,
+    pub voice_kokoro_voice: String,
+    pub voice_barge_in: bool,
+    pub voice_min_speech_ms: u32,
     pub voice_tts_rate: f64,
     pub model_voice_tidy: String,
     pub editor_font_size: u32,
@@ -127,9 +131,13 @@ impl Default for Settings {
             voice_model: "base.en".into(),
             voice_device: String::new(),
             voice_auto_send: false,
-            voice_silence_ms: 1200,
+            voice_silence_ms: 1500,
             voice_read_aloud: "handsfree".into(),
             voice_tts_voice: String::new(),
+            voice_tts_engine: "kokoro".into(),
+            voice_kokoro_voice: "af_heart".into(),
+            voice_barge_in: true,
+            voice_min_speech_ms: 400,
             voice_tts_rate: 1.0,
             model_voice_tidy: "off".into(),
             editor_font_size: 13,
@@ -280,8 +288,13 @@ impl Settings {
         crate::voice::models::lookup(&self.voice_model)?;
         check("voiceReadAloud", &self.voice_read_aloud, &["off", "handsfree", "always"])?;
         check_task_model("modelVoiceTidy", &self.model_voice_tidy, true)?;
-        if !(300..=5000).contains(&self.voice_silence_ms) {
-            return Err("invalid voiceSilenceMs (expected 300-5000)".into());
+        check("voiceTtsEngine", &self.voice_tts_engine, &["kokoro", "system"])?;
+        check("voiceKokoroVoice", &self.voice_kokoro_voice, crate::voice::models::KOKORO_VOICES)?;
+        if !(100..=2000).contains(&self.voice_min_speech_ms) {
+            return Err("invalid voiceMinSpeechMs (expected 100-2000)".into());
+        }
+        if !(500..=5000).contains(&self.voice_silence_ms) {
+            return Err("invalid voiceSilenceMs (expected 500-5000)".into());
         }
         if !(0.5..=2.0).contains(&self.voice_tts_rate) {
             return Err("invalid voiceTtsRate (expected 0.5-2.0)".into());
@@ -383,23 +396,46 @@ mod tests {
         let d = Settings::default();
         assert_eq!(d.voice_model, "base.en");
         assert_eq!(d.model_voice_tidy, "off");
-        assert_eq!(d.voice_silence_ms, 1200);
+        assert_eq!(d.voice_silence_ms, 1500);
+        assert_eq!(d.voice_tts_engine, "kokoro");
+        assert_eq!(d.voice_kokoro_voice, "af_heart");
+        assert!(d.voice_barge_in);
+        assert_eq!(d.voice_min_speech_ms, 400);
         assert!(!d.voice_auto_send);
         assert_eq!(d.voice_read_aloud, "handsfree");
         assert_eq!(d.voice_tts_rate, 1.0);
-        let s = d.patched(&json!({"voiceModel":"tiny.en", "voiceDevice":"Mic", "voiceAutoSend":true,
-            "voiceSilenceMs":300, "voiceReadAloud":"always", "voiceTtsVoice":"Voice",
-            "voiceTtsRate":2.0, "modelVoiceTidy":"local:small"})).unwrap();
+        let s = d
+            .patched(&json!({"voiceModel":"tiny.en", "voiceDevice":"Mic", "voiceAutoSend":true,
+            "voiceSilenceMs":500, "voiceReadAloud":"always", "voiceTtsVoice":"Voice",
+            "voiceTtsEngine":"system", "voiceKokoroVoice":"bm_george", "voiceBargeIn":false,
+            "voiceMinSpeechMs":100, "voiceTtsRate":2.0, "modelVoiceTidy":"local:small"}))
+            .unwrap();
+        assert_eq!(s.voice_tts_engine, "system");
+        assert_eq!(s.voice_kokoro_voice, "bm_george");
+        assert!(!s.voice_barge_in);
+        assert_eq!(s.voice_min_speech_ms, 100);
         assert_eq!(s.voice_device, "Mic");
         assert_eq!(s.voice_tts_voice, "Voice");
         assert!(s.voice_auto_send);
-        for patch in [json!({"voiceModel":"bad"}), json!({"voiceSilenceMs":299}),
-            json!({"voiceSilenceMs":5001}), json!({"voiceReadAloud":"bad"}),
-            json!({"voiceTtsRate":0.49}), json!({"voiceTtsRate":2.01}),
-            json!({"modelVoiceTidy":"local:"})] {
+        for patch in [
+            json!({"voiceModel":"kokoro"}),
+            json!({"voiceTtsEngine":"bad"}),
+            json!({"voiceKokoroVoice":"zz"}),
+            json!({"voiceMinSpeechMs":99}),
+            json!({"voiceMinSpeechMs":2001}),
+            json!({"voiceModel":"bad"}),
+            json!({"voiceSilenceMs":499}),
+            json!({"voiceSilenceMs":5001}),
+            json!({"voiceReadAloud":"bad"}),
+            json!({"voiceTtsRate":0.49}),
+            json!({"voiceTtsRate":2.01}),
+            json!({"modelVoiceTidy":"local:"}),
+        ] {
             assert!(d.patched(&patch).is_err(), "{patch}");
         }
-        assert!(d.patched(&json!({"voiceSilenceMs":5000,"voiceTtsRate":0.5,"modelVoiceTidy":"default"})).is_ok());
+        assert!(d
+            .patched(&json!({"voiceMinSpeechMs":2000,"voiceSilenceMs":5000,"voiceTtsRate":0.5,"modelVoiceTidy":"default"}))
+            .is_ok());
     }
 
     #[test]
