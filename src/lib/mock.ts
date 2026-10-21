@@ -6,7 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { VoiceModel, VoiceModelId, VoiceResult, VoiceState, RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage, McpServer, Review, AttemptGroup, StartAttemptsArgs } from "./ipc";
+import type { VoiceModel, VoiceModelId, VoiceResult, RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage, McpServer, Review, AttemptGroup, StartAttemptsArgs } from "./ipc";
 
 const mockReviews = new Map<string, Review>();
 function fakeReview(workspaceId: string): Review {
@@ -420,7 +420,11 @@ let settings: Settings = {
   voiceModel: "base.en",
   voiceDevice: "",
   voiceAutoSend: false,
-  voiceSilenceMs: 1200,
+  voiceSilenceMs: 1500,
+  voiceTtsEngine: "kokoro",
+  voiceKokoroVoice: "af_heart",
+  voiceBargeIn: true,
+  voiceMinSpeechMs: 400,
   voiceReadAloud: "handsfree",
   voiceTtsVoice: "",
   voiceTtsRate: 1,
@@ -1046,66 +1050,30 @@ function mockTurnPoints(id: string) {
   });
 }
 
-// ── Voice (mock): download progress, fake levels, canned transcripts. ──
+// ── Voice (mock): model downloads, canned transcripts. Capture and speech run in the page, not here. ──
 const voiceModels: VoiceModel[] = [
-  { id: "tiny.en", sizeBytes: 77_704_715, installed: false },
-  { id: "base.en", sizeBytes: 147_964_211, installed: false },
-  { id: "small.en", sizeBytes: 487_614_201, installed: false },
+  { id: "tiny.en", kind: "stt", sizeBytes: 77_704_715, installed: false },
+  { id: "base.en", kind: "stt", sizeBytes: 147_964_211, installed: false },
+  { id: "small.en", kind: "stt", sizeBytes: 487_614_201, installed: false },
+  { id: "kokoro", kind: "tts", sizeBytes: 102_639_022, installed: false },
 ];
 const MOCK_TRANSCRIPTS = [
   "Add a loading spinner to the sidebar while workspaces load",
   "Um so like fix the flaky test in the routines file",
   "Rename the helper in the lib folder and update its callers",
 ];
-let voiceState: VoiceState = { status: "idle" };
-let voiceLevelTimer: ReturnType<typeof setInterval> | undefined;
-let voiceHandsFreeTimer: ReturnType<typeof setTimeout> | undefined;
-let voiceEpoch = 0;
 let voiceUtterance = 0;
-let voiceLastHeard = 0;
-const setVoiceState = (next: VoiceState) => {
-  voiceState = next;
-  void emit("voice-state", next);
-};
 const voiceSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-function stopVoiceLevels() {
-  clearInterval(voiceLevelTimer);
-  clearTimeout(voiceHandsFreeTimer);
-  voiceLevelTimer = undefined;
-}
-/** transcribing -> tidying -> idle, then the canned transcript. Returns null if superseded (cancelled). */
-async function finishVoice(workspaceId: string, mode: "dictate" | "handsfree"): Promise<VoiceResult | null> {
-  const epoch = ++voiceEpoch;
-  stopVoiceLevels();
-  setVoiceState({ status: "transcribing", workspaceId, mode });
+/** voice_transcribe: audio is base64 of f32 samples; under half a second is "not a message" like the real filter. */
+async function mockTranscribe(workspaceId: string, audio: string, mode: "dictate" | "handsfree"): Promise<VoiceResult> {
+  const model = voiceModels.find((x) => x.id === settings.voiceModel);
+  if (!model?.installed) throw `no model: download ${settings.voiceModel} in Settings > Voice`;
   await voiceSleep(600);
-  if (epoch !== voiceEpoch) return null;
-  // Hands-free keeps the mic open while the agent works: only hear something every so often.
-  const quiet = mode === "handsfree" && Date.now() - voiceLastHeard < 8000;
-  const raw = quiet ? "" : MOCK_TRANSCRIPTS[voiceUtterance++ % MOCK_TRANSCRIPTS.length];
-  if (!quiet) voiceLastHeard = Date.now();
-  let text = raw;
-  if (raw && settings.modelVoiceTidy !== "off") {
-    setVoiceState({ status: "tidying", workspaceId, mode });
-    await voiceSleep(500);
-    if (epoch !== voiceEpoch) return null;
-    text = raw.replace(/^Um so like /, "").replace(/^./, (c) => c.toUpperCase());
-  }
-  setVoiceState({ status: "idle" });
-  return { workspaceId, text, raw };
-}
-function startVoiceLevels(workspaceId: string, mode: "dictate" | "handsfree") {
-  let t = 0;
-  voiceLevelTimer = setInterval(() => {
-    t += 1;
-    const rms = Math.max(0, Math.min(1, 0.35 + 0.3 * Math.sin(t / 2.5) + 0.2 * Math.sin(t / 0.9) + (Math.random() - 0.5) * 0.15));
-    void emit("voice-level", { rms });
-  }, 50);
-  if (mode === "handsfree") {
-    voiceHandsFreeTimer = setTimeout(() => {
-      void finishVoice(workspaceId, mode).then((r) => r && void emit("voice-result", r));
-    }, 2500);
-  }
+  const samples = Math.floor((audio.length * 3) / 4 / 4);
+  if (samples < 8000) return { workspaceId, text: "", raw: "Thank you.", dropped: true };
+  const raw = MOCK_TRANSCRIPTS[voiceUtterance++ % MOCK_TRANSCRIPTS.length];
+  const text = mode === "dictate" && settings.modelVoiceTidy !== "off" ? raw.replace(/^Um so like /, "").replace(/^./, (c) => c.toUpperCase()) : raw;
+  return { workspaceId, text, raw, dropped: false };
 }
 async function mockVoiceDownload(id: VoiceModelId) {
   const m = voiceModels.find((x) => x.id === id);
@@ -1705,28 +1673,15 @@ export function installMockBackend() {
           if (m) m.installed = false;
           return null;
         }
-        case "voice_devices":
-          return ["Microphone Array (Realtek Audio)", "Headset Microphone (USB)"];
-        case "voice_start": {
-          const v = args as { workspaceId: string; mode: "dictate" | "handsfree" };
-          if (voiceState.status !== "idle" && voiceState.status !== "error") throw "busy";
-          const model = voiceModels.find((x) => x.id === settings.voiceModel);
-          if (!model?.installed) throw `no model: ${settings.voiceModel} is not downloaded`;
-          ++voiceEpoch;
-          setVoiceState({ status: "listening", workspaceId: v.workspaceId, mode: v.mode });
-          startVoiceLevels(v.workspaceId, v.mode);
-          return null;
+        case "voice_transcribe": {
+          const v = args as { workspaceId: string; audio: string; mode: "dictate" | "handsfree" };
+          return mockTranscribe(v.workspaceId, v.audio, v.mode);
         }
-        case "voice_stop": {
-          if (voiceState.status !== "listening" || !voiceState.workspaceId) throw "not listening";
-          const r = await finishVoice(voiceState.workspaceId, voiceState.mode ?? "dictate");
-          return r ?? { workspaceId: "", text: "", raw: "" };
-        }
-        case "voice_cancel":
-          ++voiceEpoch;
-          stopVoiceLevels();
-          setVoiceState({ status: "idle" });
-          return null;
+        case "voice_file":
+          // The mock has no synthesis model: report "not downloaded" until the fake download finishes, then
+          // hand back junk the engine rejects, so read-aloud falls back to the system voice either way.
+          if (!voiceModels.find((x) => x.id === "kokoro")?.installed) throw "no model: kokoro is not downloaded";
+          return new ArrayBuffer(8);
         case "suggest_prompts":
           await new Promise((r) => setTimeout(r, 1200));
           if (LAUNCH) return launchSuggestions(id);
