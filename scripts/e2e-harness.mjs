@@ -81,6 +81,8 @@ export function createHarness({ scratch, port = 9333, only }) {
         ORBIT_HOME: home,
         WEBVIEW2_USER_DATA_FOLDER: path.join(scratch, "webview2"),
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+        // Voice capture plays this recording instead of the microphone ("Reply with the word pong.").
+        ORBIT_VOICE_FAKE_WAV: path.resolve(import.meta.dirname, "fixtures", "voice-pong.wav"),
       },
       stdio: "ignore",
     });

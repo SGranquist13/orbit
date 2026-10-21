@@ -25,7 +25,7 @@ export function HandsFreeBar({ wsId }: { wsId: string }) {
   // The mic stays open while waiting (so "stop" works), so the level bar shows whenever it is listening.
   const micOpen = status === "listening";
   return (
-    <div role="status" className="mx-auto mb-2 flex max-w-[880px] items-center gap-3 rounded-[6px] border-[1.5px] border-run bg-run/10 px-3 py-1.5 text-[12px] font-medium">
+    <div role="status" data-hands-free className="mx-auto mb-2 flex max-w-[880px] items-center gap-3 rounded-[6px] border-[1.5px] border-run bg-run/10 px-3 py-1.5 text-[12px] font-medium">
       <Headphones className="size-3.5 shrink-0 text-run" />
       <span className="text-fg">Hands-free</span>
       <span className={cn("text-mute", phase === "listening" && "text-run")}>{label}</span>

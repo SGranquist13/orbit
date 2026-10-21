@@ -299,10 +299,11 @@ async function onHandsFreeResult(r: VoiceResult) {
     hfSet({ type: "result", text });
     return void listenAgain(r.workspaceId, token);
   }
+  // While the agent works only "stop" acts: other speech (a colleague, the radio) is never sent mid-run.
+  if (hf.phase === "waiting") return void listenAgain(r.workspaceId, token);
   hfSet({ type: "result", text });
   if (!text) return void listenAgain(r.workspaceId, token);
   try {
-    // While the agent works (phase waiting) the dictated text steers the running turn.
     await api.sendMessage(r.workspaceId, text);
   } catch (e) {
     useApp.getState().setError(errorText(e));

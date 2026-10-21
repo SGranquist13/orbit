@@ -2090,4 +2090,52 @@ await step("rewind", async () => {
   await shot("rewind");
 });
 
+await step("voice", async () => {
+  // Speech comes from scripts/fixtures/voice-pong.wav (ORBIT_VOICE_FAKE_WAV, set by the harness) through the real Whisper.
+  // tiny.en is downloaded once into a cache outside the scratch dir, then copied into each run's ORBIT_HOME.
+  const cached = path.join(os.tmpdir(), "orbit-e2e-cache", "whisper", "ggml-tiny.en.bin");
+  const installed = path.join(home, "models", "whisper", "ggml-tiny.en.bin");
+  if (fs.existsSync(cached)) {
+    fs.mkdirSync(path.dirname(installed), { recursive: true });
+    fs.copyFileSync(cached, installed);
+  } else {
+    await invoke("voice_download", { id: "tiny.en" });
+    fs.mkdirSync(path.dirname(cached), { recursive: true });
+    fs.copyFileSync(installed, cached);
+  }
+  await invoke("update_settings", { patch: { voiceModel: "tiny.en", voiceReadAloud: "handsfree", voiceAutoSend: false, modelVoiceTidy: "off" } });
+  await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  const composer = `document.querySelector('textarea[placeholder*="Claude"]')`;
+
+  // Dictation: the recording plays in real time (~2 s), then stop inserts the transcript.
+  await js(`document.querySelector('button[aria-label="Dictate"]').click()`);
+  await waitFor("listening", `return !!document.querySelector('button[aria-label="Stop dictation"]')`, 10_000);
+  await sleep(3500);
+  await js(`document.querySelector('button[aria-label="Stop dictation"]').click()`);
+  await waitFor("transcript in the composer", `return /pong/i.test(${composer}?.value ?? '')`, 60_000);
+  const before = await js(turnEnds);
+  await js(`${composer}.focus()`);
+  await key("Enter");
+  await ui.waitTurn(before);
+  await waitFor("pong reply", `return /pong/i.test([...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? '')`, 10_000);
+
+  // Read aloud with a Windows voice.
+  await js(`[...document.querySelectorAll('button[aria-label="Read aloud"]')].at(-1).click()`);
+  await waitFor("reading aloud", `return speechSynthesis.speaking || !!document.querySelector('button[aria-label="Stop reading"]')`, 5000);
+  await js(`speechSynthesis.cancel()`);
+
+  // Hands-free: hears the recording, sends it, reads the reply back; stop before it listens a third time.
+  const users = `return document.querySelectorAll('[data-user-message]').length`;
+  const sent = await js(users);
+  await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
+  await waitFor("hands-free sent", `${users} > ${sent}`, 60_000);
+  await waitFor("reply read back", `return /Speaking/.test(document.querySelector('[data-hands-free]')?.innerText ?? '')`, 240_000);
+  await shot("voice");
+  await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
+  await waitFor("hands-free off", `return !document.querySelector('[data-hands-free]')`, 5000);
+  // The recording replayed while Claude worked must not have been sent as a steering message.
+  const total = await js(users);
+  if (total !== sent + 1) throw new Error(`hands-free sent ${total - sent} messages, expected 1`);
+});
+
 await h.finish();
