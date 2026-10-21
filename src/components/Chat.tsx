@@ -98,9 +98,9 @@ export function Chat({ ws }: { ws: Workspace }) {
         {running && <span className="dither-sweep bg-run opacity-[0.14]" />}
         <AttachmentBar ws={ws} />
         <span className="flex-1" />
-        <EditorButton ws={ws} />
         <RunButton ws={ws} />
         <Button title={"Open in Code" + (keyLabel("views.code") ? ` (${keyLabel("views.code")})` : "")} className="relative shrink-0 px-1.5" onClick={() => void useCode.getState().openRoot(ws.path, { workspaceId: ws.id }).then(() => useApp.getState().setView("code"))}><Code2 className="size-3.5" /></Button>
+        <EditorButton ws={ws} />
         {focusMode ? (
           <Button onClick={() => useApp.getState().setFocusMode(false)} className="relative shrink-0">
             Exit focus {keyLabel("workbench.focusMode") && <Kbd>{keyLabel("workbench.focusMode")}</Kbd>}
