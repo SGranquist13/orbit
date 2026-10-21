@@ -8,7 +8,7 @@
 import { voiceApi } from "../ipc";
 import { ORT_PATHS } from "../voice/mic";
 import { buildLexicon, sentenceToChunks, type Lexicon } from "./g2p";
-import { splitFirstClause, splitSentences } from "./normalize";
+import { SpeechSplitter, type SpeechStream } from "./stream";
 import { KOKORO_RATE, STYLE_DIM, VOICE_ROWS } from "./voices";
 import type { WorkerReply, WorkerRequest } from "./kokoroWorker";
 
@@ -47,8 +47,7 @@ const queue: Job[] = [];
 const voices = new Map<string, Float32Array>();
 
 function poolSize(): number {
-  if (typeof crossOriginIsolated !== "undefined" && crossOriginIsolated) return 1; // one worker with threads
-  return Math.max(1, Math.min(2, Math.floor((navigator.hardwareConcurrency || 2) / 4)));
+  return Math.max(1, Math.min(3, Math.floor((navigator.hardwareConcurrency || 1) / 4)));
 }
 
 function startSlot(): Slot {
@@ -131,7 +130,7 @@ export function load(): Promise<void> {
       const started = performance.now();
       const dec = new TextDecoder();
       lexicon = buildLexicon(JSON.parse(dec.decode(gold)), JSON.parse(dec.decode(silver)));
-      const threads = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+      const threads = typeof crossOriginIsolated !== "undefined" && crossOriginIsolated ? Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 1) / poolSize()))) : 1;
       const made = Array.from({ length: poolSize() }, startSlot);
       slots = made;
       // Every worker needs its own copy of the model bytes; the last one takes the original.
@@ -143,7 +142,7 @@ export function load(): Promise<void> {
       );
       log("kokoro loaded", { workers: made.length, threads, lexicon: lexicon.size, ms: Math.round(performance.now() - started) });
     } catch (e) {
-      unload();
+      unload(false);
       throw new KokoroUnavailable(errText(e), false);
     }
   })().catch((e) => {
@@ -154,8 +153,8 @@ export function load(): Promise<void> {
 }
 
 /** Drops the loaded model (after the pack is deleted, or on a crash) so the next use loads it again. */
-export function unload() {
-  stop();
+export function unload(stopPlayback = true) {
+  if (stopPlayback) stop();
   for (const s of slots) s.worker.terminate();
   slots = [];
   loading = null;
@@ -201,6 +200,8 @@ function audioContext(): AudioContext {
 /** Cuts playback at once and abandons queued sentences. */
 export function stop() {
   generation++;
+  cancelCurrent?.();
+  cancelCurrent = null;
   if (gain) {
     gain.gain.value = 0;
     gain.disconnect();
@@ -224,62 +225,112 @@ export function speaking(): boolean {
 export interface SpeakOptions {
   voice?: string;
   speed?: number;
+  onSentence?: () => void;
+  onStart?: () => void;
 }
 
-/**
- * Speaks `text` sentence by sentence: the first sentence starts playing as soon as it is synthesised while the
- * rest are still being made. Resolves when playback ends or `stop()` is called. Throws KokoroUnavailable if the
- * pack is missing or fails to load (nothing has been played then).
- */
-export async function speak(text: string, opts: SpeakOptions = {}): Promise<void> {
+let cancelCurrent: (() => void) | null = null;
+
+export function createStream(opts: SpeakOptions = {}): SpeechStream {
   stop();
   const mine = generation;
-  const sentences = splitFirstClause(splitSentences(text));
-  if (sentences.length === 0) return;
+  const splitter = new SpeechSplitter();
+  let ended = false, cancelled = false, settled = false, held = false;
+  let release: (() => void) | null = null;
+  let finish!: () => void;
+  let fail!: (error: unknown) => void;
+  const done = new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; });
+  const started = performance.now();
+  let first = true, index = 0, pending = 0;
+  let at = 0;
+  let out: GainNode | null = null;
+  let playback = Promise.resolve();
+  const ends: Promise<void>[] = [];
+  // Load lazily: an empty stream needs neither a model nor an audio context.
+  let ready: Promise<Float32Array> | null = null;
   busy++;
-  try {
-    await load();
-    if (mine !== generation) return;
-    const voice = await voiceFile(opts.voice || "af_heart");
-    if (mine !== generation) return;
-    const speed = Math.min(2, Math.max(0.5, opts.speed ?? 1));
-    const chunks = sentences.flatMap((s) => sentenceToChunks(s, lexicon!));
-    // Queue everything: idle workers pick sentences up in order while earlier ones are already playing.
-    const waves = chunks.map((ids) => synth(ids, styleRow(voice, ids.length), speed));
-    for (const w of waves) w.catch(() => {}); // surfaced when awaited below, never as an unhandled rejection
-
-    const c = audioContext();
-    if (c.state === "suspended") await c.resume().catch(() => {});
-    if (mine !== generation) return;
-    gain = c.createGain();
-    gain.connect(c.destination);
-    const out = gain;
-    let at = c.currentTime + 0.05;
-    const ends: Promise<void>[] = [];
-    for (const pending of waves) {
-      const wave = await pending;
-      if (mine !== generation || !wave) return;
-      const buf = c.createBuffer(1, wave.length, KOKORO_RATE);
-      buf.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
-      const src = c.createBufferSource();
-      src.buffer = buf;
-      src.connect(out);
-      const start = Math.max(at, c.currentTime + 0.02);
-      src.start(start);
-      at = start + buf.duration;
-      active.add(src);
-      ends.push(
-        new Promise<void>((resolve) => {
-          src.onended = () => {
-            active.delete(src);
-            src.disconnect();
-            resolve();
-          };
-        }),
-      );
-    }
-    await Promise.all(ends);
-  } finally {
+  const settle = (error?: unknown) => {
+    if (settled) return;
+    settled = true;
     busy--;
-  }
+    if (cancelCurrent === cancel) cancelCurrent = null;
+    if (out) { out.disconnect(); if (gain === out) gain = null; }
+    log("stream done", { ms: Math.round(performance.now() - started), cancelled });
+    if (error) fail(error); else finish();
+  };
+  const cancel = () => { cancelled = true; release?.(); settle(); };
+  cancelCurrent = cancel;
+  const check = () => {
+    if (ended && pending === 0 && !settled) void Promise.all(ends).then(() => settle());
+  };
+  const enqueue = (text: string) => {
+    opts.onSentence?.();
+    const n = index++;
+    const queued = performance.now();
+    pending++;
+    log("sentence queued", { index: n, chars: text.length });
+    ready ??= load().then(() => voiceFile(opts.voice || "af_heart"));
+    // Synthesis is independent of the ordered playback chain.
+    const waves = ready.then((voice) => {
+      if (cancelled || mine !== generation) return [];
+      const chunks = sentenceToChunks(text, lexicon!);
+      const result = chunks.map((ids) => synth(ids, styleRow(voice, ids.length), Math.min(2, Math.max(0.5, opts.speed ?? 1))));
+      void Promise.all(result).then(() => {
+        log("sentence synthesized", { index: n, chars: text.length, synthMs: Math.round(performance.now() - queued) });
+      }).catch(() => {});
+      return result;
+    });
+    void waves.catch(() => {});
+    playback = playback.then(async () => {
+      const audio = await waves;
+      while (held && !cancelled) await new Promise<void>((resolve) => { release = resolve; });
+      if (cancelled || mine !== generation) return;
+      const c = audioContext();
+      if (c.state === "suspended") await c.resume().catch(() => {});
+      if (cancelled || mine !== generation) return;
+      if (!out) { out = c.createGain(); out.connect(c.destination); gain = out; }
+      for (const pendingAudio of audio) {
+        const wave = await pendingAudio;
+        while (held && !cancelled) await new Promise<void>((resolve) => { release = resolve; });
+        if (cancelled || mine !== generation) return;
+        if (!wave) continue;
+        const buf = c.createBuffer(1, wave.length, KOKORO_RATE);
+        buf.copyToChannel(wave as Float32Array<ArrayBuffer>, 0);
+        const src = c.createBufferSource();
+        src.buffer = buf;
+        src.connect(out);
+        const start = Math.max(at, c.currentTime + 0.02);
+        ends.push(new Promise<void>((resolve) => { src.onended = () => { active.delete(src); src.disconnect(); resolve(); }; }));
+        active.add(src);
+        src.start(start);
+        at = start + buf.duration;
+        if (first) { first = false; opts.onStart?.(); log("first audio", { ms: Math.round(performance.now() - started + (start - c.currentTime) * 1000) }); }
+      }
+    }).catch((e) => { if (!settled) { settle(e); stop(); } }).finally(() => { pending--; check(); });
+  };
+  log("stream opened");
+  return {
+    push(delta) { if (!ended && !cancelled) splitter.push(delta).forEach(enqueue); },
+    end() { if (ended || cancelled) return; ended = true; splitter.end().forEach(enqueue); check(); },
+    cancel() { if (!settled && mine === generation) stop(); },
+    setHeld(value) { held = value; if (!held) { release?.(); release = null; } },
+    done,
+  };
+}
+
+export function speak(text: string, opts: SpeakOptions = {}): Promise<void> {
+  const stream = createStream(opts);
+  stream.push(text);
+  stream.end();
+  return stream.done;
+}
+
+let warming: Promise<void> | null = null;
+/** Prime model/JIT without scheduling audio or interrupting a reply. */
+export function warmup(): Promise<void> {
+  return warming ??= load().then(async () => {
+    const voice = await voiceFile("af_heart");
+    const ids = sentenceToChunks("Hi.", lexicon!)[0];
+    if (ids) await synth(ids, styleRow(voice, ids.length), 1);
+  }).finally(() => { warming = null; });
 }

@@ -235,6 +235,7 @@ export const useVoice = create<VoiceStore>((set, get) => ({
   },
 
   stopSpeaking: () => {
+    cancelReplyStream();
     set({ speakingId: null });
     speechSeq++;
     tts.stop();
@@ -368,19 +369,23 @@ function hfDispatch(event: HfEvent, token: number) {
   log("hands-free", event.type, "->", handsFreePhase(state), effects.map((e) => e.type));
   syncHandsFree();
   for (const effect of effects) runEffect(effect, hf.workspaceId, token);
+  syncStreamHold();
 }
 
 function runEffect(effect: HfEffect, workspaceId: string, token: number) {
   switch (effect.type) {
     case "stopSpeech":
+      cancelReplyStream();
       speechSeq++;
       tts.stop();
       useVoice.setState({ speakingId: null });
       break;
     case "interrupt":
+      cancelReplyStream();
       void useApp.getState().interrupt(workspaceId);
       break;
     case "send":
+      cancelReplyStream();
       void api.sendMessage(workspaceId, effect.text).catch((e) => {
         useApp.getState().setError(errorText(e));
         setHeard("error", errorText(e), HEARD_MS);
@@ -398,8 +403,10 @@ function runEffect(effect: HfEffect, workspaceId: string, token: number) {
 }
 
 async function startHandsFree(workspaceId: string) {
+  cancelReplyStream();
   const token = ++hfToken;
   const settings = useApp.getState().settings;
+  if ((settings?.voiceTtsEngine ?? "kokoro") === "kokoro") tts.warmup();
   const run: HandsFree = { token, workspaceId, state: hfReduce(hfInitial, { type: "start" }).state, vad: null };
   hf = run;
   useVoice.setState({ error: null, handsFree: { workspaceId, phase: "listening", heard: null } });
@@ -413,7 +420,8 @@ async function startHandsFree(workspaceId: string) {
       onSpeechStart: () => {
         const bargeIn = useApp.getState().settings?.voiceBargeIn ?? true;
         // Also covers a read-aloud started by hand while hands-free is on.
-        if (bargeIn && tts.speaking()) {
+        if (bargeIn && (replyStream?.speaking || (!replyStream && tts.speaking()))) {
+          cancelReplyStream();
           speechSeq++;
           tts.stop();
           useVoice.setState({ speakingId: null });
@@ -476,6 +484,7 @@ async function stopHandsFree(): Promise<void> {
   hf = null;
   hfToken++;
   log("hands-free: stopping");
+  cancelReplyStream();
   speechSeq++;
   tts.stop();
   useVoice.setState({ handsFree: { workspaceId: null, phase: "off", heard: null }, speakingId: null, level: 0 });
@@ -514,16 +523,85 @@ function lastAssistantText(workspaceId: string): string | null {
   return null;
 }
 
-function onTurnCompleted(workspaceId: string, interrupted: boolean, isError: boolean) {
+interface ReplyStream {
+  workspaceId: string;
+  stream: tts.SpeechStream;
+  token?: number;
+  speaking: boolean;
+}
+let replyStream: ReplyStream | null = null;
+const turns = new Set<string>();
+const mutedTurns = new Set<string>();
+const streamedTurns = new Set<string>();
+
+function cancelReplyStream() {
+  const run = replyStream;
+  if (!run) return;
+  replyStream = null;
+  mutedTurns.add(run.workspaceId);
+  run.stream.cancel();
+  useVoice.setState({ speakingId: null });
+  if (run.token !== undefined) hfDispatch({ type: "speechDone" }, run.token);
+}
+
+function syncStreamHold() {
+  const run = replyStream;
+  if (!run) return;
+  const state = run.token === hf?.token ? hf?.state : null;
+  const held = !!state && (state.hearing || state.ignoring || state.transcribing > 0);
+  run.stream.setHeld(held);
+}
+
+function canStream(workspaceId: string) {
   const app = useApp.getState();
-  const mode = app.settings?.voiceReadAloud ?? "off";
-  const text = lastReply[workspaceId] ? speakable(lastReply[workspaceId]) : "";
-  const speakIt = !interrupted && !isError && !!text && mode !== "off";
-  if (hf && hf.workspaceId === workspaceId) {
-    hfDispatch({ type: "turnCompleted", reply: speakIt ? text : null }, hf.token);
-    return;
+  if ((app.settings?.voiceReadAloud ?? "off") === "off" || mutedTurns.has(workspaceId)) return false;
+  return hf ? hf.workspaceId === workspaceId
+    : app.settings?.voiceReadAloud === "always" && app.selectedId === workspaceId && app.view === "workspace";
+}
+
+function pushReply(workspaceId: string, text: string) {
+  if (!turns.has(workspaceId) || !canStream(workspaceId)) return;
+  if (replyStream && replyStream.workspaceId !== workspaceId) cancelReplyStream();
+  if (!replyStream) {
+    const s = useApp.getState().settings;
+    const run: ReplyStream = {
+      workspaceId, token: hf?.token, speaking: false,
+      stream: tts.createStream({
+        engine: s?.voiceTtsEngine, kokoroVoice: s?.voiceKokoroVoice,
+        systemVoice: s?.voiceTtsVoice, speed: s?.voiceTtsRate,
+        onSentence: () => { if (replyStream === run) syncStreamHold(); },
+        onStart: () => {
+          if (replyStream !== run) return;
+          run.speaking = true;
+          useVoice.setState({ speakingId: "reply" });
+          if (run.token !== undefined) hfDispatch({ type: "speechStarted" }, run.token);
+        },
+      }),
+    };
+    replyStream = run;
+    syncStreamHold();
+    log("stream opened", { workspaceId });
+    void run.stream.done.finally(() => {
+      if (replyStream !== run) return;
+      replyStream = null;
+      useVoice.setState({ speakingId: null });
+      if (run.token !== undefined) hfDispatch({ type: "speechDone" }, run.token);
+    });
   }
-  if (mode === "always" && speakIt && !hf && app.selectedId === workspaceId && app.view === "workspace") void speakAloud(text, "reply");
+  streamedTurns.add(workspaceId);
+  replyStream.stream.push(text);
+}
+
+function onTurnCompleted(workspaceId: string, interrupted: boolean, isError: boolean) {
+  if (interrupted || isError) {
+    if (replyStream?.workspaceId === workspaceId) cancelReplyStream();
+    if (hf?.workspaceId === workspaceId) hfDispatch({ type: "turnInterrupted" }, hf.token);
+  } else {
+    if (!streamedTurns.has(workspaceId) && lastReply[workspaceId]) pushReply(workspaceId, lastReply[workspaceId]);
+    if (replyStream?.workspaceId === workspaceId) replyStream.stream.end();
+    if (hf?.workspaceId === workspaceId) hfDispatch({ type: "turnCompleted", reply: null }, hf.token);
+  }
+  turns.delete(workspaceId);
 }
 
 let started = false;
@@ -532,6 +610,10 @@ export function initVoice() {
   if (started) return;
   started = true;
   void useVoice.getState().refreshModels();
+  useApp.subscribe((app) => {
+    if (replyStream && !hf && (app.selectedId !== replyStream.workspaceId || app.view !== "workspace")) cancelReplyStream();
+    if (replyStream && app.settings?.voiceReadAloud === "off") cancelReplyStream();
+  });
 
   void events.onVoiceDownload((d) => {
     useVoice.setState((s) => {
@@ -545,8 +627,20 @@ export function initVoice() {
   });
   void events.onAgentEvent(({ workspaceId, event }) => {
     if (event.type === "turnStarted") {
+      if (replyStream?.workspaceId === workspaceId) cancelReplyStream();
+      turns.add(workspaceId);
+      mutedTurns.delete(workspaceId);
+      streamedTurns.delete(workspaceId);
       delete lastReply[workspaceId];
       if (hf && hf.workspaceId === workspaceId) hfDispatch({ type: "turnStarted" }, hf.token);
+    } else if (event.type === "textDelta") pushReply(workspaceId, event.text);
+    else if (event.type === "userMessage") {
+      if (replyStream?.workspaceId === workspaceId) cancelReplyStream();
+      if (hf?.workspaceId === workspaceId && hf.state.speaking) hfDispatch({ type: "speechDone" }, hf.token);
+    } else if (event.type === "error" || event.type === "sessionReset" || event.type === "exited") {
+      if (replyStream?.workspaceId === workspaceId) cancelReplyStream();
+      turns.delete(workspaceId);
+      if (hf?.workspaceId === workspaceId) hfDispatch({ type: "turnInterrupted" }, hf.token);
     } else if (event.type === "message" && event.text.trim()) lastReply[workspaceId] = event.text;
     else if (event.type === "turnCompleted") onTurnCompleted(workspaceId, !!event.interrupted, event.isError);
   });

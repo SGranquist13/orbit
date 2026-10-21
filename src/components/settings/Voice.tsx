@@ -102,6 +102,9 @@ function Slider({ label, field, min, max, step, format }: { label: string; field
 
 export function Voice() {
   const s = useSettings();
+  useEffect(() => {
+    if (s && s.voiceTtsEngine === "kokoro") tts.warmup();
+  }, [s?.voiceTtsEngine]);
   const models = useVoice((v) => v.models);
   const [devices, setDevices] = useState<InputDevice[]>([]);
   const [labelled, setLabelled] = useState(true);

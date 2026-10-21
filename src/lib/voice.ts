@@ -40,6 +40,8 @@ export type HfEvent =
   | { type: "turnStarted" }
   /** `reply` is what to read out, or null when nothing should be spoken (read-aloud off, interrupted, error, empty). */
   | { type: "turnCompleted"; reply: string | null }
+  | { type: "speechStarted" }
+  | { type: "turnInterrupted" }
   | { type: "speechDone" };
 
 export type HfEffect =
@@ -130,8 +132,17 @@ export function hfReduce(state: HfState, event: HfEvent): { state: HfState; effe
     case "turnStarted":
       s.working = true;
       break;
+    case "speechStarted":
+      s.speaking = true;
+      break;
+    case "turnInterrupted":
+      stopSpeech();
+      s.pending = null;
+      s.working = false;
+      break;
     case "turnCompleted":
       s.working = false;
+      if (s.speaking) break;
       if (event.reply) {
         // If the user is mid-utterance (or one is being transcribed), wait for them to finish.
         if (s.hearing || s.transcribing > 0 || s.ignoring) s.pending = event.reply;

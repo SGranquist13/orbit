@@ -30,6 +30,7 @@ Orbit is a personal desktop IDE for running a fleet of coding agents (Claude Cod
 - Shell scripting from bash: apostrophes and backticks inside `node -e '…'` break quoting. Write a temp .cjs script instead. Codex briefs with apostrophes break the same way: pass them with `codex-companion.mjs task --prompt-file`.
 - **ConPTY asks for the cursor position (`ESC[6n`) before it emits any output.** xterm.js answers in the app; anything else driving a PTY (tests) must reply `ESC[1;1R` or it sees nothing.
 - **The app-wide `::selection` paints text in the accent ink**, which hides text on CodeMirror's drawn selection. The Code theme sets `color: currentColor` on `.cm-content ::selection` (`inherit` picks up the parent's highlight colour in Chrome).
+- **Codex can write non-ASCII characters (…, —, curly quotes) as Windows-1252 bytes** inside UTF-8 files. tsc and `bun test` read them leniently and pass; `vite build` fails with "stream did not contain valid UTF-8". Run `bun run build` after Codex edits UI files.
 - **Codex's sandbox has no network:** it can't `bun add` or fetch crates. Install new dependencies in the worktree before handing off, and compile/test Rust yourself afterwards.
 
 ## Working with Codex (second coding agent)

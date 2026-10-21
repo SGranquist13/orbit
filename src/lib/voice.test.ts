@@ -251,3 +251,33 @@ describe("voice setup prompting", () => {
     }
   }
 });
+
+
+describe("streamed hands-free replies", () => {
+  const workingSpeech: HfEvent[] = [{ type: "turnStarted" }, { type: "speechStarted" }];
+  test("speaking begins during working", () => {
+    const r = run(workingSpeech);
+    expect(r.state.working).toBe(true);
+    expect(r.phase).toBe("speaking");
+    expect(r.effects).toEqual([]);
+  });
+  test("turn completion preserves the streamed speech", () => {
+    const r = run([...workingSpeech, { type: "turnCompleted", reply: "duplicate" }]);
+    expect(r.state.working).toBe(false);
+    expect(r.phase).toBe("speaking");
+    expect(r.effects).toEqual([]);
+    expect(run([{ type: "speechDone" }], r.state).phase).toBe("listening");
+  });
+  test("barge-in cancels while the agent still works", () => {
+    const r = run([...workingSpeech, { type: "speechStart", bargeIn: true }]);
+    expect(r.effects).toEqual([{ type: "stopSpeech" }]);
+    expect(r.state.working).toBe(true);
+    expect(r.phase).toBe("hearing");
+  });
+  test("interrupted and errored turns cancel speech and pending replies", () => {
+    const r = run([...workingSpeech, { type: "turnInterrupted" }]);
+    expect(r.effects).toEqual([{ type: "stopSpeech" }]);
+    expect(r.state.pending).toBeNull();
+    expect(r.phase).toBe("listening");
+  });
+});
