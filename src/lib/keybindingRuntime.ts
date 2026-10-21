@@ -2,7 +2,8 @@ import { openSelectedInEditor } from "./openEditor";
 import { useApp } from "../stores/app";
 import { useCode } from "../stores/code";
 import { useTheme } from "./theme";
-import { registerHandler, createDispatcher, normalizeEvent } from "./keybindings";
+import { registerHandler, createDispatcher, normalizeEvent, bindings } from "./keybindings";
+import { useVoice } from "../stores/voice";
 import { explorerAction } from "../components/code/Explorer";
 import { openCodeFolder } from "../components/code/FolderSwitcher";
 import { discardReview, reviewTarget, sendReview } from "../stores/review";
@@ -20,6 +21,14 @@ export async function showCode(explorer = false, quick = false) {
   s.setView("code");
   if (quick) code.setQuickOpen(true);
   if (explorer) useCode.setState({ explorerHidden: false, explorerFocus: Date.now() });
+}
+
+/** The workspace voice input should target: the open chat, or the Code view's workspace. */
+export function voiceTarget(): string | null {
+  const s = useApp.getState(),
+    c = useCode.getState();
+  if (s.view === "code") return c.roots.find((r) => r.path === c.activeRoot)?.workspaceId ?? s.selectedId;
+  return s.view === "workspace" ? s.selectedId : null;
 }
 
 export function installKeybindings(hint: (message: string) => void) {
@@ -80,6 +89,17 @@ export function installKeybindings(hint: (message: string) => void) {
     if (!id) return false;
     s.select(id);
     s.setView("workspace");
+  });
+  // Tap toggles dictation, hold is push-to-talk: keydown starts, keyup (of the chord) ends.
+  add("voice.dictate", () => {
+    const id = voiceTarget();
+    if (!id) return false;
+    useVoice.getState().startHold(id);
+  });
+  add("voice.handsFree", () => {
+    const id = voiceTarget();
+    if (!id) return false;
+    void useVoice.getState().toggleHandsFree(id);
   });
   const activeRel = () => {
     const s = useCode.getState();
@@ -144,16 +164,26 @@ export function installKeybindings(hint: (message: string) => void) {
     hint(result.hint);
     if (result.hint && !dispatcher.pending) timer = setTimeout(() => hint(""), 2000);
   };
+  const modifierNames: Record<string, string> = { Control: "ctrl", Meta: "ctrl", Shift: "shift", Alt: "alt", AltGraph: "alt" };
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (!useVoice.getState().holding()) return;
+    const parts = (bindings("voice.dictate", useApp.getState().settings?.keybindings)[0] ?? "").split(" ").pop()!.split("+");
+    const released = modifierNames[e.key] ?? normalizeEvent({ key: e.key, code: e.code, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false });
+    if (released && parts.includes(released)) useVoice.getState().endHold();
+  };
   const cancel = () => {
+    useVoice.getState().endHold();
     dispatcher.cancel();
     hint("");
   };
   window.addEventListener("keydown", onKey, true);
   window.addEventListener("blur", cancel);
+  window.addEventListener("keyup", onKeyUp, true);
   return () => {
     off.forEach((fn) => fn());
     clearTimeout(timer);
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("blur", cancel);
+    window.removeEventListener("keyup", onKeyUp, true);
   };
 }

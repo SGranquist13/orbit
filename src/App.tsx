@@ -8,6 +8,7 @@ import { Sidebar, pickRepo } from "./components/Sidebar";
 import { Button } from "./components/ui";
 import { OrbitHero } from "./components/OrbitHero";
 import { installKeybindings } from "./lib/keybindingRuntime";
+import { initVoice } from "./stores/voice";
 import { KeybindingHint } from "./components/KeybindingHint";
 import { useApp } from "./stores/app";
 import { useCode } from "./stores/code";
@@ -52,6 +53,7 @@ export default function App() {
 
   const [chordHint, setChordHint] = useState("");
   useEffect(() => installKeybindings(setChordHint), []);
+  useEffect(() => initVoice(), []);
 
   return (
     <div className="flex h-full">
