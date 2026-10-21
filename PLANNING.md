@@ -17,6 +17,27 @@ Ideas being considered, unsorted.
 - **Start a task from Slack or Linear.** Mention Orbit where the work arrives; a workspace starts and reports back there.
 - **Spec-driven mode.** Requirements → design → tasks documents, then the agent works through the tasks.
 - **Remote and sandboxed workspaces.** Run a workspace on a devbox or in a container, same UI.
+- **Approvals inbox.** Risky actions you define (force push, `rm -rf`, writes outside the worktree, network calls) pause the agent and land in the inbox with Allow, Deny and Always allow.
+- **Budgets.** A token, cost or time cap per workspace or per day; at the cap the agent pauses and the inbox asks whether to continue.
+- **Stuck detector.** Flag a workspace that loops (same tool call, same failing test, no file progress) and offer Interrupt, "try another approach" or Compact.
+- **Repo memory.** A shared notes file per repo that every agent reads; Orbit proposes entries when a turn learns something and you approve them.
+- **Session hand-off summary.** When context runs high or you start a new session, Orbit writes a brief (goal, decisions, files touched, what's left) and seeds the next session with it.
+- **Search all transcripts.** Find which agent touched a file or where a decision was made, across every workspace.
+- **Test-first gate.** The agent writes a failing test before touching source; Orbit checks it failed first and passes after.
+- **Auto-address review comments.** A teammate picks up new PR comments, fixes them, replies and resolves the thread; you see a summary.
+- **Release helper.** Version bump, changelog from merged PRs and tag, as a skill and panel.
+- **Maintenance routines.** Bundled templates for dependency audits, unused-dependency cleanup and flaky-test hunting that open draft PRs.
+- **Time-travel scrubber.** Drag through a workspace's turns and the editor shows each file as it was after that turn.
+- **Share a run.** Export a workspace as a self-contained HTML replay (transcript, diffs, timeline).
+- **Voice and clipboard intake.** Dictate a task, or paste a stack trace or screenshot and start a Debugger on it with the repo guessed.
+- **Task templates and backlog.** Saved prompts with blanks, and a per-repo list of someday tasks that a routine picks up when the fleet is idle.
+- **Live preview per workspace.** The worktree's dev server beside the chat, with a screenshot after each turn.
+- **Checks after every turn.** Run the tests related to changed files after each turn and feed failures straight back to the agent.
+- **Pair mode.** A cheap read-only agent watches another's edits live and leaves short warnings in the margin.
+- **Conflict forecast and workspace dependencies.** Show which files two live workspaces both touch and suggest a merge order; "start B when A merges".
+- **Bulk actions.** Rebase, ship, archive or message several workspaces at once.
+- **Prompt analytics, postmortems and a weekly digest.** Which prompts, profiles and models lead to merged PRs; one-click "why did this run go wrong"; a Monday summary of what merged, what's stuck and where tokens went.
+- **Orbit as an MCP server.** List workspaces, read status and send messages to Orbit from any Claude session or tool.
 
 ## Shaping
 
