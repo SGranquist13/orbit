@@ -152,9 +152,16 @@ function build(state: EditorState, comments: ReviewComment[], composer: Composer
 }
 
 class Plus extends GutterMarker {
+  constructor(readonly line?: number) {
+    super();
+  }
+  eq(other: Plus) {
+    return this.line === other.line;
+  }
   toDOM() {
     const s = document.createElement("span");
     s.className = "cm-review-plus";
+    if (this.line !== undefined) s.dataset.reviewLine = String(this.line);
     s.textContent = "+";
     s.title = "Comment on this line (Shift-click for a range)";
     return s;
@@ -181,11 +188,13 @@ export function reviewExtension(h: ReviewHandlers): Extension {
   });
   const gutterExt = gutter({
     class: "cm-review-gutter",
-    lineMarker: () => plus,
+    // The spacer has no line; real markers carry CodeMirror's 1-based document line.
+    lineMarker: (view, line) => new Plus(view.state.doc.lineAt(line.from).number),
     initialSpacer: () => plus,
     domEventHandlers: {
       mousedown(v, block, e) {
         e.preventDefault();
+        // block.from is a document offset, not a zero-based line index.
         const line = v.state.doc.lineAt(block.from).number;
         let start = line,
           end = line;

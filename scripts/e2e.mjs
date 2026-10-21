@@ -1852,13 +1852,16 @@ await step("diff-comments", async () => {
     await waitFor("file open", `return document.querySelector('.cm-content')?.innerText.includes('beta')`, 10000);
     await js(`[...document.querySelectorAll('[data-code-view] button')].find(b => b.innerText === 'Diff').click()`);
     await waitFor("merge editors", `return document.querySelectorAll('.code-diff .cm-editor').length === 2`, 10000);
-    // Gutter mousedown (CodeMirror listens for mousedown on the gutter); falls back to the dev hook if the gutter is not there.
-    const viaGutter = await js(`const els = [...document.querySelectorAll('.code-diff .cm-review-gutter .cm-gutterElement')].filter(e => e.querySelector('.cm-review-plus'));
-      if (els.length < 2) return false;
-      els[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    // Select the actual 1-based line marker, excluding CodeMirror's hidden spacer.
+    const viaGutter = await js(`const marker = document.querySelector('.code-diff .cm-review-gutter [data-review-line="2"]');
+      if (!marker) return false;
+      const rect = marker.closest('.cm-gutterElement').getBoundingClientRect();
+      if (!rect.width || !rect.height) return false;
+      marker.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, clientX: (rect.left + rect.right) / 2, clientY: (rect.top + rect.bottom) / 2 }));
       return true;`);
     if (viaGutter) {
       await waitFor("comment box", `return !!document.querySelector('textarea[aria-label="Review comment"]')`, 5000);
+      if (!(await js(`return document.querySelector('[data-review-composer] .cm-review-head')?.textContent === 'Comment on line 2'`))) throw new Error("gutter did not select line 2");
       await js(`const t = document.querySelector('textarea[aria-label="Review comment"]'); t.focus();`);
       await type("Rename this to delta.");
       await key("Enter");
@@ -1867,13 +1870,15 @@ await step("diff-comments", async () => {
     }
     await waitFor("review bar", `return document.querySelector('[aria-label="Review"]')?.innerText.includes('Review (1)')`, 5000);
     await waitFor("comment card", `return !!document.querySelector('.code-diff .cm-review-card')`, 5000);
+    const draft = await js(`return window.__ORBIT_REVIEW__.list(${JSON.stringify(ws.id)})[0]`);
+    if (draft?.startLine !== 2 || draft?.endLine !== 2 || draft?.excerpt !== "beta") throw new Error(`wrong review anchor: ${JSON.stringify(draft)}`);
     await shot("diff-comments");
     await js(`[...document.querySelectorAll('[aria-label="Review"] button')].find(b => b.innerText === 'Send to agent').click()`);
     const um = await until("review message sent", async () => {
       const evs = await wsEvents(ws.id);
       return evs.find((e) => e.type === "userMessage" && e.text?.includes("Review comments on your changes"));
     }, 30_000, 500);
-    if (!um.text.includes(`${filename}:2`) || !um.text.includes("Rename this to delta.")) throw new Error(`review message lacks path or comment: ${um.text}`);
+    if (!um.text.includes(`\`${filename}:2\``) || !um.text.includes("\nbeta\n") || !um.text.includes("Rename this to delta.")) throw new Error(`review message lacks path, excerpt or comment: ${JSON.stringify(um.text)}`);
     if (await js(`return !!document.querySelector('[aria-label="Review"]')`)) throw new Error("review bar should clear after sending");
     await until("turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120000, 500);
   } finally {

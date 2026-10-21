@@ -6,6 +6,7 @@ import { useApp } from "./app";
 export interface ReviewComment {
   id: string;
   path: string;
+  /** Inclusive, 1-based document line numbers throughout the UI and dev hook. */
   startLine: number;
   endLine: number;
   side: "new";
@@ -49,6 +50,8 @@ export const useReview = create<ReviewState>((set, get) => {
   return {
     drafts: load(),
     add: (ws, c) => {
+      if (!Number.isInteger(c.startLine) || !Number.isInteger(c.endLine) || c.startLine < 1 || c.endLine < c.startLine)
+        throw new RangeError("Review lines must be an inclusive 1-based range");
       const id = `rc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
       commit({ ...get().drafts, [ws]: [...(get().drafts[ws] ?? []), { ...c, id }] });
       return id;
@@ -105,7 +108,7 @@ export async function discardReview(ws: string): Promise<boolean> {
   return true;
 }
 
-// Dev-only hook so the real-app e2e does not depend on CodeMirror gutter clicks over CDP.
+// Dev-only hook: add accepts the same inclusive, 1-based range as the gutter/store.
 if (import.meta.env.DEV && typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__ORBIT_REVIEW__ = {
     add: (ws: string, c: Omit<ReviewComment, "id" | "side">) => useReview.getState().add(ws, { ...c, side: "new" }),
