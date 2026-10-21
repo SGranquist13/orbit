@@ -1195,7 +1195,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
           className="block w-full resize-none bg-transparent px-4 pt-4 text-[14px] font-medium leading-relaxed text-fg placeholder:text-mute focus:outline-none"
         />
         <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
-          <span className="flex items-center gap-1.5 px-1.5 py-1 text-[12px] font-medium text-dim">
+          <span className="flex items-center gap-1.5 whitespace-nowrap px-1.5 py-1 text-[12px] font-medium text-dim">
             <AgentIcon agent={ws.agent} />
             {agentLabel[ws.agent]}
             {ws.model && <span className="text-mute">· {ws.model}</span>}
@@ -1206,7 +1206,7 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
           <ReviewChip wsId={ws.id} />
           <ContextMeter ws={ws} running={running} />
           {running && (
-            <span className="flex items-center gap-1.5 text-[11px] text-mute">
+            <span className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-mute">
               <Kbd>Esc</Kbd> to interrupt
             </span>
           )}
