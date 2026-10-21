@@ -90,13 +90,23 @@ export function reviewMessage(comments: ReviewComment[]): string {
 export async function sendReview(ws: string): Promise<boolean> {
   const comments = useReview.getState().drafts[ws] ?? [];
   if (!comments.length) return false;
+  // Session startup can outlast the persisted userMessage event. Consume this
+  // batch now so the bar clears immediately and a second click cannot resend it.
+  useReview.getState().clear(ws);
   try {
     await api.sendMessage(ws, reviewMessage(comments));
   } catch (e) {
+    // Preserve any new comments written while the send was pending.
+    useReview.setState((s) => {
+      const current = s.drafts[ws] ?? [];
+      const ids = new Set(current.map((c) => c.id));
+      const drafts = { ...s.drafts, [ws]: [...comments.filter((c) => !ids.has(c.id)), ...current] };
+      save(drafts);
+      return { drafts };
+    });
     useApp.getState().setError(String(e));
     return false;
   }
-  useReview.getState().clear(ws);
   return true;
 }
 

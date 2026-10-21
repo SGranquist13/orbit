@@ -826,7 +826,7 @@ await step("agent-plan", async () => {
   await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
   const plan = await invoke("latest_plan", { workspaceId: ws.id });
   if (!plan || plan.items.length < 1) throw new Error(`no plan recorded: ${JSON.stringify(plan)}`);
-  await waitFor("plan card", `return !!document.querySelector('[data-testid=plan-card]') && /Plan · \d+\/\d+/.test(document.querySelector('[data-testid=plan-card]').innerText)`, 10_000);
+  await waitFor("plan card", String.raw`return !!document.querySelector('[data-testid=plan-card]') && /Plan · \d+\/\d+/.test(document.querySelector('[data-testid=plan-card]').innerText)`, 10_000);
 });
 
 await step("best-of-n", async () => {

@@ -223,6 +223,8 @@ function writeFlag(key: string, on: boolean) {
 }
 
 const changeTimers: Record<string, number> = {};
+// Live plan/boundary events invalidate any older latest_plan response.
+const planLoads = new Map<string, object>();
 
 export const useApp = create<AppState>((set, get) => ({
   repos: [],
@@ -233,9 +235,14 @@ export const useApp = create<AppState>((set, get) => ({
   live: {},
   plans: {},
   ensurePlan: (id) => {
-    if (useApp.getState().plans[id] !== undefined) return;
-    useApp.setState((s) => ({ plans: { ...s.plans, [id]: s.plans[id] ?? null } }));
-    api.latestPlan(id).then((p) => useApp.setState((s) => (s.plans[id] ? s : { plans: { ...s.plans, [id]: p } }))).catch(() => {});
+    if (planLoads.has(id)) return;
+    const request = {};
+    planLoads.set(id, request);
+    api.latestPlan(id).then((plan) => {
+      if (planLoads.get(id) === request) set((s) => ({ plans: { ...s.plans, [id]: plan } }));
+    }).catch(() => {}).finally(() => {
+      if (planLoads.get(id) === request) planLoads.delete(id);
+    });
   },
   changes: {},
   summaries: {},
@@ -842,6 +849,7 @@ function onSimplify(st: SimplifyState) {
 
 function onAgentEvent({ workspaceId: id, seq, ts, event }: AgentEventPayload) {
   const { getState: get, setState: set } = useApp;
+  if (event.type === "plan" || event.type === "turnStarted" || event.type === "sessionReset") planLoads.delete(id);
   // Live tool-input previews are for the Code view's Watch mode (its own listener), not the chat or inbox.
   if (event.type === "toolDraft") return;
   if (event.type === "textDelta") {

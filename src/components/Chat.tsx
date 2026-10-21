@@ -477,6 +477,8 @@ function PlanCard({ wsId, running }: { wsId: string; running: boolean }) {
   });
   useEffect(() => {
     useApp.getState().ensurePlan(wsId);
+  }, [wsId, running]);
+  useEffect(() => {
     try { setCollapsed(localStorage.getItem(key) === "1"); } catch { setCollapsed(false); }
   }, [wsId, key]);
   if (!plan || plan.items.length === 0) return null;
