@@ -821,7 +821,7 @@ await step("agent-plan", async () => {
   // The agent's own todo list is pinned above the chat as a plan card and kept by latest_plan.
   const ws = await newWorkspace({
     agent: "claude", model: "haiku",
-    prompt: "Use your todo list tool to plan three steps for saying hello, mark them all done, then reply done.",
+    prompt: "Plan three steps for saying hello with your task tools: create three tasks, mark each completed, then reply done.",
   });
   await waitFor("turn completed", `${turnEnds} >= 1`, 120_000);
   const plan = await invoke("latest_plan", { workspaceId: ws.id });
