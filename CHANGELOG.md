@@ -1,8 +1,13 @@
 # Changelog
 
 ## Unreleased
+
+## 0.2.1 - 2026-10-21
+
+Nine new previews for running and steering agents: plans, limits, rewind, MCP servers, reviews, Best of N and more.
+
 - Preview: comment on lines in the diff and send them to the agent as one message.
-- Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains
+- Preview: open a workspace in VS Code, Cursor, Zed, Windsurf or JetBrains.
 - Preview: Claude and Codex plan limits (5-hour and weekly) in Settings > Usage, with a warning near the limit.
 - Preview: per-repo setup and run scripts; `.env` and other ignored files are copied into new worktrees.
 - Preview: the agent's own plan pinned above the chat with live progress.
@@ -10,6 +15,7 @@
 - Preview: rewind a workspace to any earlier turn, or branch a new workspace from it.
 - Preview: an AI review after Ship, shown in Orbit or posted to the PR, with findings you can send to the agent.
 - Preview: Best of N: run one prompt as several attempts side by side and keep the best.
+- Preview: roles are optional. New workspaces start with no role ("+ Add role" when you want one), Settings > General can set a default role, and "No role" in the chat footer removes one. Workspaces without a role no longer default to Builder.
 
 ## 0.2.0 - 2026-10-20
 
@@ -29,7 +35,6 @@ Two headline features: a built-in code editor that lets you watch agents work, a
 ### Agents and skills
 - Model lists come from the agent CLIs (Codex's model catalog, Claude's aliases) plus custom model ids; refresh in Settings > Agents or the palette.
 - Preview: per-workspace skill pack toggles.
-- Preview: roles are optional. New workspaces start with no role ("+ Add role" when you want one), Settings > General can set a default role, and "No role" in the chat footer removes one. Workspaces without a role no longer default to Builder.
 
 ### Look and feel
 - Preview: VS Code keybindings everywhere (Ctrl+K chords included), rebindable in Settings > Keyboard shortcuts with key recording, conflict detection and reset.
