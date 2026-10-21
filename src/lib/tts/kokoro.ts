@@ -70,9 +70,20 @@ function startSlot(): Slot {
   return slot;
 }
 
+/** A worker that never answers (a wasm that fails to start its threads) must fail, not hang speech forever. */
+const TIMEOUT_MS = { init: 60_000, synth: 30_000 };
+
 function send<T extends Float32Array | null>(slot: Slot, req: WorkerRequest, transfer: Transferable[] = []): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    slot.pending.set(req.id, { resolve: resolve as (v: Float32Array | null) => void, reject });
+    const timer = setTimeout(() => {
+      slot.pending.delete(req.id);
+      reject(new Error(`speech worker did not answer (${req.type})`));
+    }, TIMEOUT_MS[req.type]);
+    const settle = <A>(fn: (a: A) => void) => (a: A) => {
+      clearTimeout(timer);
+      fn(a);
+    };
+    slot.pending.set(req.id, { resolve: settle(resolve as (v: Float32Array | null) => void), reject: settle(reject) });
     slot.worker.postMessage(req, transfer);
   });
 }

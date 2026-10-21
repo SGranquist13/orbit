@@ -9,6 +9,11 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 const host = process.env.TAURI_DEV_HOST;
 
+// Cross-origin isolation gives the speech models threaded WebAssembly (SharedArrayBuffer); matches
+// `app.security.headers` in tauri.conf.json for the built app. Every response needs them, including the
+// speech assets below: ORT starts its thread workers from them and an isolated page refuses workers without.
+const ISOLATION_HEADERS = { "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Embedder-Policy": "credentialless" };
+
 // Speech runtime assets (Silero VAD model + worklet, onnxruntime-web wasm) are served from the app itself so
 // Orbit works offline: dev serves them straight from node_modules, `vite build` emits them under dist/speech/
 // with stable names (the libraries build the URLs themselves, so they cannot be content-hashed).
@@ -28,6 +33,7 @@ const speechAssets = (): Plugin => {
         const rel = (req.url ?? "").split("?")[0].replace(/^\//, "");
         if (!(rel in SPEECH_ASSETS)) return next();
         res.setHeader("Content-Type", types[rel.slice(rel.lastIndexOf("."))] ?? "application/octet-stream");
+        for (const [name, value] of Object.entries(ISOLATION_HEADERS)) res.setHeader(name, value);
         fs.createReadStream(source(rel)).pipe(res);
       });
     },
@@ -55,6 +61,7 @@ export default defineConfig(() => ({
   server: {
     port: 1420,
     strictPort: true,
+    headers: ISOLATION_HEADERS,
     host: host || false,
     hmr: host
       ? {
