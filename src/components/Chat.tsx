@@ -50,6 +50,11 @@ import { discardReview, sendReview, useReviewComments } from "../stores/review";
 import { SchedulePreview, WhenControl } from "./ScheduleControls";
 import { TeammateLabel } from "./TeammateAvatar";
 import { RunButton, SetupRow } from "./WorktreeScripts";
+import { HandsFreeBar } from "./voice/HandsFreeBar";
+import { HandsFreeButton, MicButton, VoiceNotice } from "./voice/MicButton";
+import { ReadAloudButton } from "./voice/ReadAloudButton";
+import { insertAtCursor } from "../lib/voice";
+import { useVoice, type VoiceTextDetail } from "../stores/voice";
 import { AgentIcon, Button, Kbd, StatusDot, agentLabel, cn } from "./ui";
 
 export function Chat({ ws }: { ws: Workspace }) {
@@ -414,10 +419,13 @@ const BlockView = memo(function BlockView({ block, active, wsId }: { block: Bloc
       );
     case "assistant":
       return (
-        <div className="prose-chat text-fg">
-          <Suspense fallback={<span className="whitespace-pre-wrap">{block.text}</span>}>
-            <MarkdownText text={block.text} workspaceId={wsId} />
-          </Suspense>
+        <div className="group/reply relative">
+          <div className="prose-chat text-fg">
+            <Suspense fallback={<span className="whitespace-pre-wrap">{block.text}</span>}>
+              <MarkdownText text={block.text} workspaceId={wsId} />
+            </Suspense>
+          </div>
+          <ReadAloudButton id={`${wsId}:${block.key}`} text={block.text} className="absolute -bottom-5 left-0" />
         </div>
       );
     case "tools":
@@ -993,6 +1001,38 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   const skills = useApp((s) => s.skills);
   const ref = useRef<HTMLTextAreaElement>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Dictated text lands at the cursor; with "send after dictating" on it goes straight out.
+  const cursorAfter = useRef<number | null>(null);
+  const autoSend = useRef<string | null>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    const onVoice = (e: Event) => {
+      const d = (e as CustomEvent<VoiceTextDetail>).detail;
+      if (d.workspaceId !== ws.id || d.handled) return;
+      d.handled = true;
+      const el = ref.current;
+      const cur = textRef.current;
+      const r = insertAtCursor(cur, el?.selectionStart ?? cur.length, el?.selectionEnd ?? cur.length, d.text);
+      cursorAfter.current = r.cursor;
+      if (useApp.getState().settings?.voiceAutoSend) autoSend.current = r.value;
+      setText(r.value);
+      el?.focus();
+    };
+    window.addEventListener("orbit-voice-text", onVoice);
+    return () => window.removeEventListener("orbit-voice-text", onVoice);
+  }, [ws.id]);
+  useLayoutEffect(() => {
+    if (cursorAfter.current === null) return;
+    ref.current?.setSelectionRange(cursorAfter.current, cursorAfter.current);
+    cursorAfter.current = null;
+  }, [text]);
+  useEffect(() => {
+    if (autoSend.current !== null && autoSend.current === text) {
+      autoSend.current = null;
+      void send();
+    }
+  });
 
   // Autocomplete only while typing the first token of a slash command.
   const slashQuery = /^\/(\S*)$/.exec(text)?.[1];
@@ -1053,6 +1093,13 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    const voice = useVoice.getState();
+    if (e.key === "Escape" && voice.status === "listening" && voice.mode === "dictate" && voice.workspaceId === ws.id) {
+      // Cancel the recording before Esc gets to interrupt the agent.
+      e.preventDefault();
+      void voice.cancel();
+      return;
+    }
     if (matches.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -1083,6 +1130,8 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
   return (
     <div className="shrink-0 px-6 pb-6">
       <SkillChips ws={ws} text={text} onRun={() => setText("")} />
+      <HandsFreeBar wsId={ws.id} />
+      <VoiceNotice wsId={ws.id} />
       {notice && (
         <p role="status" className="mx-auto mb-2 flex max-w-[880px] items-center gap-1.5 text-[12px] font-medium text-mute">
           <Check className="size-3" strokeWidth={3} /> {notice}
@@ -1134,7 +1183,11 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
         <textarea
           ref={ref}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            const v = useVoice.getState();
+            if (v.handsFree.phase !== "off" && v.handsFree.workspaceId === ws.id) void v.cancel(); // typing takes over from hands-free
+          }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={3}
@@ -1157,6 +1210,8 @@ function Composer({ ws, running }: { ws: Workspace; running: boolean }) {
               <Kbd>Esc</Kbd> to interrupt
             </span>
           )}
+          <HandsFreeButton wsId={ws.id} />
+          <MicButton wsId={ws.id} />
           <button
             onClick={() => fileInput.current?.click()}
             disabled={isSkill}

@@ -12,6 +12,7 @@ import { Mobile } from "./settings/Mobile";
 import { About, Git, GitHub, InboxSettings, Shortcuts } from "./settings/sections";
 import { Skills } from "./settings/Skills";
 import { UsageSection } from "./settings/UsageSection";
+import { Voice } from "./settings/Voice";
 
 const SECTIONS = [
   { id: "general", title: "General", body: <General /> },
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: "mcp", title: "MCP servers", body: <Mcp />, description: "Tools and data sources your agents can call, added once for Claude and Codex." },
   { id: "inbox", title: "Inbox", body: <InboxSettings /> },
   { id: "models", title: "Models", body: <Models />, description: "Which model runs Orbit's small background tasks, and the optional local server." },
+  { id: "voice", title: "Voice", body: <Voice />, description: "Dictate prompts, talk hands-free, and have replies read aloud. Speech is recognised on this computer." },
   { id: "mobile", title: "Mobile", body: <Mobile />, description: "Watch and steer your workspaces from the Orbit phone app." },
   { id: "usage", title: "Usage", body: <UsageSection /> },
   { id: "data", title: "Data", body: <Data /> },

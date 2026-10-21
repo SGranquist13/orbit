@@ -509,6 +509,19 @@ export interface Settings {
   modelPrDescription: string;
   modelTeammateReport: string;
   modelChiefPlan: string;
+  /** Turns dictated speech into a clean prompt. "off" (default) sends the transcript as heard. */
+  modelVoiceTidy: string;
+  voiceModel: VoiceModelId;
+  /** Empty = system default microphone. */
+  voiceDevice: string;
+  voiceAutoSend: boolean;
+  /** Silence that ends an utterance in hands-free mode (300-5000). */
+  voiceSilenceMs: number;
+  voiceReadAloud: "off" | "handsfree" | "always";
+  /** Empty = system default voice. */
+  voiceTtsVoice: string;
+  /** 0.5-2.0. */
+  voiceTtsRate: number;
   localAgents: boolean;
   remoteEnabled: boolean;
   remotePort: number;
@@ -955,7 +968,33 @@ export interface ReviewState {
   error: string | null;
 }
 
+// ── Voice input (src-tauri/src/voice/). ──
+export type VoiceModelId = "tiny.en" | "base.en" | "small.en";
+export type VoiceModel = { id: VoiceModelId; sizeBytes: number; installed: boolean };
+export type VoiceStatus = "idle" | "listening" | "transcribing" | "tidying" | "error";
+export type VoiceState = { status: VoiceStatus; workspaceId?: string; mode?: "dictate" | "handsfree"; error?: string };
+/** `text` is tidied (or raw when tidy is off or failed). An empty `text` means nothing was heard. */
+export type VoiceResult = { workspaceId: string; text: string; raw: string };
+export type VoiceDownload = { id: VoiceModelId; received: number; total: number; done?: boolean; error?: string };
+
+export const voiceApi = {
+  models: () => invoke<VoiceModel[]>("voice_models"),
+  /** Resolves when the download finishes; progress arrives as `voice-download` events. */
+  download: (id: VoiceModelId) => invoke<void>("voice_download", { id }),
+  deleteModel: (id: VoiceModelId) => invoke<void>("voice_delete_model", { id }),
+  /** Input device names; the UI adds "System default" (empty string). */
+  devices: () => invoke<string[]>("voice_devices"),
+  start: (workspaceId: string, mode: "dictate" | "handsfree") => invoke<void>("voice_start", { workspaceId, mode }),
+  stop: () => invoke<VoiceResult>("voice_stop"),
+  cancel: () => invoke<void>("voice_cancel"),
+};
+
+
 export const events = {
+  onVoiceState: (cb: (s: VoiceState) => void): Promise<UnlistenFn> => listen<VoiceState>("voice-state", (e) => cb(e.payload)),
+  onVoiceLevel: (cb: (rms: number) => void): Promise<UnlistenFn> => listen<{ rms: number }>("voice-level", (e) => cb(e.payload.rms)),
+  onVoiceDownload: (cb: (d: VoiceDownload) => void): Promise<UnlistenFn> => listen<VoiceDownload>("voice-download", (e) => cb(e.payload)),
+  onVoiceResult: (cb: (r: VoiceResult) => void): Promise<UnlistenFn> => listen<VoiceResult>("voice-result", (e) => cb(e.payload)),
   onRateLimits: (cb: (limits: RateLimits) => void): Promise<UnlistenFn> =>
     listen<RateLimits>("rate-limits", (e) => cb(e.payload)),
   onAttempts: (cb: (group: AttemptGroup) => void): Promise<UnlistenFn> => listen<AttemptGroup>("attempts", (e) => cb(e.payload)),
