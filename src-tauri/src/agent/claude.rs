@@ -17,10 +17,15 @@ use tokio::sync::mpsc;
 /// GitHub issue commands stay allowed for the Ticket writer. Lists are comma-separated so the
 /// variadic flags can't swallow later args.
 const READONLY_DENY: &str = "NotebookEdit";
-const READONLY_ALLOW: &str = "Read,Grep,Glob,LS,WebSearch,WebFetch,TodoWrite,Task,Edit(~/.orbit/tmp/**),\
+const READONLY_ALLOW: &str = "Read,Grep,Glob,LS,WebSearch,WebFetch,TodoWrite,Task,TaskCreate,TaskUpdate,TaskList,TaskGet,Edit(~/.orbit/tmp/**),\
 Bash(git status:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git branch:*),Bash(git blame:*),\
 Bash(ls:*),Bash(rg:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),\
 Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue create:*),Bash(gh label list:*)";
+
+// Claude Code only expands `default` when used alone; combining it with task tools drops built-ins.
+// Explicitly expose Orbit's tools, excluding scheduling and coordination managed by Orbit itself.
+// Availability via --tools does not bypass the read-only --allowedTools permission rules.
+const SESSION_TOOLS: &str = "Task,Bash,PowerShell,Edit,Write,Read,Glob,Grep,NotebookEdit,WebFetch,WebSearch,Skill,ToolSearch,TaskStop,TaskCreate,TaskUpdate,TaskList,TaskGet";
 
 /// Must match the fixed home-relative permission rule, even when ORBIT_HOME is customized.
 pub fn scratch_dir() -> anyhow::Result<std::path::PathBuf> {
@@ -37,6 +42,8 @@ pub fn args(cfg: &SessionConfig) -> Vec<String> {
         "stream-json",
         "--verbose",
         "--include-partial-messages",
+        "--tools",
+        SESSION_TOOLS,
         "--permission-mode",
         if cfg.readonly { "default" } else { cfg.permission_mode.as_str() },
     ]
@@ -139,11 +146,22 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
 #[derive(Default)]
 pub struct ClaudeParser {
     tool_blocks: HashMap<u64, ToolBlock>,
+    tasks: HashMap<String, ClaudeTask>,
+    task_order: Vec<String>,
+    /// Mutations waiting for a successful tool_result, keyed by tool_use_id.
+    task_calls: HashMap<String, (String, Value)>,
     /// input + cache read + cache creation of the latest assistant message this turn.
     last_context: Option<u64>,
     /// A `/compact` happened this turn, so the context shrank without an assistant message.
     compacted: Option<u64>,
     model: Option<String>,
+}
+
+#[derive(PartialEq, Eq)]
+struct ClaudeTask {
+    subject: String,
+    active_form: Option<String>,
+    status: super::PlanStatus,
 }
 
 struct ToolBlock {
@@ -160,6 +178,65 @@ impl ToolBlock {
 }
 
 impl ClaudeParser {
+    // SessionReset replaces the process/parser. Init and compaction also discard task state.
+    fn reset_tasks(&mut self) {
+        self.tasks.clear();
+        self.task_order.clear();
+        self.task_calls.clear();
+    }
+
+    fn task_plan(&self) -> AgentEvent {
+        let items = self.task_order.iter().filter_map(|id| self.tasks.get(id)).map(|task| {
+            let text = if task.status == super::PlanStatus::InProgress {
+                task.active_form.as_ref().unwrap_or(&task.subject)
+            } else {
+                &task.subject
+            };
+            super::PlanItem { text: text.clone(), status: task.status.clone() }
+        }).collect();
+        AgentEvent::Plan { items, explanation: None }
+    }
+
+    fn task_result(&mut self, block: &Value, result: &Value) -> Option<AgentEvent> {
+        let (name, input) = self.task_calls.remove(block["tool_use_id"].as_str()?)?;
+        if block["is_error"] == true || result["success"] == false {
+            return None;
+        }
+        if name == "TaskCreate" {
+            let output = tool_result_text(&block["content"]);
+            let id = result["task"]["id"].as_str().or_else(|| {
+                output.strip_prefix("Task #")?.split_once(" created successfully:").map(|(id, _)| id)
+            })?;
+            let task = ClaudeTask {
+                subject: input["subject"].as_str()?.into(),
+                active_form: input["activeForm"].as_str().map(String::from),
+                status: super::PlanStatus::Pending,
+            };
+            if self.tasks.get(id) == Some(&task) { return None; }
+            if !self.tasks.contains_key(id) { self.task_order.push(id.into()); }
+            self.tasks.insert(id.into(), task);
+        } else {
+            let id = input["taskId"].as_str()?;
+            if input["status"] == "deleted" {
+                self.tasks.remove(id)?;
+                self.task_order.retain(|key| key != id);
+            } else {
+                let task = self.tasks.get_mut(id)?;
+                let before = (task.subject.clone(), task.active_form.clone(), task.status.clone());
+                if let Some(subject) = input["subject"].as_str() { task.subject = subject.into(); }
+                if let Some(active) = input["activeForm"].as_str() { task.active_form = Some(active.into()); }
+                match input["status"].as_str() {
+                    Some("pending") => task.status = super::PlanStatus::Pending,
+                    Some("in_progress") => task.status = super::PlanStatus::InProgress,
+                    Some("completed") => task.status = super::PlanStatus::Done,
+                    _ => {}
+                }
+                if before == (task.subject.clone(), task.active_form.clone(), task.status.clone()) { return None; }
+            }
+        }
+        Some(self.task_plan())
+    }
+
     pub fn parse(&mut self, line: &str) -> Vec<AgentEvent> {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return vec![];
@@ -196,6 +273,7 @@ impl ClaudeParser {
                 })]
             }
             Some("system") if v["subtype"] == "init" => {
+                self.reset_tasks();
                 self.model = v["model"].as_str().map(String::from);
                 vec![AgentEvent::SessionStarted {
                     session_id: v["session_id"].as_str().unwrap_or_default().to_string(),
@@ -203,8 +281,10 @@ impl ClaudeParser {
                 }]
             }
             Some("system") if v["subtype"] == "compact_boundary" => {
+                let had_tasks = !self.tasks.is_empty();
+                self.reset_tasks();
                 self.compacted = Some(v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0));
-                vec![]
+                if had_tasks { vec![self.task_plan()] } else { vec![] }
             }
             Some("stream_event") => {
                 let ev = &v["event"];
@@ -271,6 +351,11 @@ impl ClaudeParser {
                     })
                     .collect();
                 for block in content(&v) {
+                    if block["type"] == "tool_use" && matches!(block["name"].as_str(), Some("TaskCreate" | "TaskUpdate")) {
+                        if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
+                            self.task_calls.insert(id.into(), (name.into(), block["input"].clone()));
+                        }
+                    }
                     if block["type"] == "tool_use" && block["name"] == "TodoWrite" {
                         if let Some(todos) = block["input"]["todos"].as_array() {
                             let items = todos.iter().filter_map(|todo| {
@@ -293,16 +378,21 @@ impl ClaudeParser {
                 }
                 events
             }
-            Some("user") => content(&v)
-                .iter()
-                .filter(|b| b["type"] == "tool_result")
-                .map(|b| AgentEvent::ToolResult {
-                    id: b["tool_use_id"].as_str().unwrap_or_default().to_string(),
-                    output: tool_result_text(&b["content"]),
-                    is_error: b["is_error"].as_bool().unwrap_or(false),
-                    images: tool_result_images(&b["content"]),
-                })
-                .collect(),
+            Some("user") => {
+                let mut events = Vec::new();
+                for b in content(&v).iter().filter(|b| b["type"] == "tool_result") {
+                    events.push(AgentEvent::ToolResult {
+                        id: b["tool_use_id"].as_str().unwrap_or_default().to_string(),
+                        output: tool_result_text(&b["content"]),
+                        is_error: b["is_error"].as_bool().unwrap_or(false),
+                        images: tool_result_images(&b["content"]),
+                    });
+                    if let Some(plan) = self.task_result(b, &v["tool_use_result"]) {
+                        events.push(plan);
+                    }
+                }
+                events
+            }
             Some("result") => {
                 self.tool_blocks.clear();
                 let is_error = v["is_error"].as_bool().unwrap_or(false) || v["subtype"] != "success";
@@ -754,6 +844,89 @@ mod tests {
     }
 
     #[test]
+    fn recorded_task_tools_emit_ordered_plans() {
+        let events = parse_fixture("claude_task_tools.jsonl");
+        let plans: Vec<_> = events.iter().filter_map(|event| match event {
+            AgentEvent::Plan { items, explanation } => {
+                assert_eq!(*explanation, None);
+                Some(items)
+            }
+            _ => None,
+        }).collect();
+        assert_eq!(plans.len(), 9, "three creates and six status changes");
+        let final_plan = plans.last().unwrap();
+        assert_eq!(final_plan.len(), 3);
+        for (index, item) in final_plan.iter().enumerate() {
+            assert_eq!(item.text, format!("Step {}: Say hello", index + 1));
+            assert_eq!(item.status, super::super::PlanStatus::Done);
+        }
+        assert!(plans.iter().any(|items| items.iter().any(|item|
+            item.status == super::super::PlanStatus::InProgress && item.text == "Saying hello (step 1)")));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::ToolCall { name, .. } if name == "TaskCreate")));
+        assert!(events.iter().any(|event| matches!(event, AgentEvent::ToolResult { is_error: false, .. })));
+        assert!(matches!(events.last(), Some(AgentEvent::TurnCompleted { is_error: false, .. })));
+    }
+
+    fn task_call(parser: &mut ClaudeParser, id: &str, name: &str, input: Value) -> Vec<AgentEvent> {
+        parser.parse(&json!({"type":"assistant","message":{"content":[{
+            "type":"tool_use","id":id,"name":name,"input":input
+        }]}}).to_string())
+    }
+
+    fn task_reply(parser: &mut ClaudeParser, id: &str, text: &str, result: Value, error: bool) -> Vec<AgentEvent> {
+        parser.parse(&json!({"type":"user","tool_use_result":result,"message":{"content":[{
+            "type":"tool_result","tool_use_id":id,"content":text,"is_error":error
+        }]}}).to_string())
+    }
+
+    #[test]
+    fn task_results_match_calls_and_handle_failures_edits_and_deletion() {
+        let mut p = ClaudeParser::default();
+        task_call(&mut p, "a", "TaskCreate", json!({"subject":"First","activeForm":"Working"}));
+        task_call(&mut p, "b", "TaskCreate", json!({"subject":"Second"}));
+        // Results can arrive in a different order from calls; subjects stay matched to their ids.
+        task_reply(&mut p, "b", "Task #2 created successfully: Second", Value::Null, false);
+        task_reply(&mut p, "a", "ok", json!({"task":{"id":"1"}}), false);
+        assert_eq!(p.tasks["1"].subject, "First");
+        assert_eq!(p.tasks["2"].subject, "Second");
+        assert_eq!(p.task_order, vec!["2", "1"]);
+        task_call(&mut p, "failed", "TaskUpdate", json!({"taskId":"1","status":"completed"}));
+        assert_eq!(task_reply(&mut p, "failed", "failed", Value::Null, true).len(), 1);
+        assert_eq!(p.tasks["1"].status, super::super::PlanStatus::Pending);
+        task_call(&mut p, "failed-create", "TaskCreate", json!({"subject":"Bad"}));
+        task_reply(&mut p, "failed-create", "failed", json!({"success":false}), false);
+        assert_eq!(p.tasks.len(), 2);
+        task_call(&mut p, "update", "TaskUpdate", json!({"taskId":"2","subject":"Revised","status":"in_progress"}));
+        task_reply(&mut p, "update", "ok", Value::Null, false);
+        let AgentEvent::Plan { items, .. } = p.task_plan() else { panic!("plan"); };
+        assert_eq!(items[0].text, "Revised", "missing activeForm falls back to subject");
+        task_call(&mut p, "pending", "TaskUpdate", json!({"taskId":"2","status":"pending"}));
+        task_reply(&mut p, "pending", "ok", Value::Null, false);
+        assert_eq!(p.tasks["2"].status, super::super::PlanStatus::Pending);
+        task_call(&mut p, "delete", "TaskUpdate", json!({"taskId":"1","status":"deleted"}));
+        assert_eq!(task_reply(&mut p, "delete", "ok", Value::Null, false).len(), 2);
+        assert!(!p.tasks.contains_key("1"));
+        assert_eq!(p.task_order, vec!["2"]);
+        assert_eq!(task_reply(&mut p, "delete", "ok", Value::Null, false).len(), 1, "duplicate result ignored");
+    }
+
+    #[test]
+    fn task_state_resets_on_compact_and_session_init() {
+        let mut p = ClaudeParser::default();
+        for reset in [
+            json!({"type":"system","subtype":"compact_boundary"}),
+            json!({"type":"system","subtype":"init","session_id":"new"}),
+        ] {
+            task_call(&mut p, "create", "TaskCreate", json!({"subject":"Old"}));
+            task_reply(&mut p, "create", "ok", json!({"task":{"id":"1"}}), false);
+            task_call(&mut p, "late", "TaskCreate", json!({"subject":"Late"}));
+            p.parse(&reset.to_string());
+            assert!(p.tasks.is_empty() && p.task_order.is_empty() && p.task_calls.is_empty());
+            assert_eq!(task_reply(&mut p, "late", "ok", json!({"task":{"id":"2"}}), false).len(), 1);
+        }
+    }
+
+    #[test]
     fn todo_write_normalizes_plan_and_keeps_tool_calls() {
         // Synthetic: no recorded fixture contains TodoWrite. Input follows Claude's
         // documented input: https://code.claude.com/docs/en/agent-sdk/python#todowrite
@@ -999,6 +1172,14 @@ mod tests {
             mcp_servers: vec![], mcp_config: Some("/mcp/workspace.json".into()), local_url: None,
         };
         let rw = args(&cfg).join(" ");
+        assert!(args(&cfg).windows(2).any(|pair| pair == ["--tools", SESSION_TOOLS]));
+        // Check the actual argv value: `default,TaskCreate,...` silently removes built-ins.
+        let built_args = args(&cfg);
+        let tools = &built_args.windows(2).find(|pair| pair[0] == "--tools").unwrap()[1];
+        for tool in ["Read", "Edit", "Bash", "TaskCreate"] {
+            assert!(tools.split(',').any(|available| available == tool), "missing {tool}");
+        }
+        assert!(!tools.contains("default,"));
         assert!(!rw.contains("--disallowedTools") && rw.contains("--permission-mode bypassPermissions"));
         let cfg = SessionConfig { permission_mode: "acceptEdits".into(), ..cfg };
         assert!(args(&cfg).join(" ").contains("--permission-mode acceptEdits"));
@@ -1007,6 +1188,10 @@ mod tests {
         // Read-only: default mode enforces the allowlist, with only scoped scratch writes.
         assert!(a.contains("--permission-mode default") && !a.contains("bypassPermissions"));
         assert!(args(&cfg).iter().any(|x| x == READONLY_ALLOW), "allowlist must be one argv entry");
+        assert!(args(&cfg).windows(2).any(|pair| pair == ["--tools", SESSION_TOOLS]));
+        for tool in ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet"] {
+            assert!(READONLY_ALLOW.split(',').any(|allowed| allowed == tool));
+        }
         assert!(a.contains("--disallowedTools NotebookEdit --append-system-prompt"));
         assert!(a.contains("--mcp-config /mcp/workspace.json"));
         assert!(!a.contains("--strict-mcp-config"));
