@@ -79,6 +79,11 @@ Agents write the code; Orbit keeps the fleet organised and moving. When you want
 - **Watch mode** follows the agent as it edits: change flashes, gutter marks and a per-turn activity timeline. Edits stream in as the agent writes them.
 - Select some lines and **ask the agent about them** (Ctrl+I).
 
+### Voice (preview)
+- **Dictate** into any chat with the mic button, or hold `Ctrl+Shift+Space` to talk.
+- **Hands-free:** talk, pause, and it sends. Replies are read aloud as the agent writes them, and talking over it stops it.
+- A **natural voice** (Kokoro) reads replies aloud. Speech recognition (Whisper) and speech both run on your computer; a one-time setup downloads them.
+
 ### Ship to GitHub
 - **Ship panel:** commit, push, draft PR, live checks, *Fix CI*, *Address comments*, *Ready for review*, *Squash & merge*.
 - **Trunk-friendly git:** save-point commits after each turn (with *Undo last turn*), squashed before shipping, plus a ship gate that runs your project's check command first. Merged workspaces archive themselves.
@@ -111,6 +116,7 @@ VS Code keybindings throughout, including the editor and `Ctrl+K` chords.
 | `Alt+5` | Issues | `Ctrl+P` | Quick open file |
 | `Ctrl+B` | Toggle sidebar | `Ctrl+K Z` | Focus mode |
 | `Ctrl+K Ctrl+T` | Dark / light theme | `Esc` | Stop the running turn |
+| `Ctrl+Shift+Space` | Dictate (hold to talk) | | |
 
 Every action is also in the command palette. Rebind any shortcut in Settings (`Ctrl+,`) > Keyboard shortcuts, where you can also adjust almost every other behaviour.
 
@@ -121,7 +127,7 @@ Every action is also in the command palette. Rebind any shortcut in Settings (`C
 | Windows 10 or 11 with WebView2 (built into current Windows) | [Bun](https://bun.sh) |
 | Claude Code and/or Codex CLI, logged in | Rust (stable, MSVC target) |
 | `git` | Visual Studio C++ build tools (Desktop development with C++, x64); VS 2022 is the tested version |
-| GitHub CLI `gh`, logged in (Ship panel and Issues) | |
+| GitHub CLI `gh`, logged in (Ship panel and Issues) | CMake and LLVM (`winget install Kitware.CMake LLVM.LLVM`), for on-device speech recognition |
 
 macOS and Linux aren't supported yet. Tauri runs there, but Orbit hasn't been tested on them.
 
@@ -138,7 +144,8 @@ bun run dev          # UI-only mock mode at http://localhost:1420: no agents, re
 
 ## Privacy and security
 
-- **Local only, no telemetry.** Orbit has no analytics or crash reporting. Its own network traffic is limited to the agent CLIs it launches, `git` and `gh`, an optional local-model server you configure, and Expo push notifications if you pair a phone (device name and status only).
+- **Local only, no telemetry.** Orbit has no analytics or crash reporting. Its own network traffic is limited to the agent CLIs it launches, `git` and `gh`, an optional local-model server you configure, Expo push notifications if you pair a phone (device name and status only), and the voice models when you choose to download them (from Hugging Face and GitHub, checked against pinned hashes).
+- **Voice stays on your computer.** Your audio is recognised and spoken locally and never uploaded or saved. Only the optional tidy-up sends text: the transcript, to the model you pick in Settings → Models.
 - **Your data stays in `~/.orbit`:** the state database, worktrees, skill packs and teammate definitions. Your repositories aren't copied; workspaces are worktrees of them.
 - **Agents run unattended by default**, inside their worktree: Claude with `bypassPermissions`, Codex with `danger-full-access`. They can run anything your user can. To tighten that, go to **Settings → Agents** (Claude "Accept edits", Codex "workspace-write"). Read-only profiles are always enforced, and agents are stopped with Orbit even if it crashes.
 - **Skill packs are code.** Only install packs you trust.

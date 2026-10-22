@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- Preview: voice. Dictate into the chat (mic button, or hold Ctrl+Shift+Space), tidy speech into a clean prompt, have replies read aloud, or go hands-free. Speech is recognised on your computer.
+Talk to your agents: dictate prompts, hear replies in a natural voice, or go hands-free, all on your own computer.
+
+- Preview: voice. Dictate into the chat (mic button, or hold Ctrl+Shift+Space) and the words land at your cursor; Whisper recognises them on your computer.
+- Preview: hands-free mode. Talk, pause, and it sends; replies are read aloud as the agent writes them, and you can talk over it to interrupt. Coughs and "um"s are ignored, and saying "stop" interrupts the agent.
+- Preview: a natural read-aloud voice (Kokoro, eight voices to choose from), running on your computer, with Windows voices as a fallback.
+- Preview: a one-time "Set up voice" dialog downloads speech recognition and the natural voice together.
+- Preview: optional tidy-up turns dictated speech into a clean prompt (Settings > Models > Voice tidy-up).
 
 ## 0.2.1 - 2026-10-21
 

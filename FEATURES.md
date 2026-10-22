@@ -59,7 +59,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Claude Code and Codex, streamed live (text, thinking, tool calls) | ✅ | Tool calls fold into expandable groups |
 | Follow-ups, interrupt (Esc), resume after restart | ✅ | |
 | **Images and file attachments**: paste, drop or attach images and files; images go to the agent natively, files as paths it reads with its own tools | ✅ | Thumbnails, file chips and a lightbox in the chat |
-| **Voice**: dictate into the chat (mic button or hold Ctrl+Shift+Space), an optional tidy-up into a clean prompt, replies read aloud, and a hands-free mode that listens, sends and reads back | 🧪 | Speech recognition runs on your machine (Whisper, model downloaded once in Settings > Voice); nothing leaves the computer |
+| **Voice**: dictate into the chat (mic button or hold Ctrl+Shift+Space), a hands-free mode that listens, sends and reads replies back as the agent writes them (talk over it to interrupt), a natural read-aloud voice, and an optional tidy-up into a clean prompt | 🧪 | Speech recognition (Whisper) and the natural voice (Kokoro) run on your computer; a one-time setup downloads both. Windows voices are the fallback |
 | Images from the agent (a screenshot it reads, Codex image view / generation, markdown images) shown in the chat | 🧪 | |
 | **Agent plan**: the agent's own todo list pinned above the chat with live progress (Claude TodoWrite, Codex plan updates), and a progress count in the sidebar | 🧪 | |
 | Steer Codex mid-turn; Claude queues messages sent mid-turn | ✅ | |
