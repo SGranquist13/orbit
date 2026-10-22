@@ -509,6 +509,26 @@ export interface Settings {
   modelPrDescription: string;
   modelTeammateReport: string;
   modelChiefPlan: string;
+  /** Turns dictated speech into a clean prompt. "off" (default) sends the transcript as heard. */
+  modelVoiceTidy: string;
+  voiceModel: VoiceModelId;
+  /** Browser `deviceId` of the microphone; empty = default. */
+  voiceDevice: string;
+  voiceAutoSend: boolean;
+  /** A pause this long ends an utterance in hands-free mode (500-5000). */
+  voiceSilenceMs: number;
+  /** Which engine speaks replies: Kokoro (natural, on-device) or the system voices. */
+  voiceTtsEngine: "kokoro" | "system";
+  voiceKokoroVoice: KokoroVoiceId;
+  /** Stop speaking the moment you start talking (hands-free). */
+  voiceBargeIn: boolean;
+  /** Sounds shorter than this are ignored in hands-free (100-2000). */
+  voiceMinSpeechMs: number;
+  voiceReadAloud: "off" | "handsfree" | "always";
+  /** System engine only. Empty = system default voice. */
+  voiceTtsVoice: string;
+  /** 0.5-2.0. */
+  voiceTtsRate: number;
   localAgents: boolean;
   remoteEnabled: boolean;
   remotePort: number;
@@ -955,7 +975,28 @@ export interface ReviewState {
   error: string | null;
 }
 
+// ── Voice (src-tauri/src/voice/): Whisper transcription + model packs. Capture and speech live in the webview. ──
+export type VoiceModelId = "tiny.en" | "base.en" | "small.en" | "kokoro";
+export type VoiceModel = { id: VoiceModelId; kind: "stt" | "tts"; sizeBytes: number; installed: boolean };
+/** `dropped`: the audio was judged not to be a message (cough, breath, noise hallucination); `text` is "" then. */
+export type VoiceResult = { workspaceId: string; text: string; raw: string; dropped: boolean };
+export type VoiceDownload = { id: VoiceModelId; received: number; total: number; done?: boolean; error?: string };
+export type KokoroVoiceId = "af_heart" | "af_bella" | "af_nicole" | "am_michael" | "am_fenrir" | "am_puck" | "bf_emma" | "bm_george";
+
+export const voiceApi = {
+  models: () => invoke<VoiceModel[]>("voice_models"),
+  /** Resolves when the download finishes; progress arrives as `voice-download` events. */
+  download: (id: VoiceModelId) => invoke<void>("voice_download", { id }),
+  deleteModel: (id: VoiceModelId) => invoke<void>("voice_delete_model", { id }),
+  /** `audio`: base64 of little-endian f32 PCM, 16 kHz mono. Errors with `no model: …` when Whisper is missing. */
+  transcribe: (workspaceId: string, audio: string, mode: "dictate" | "handsfree") => invoke<VoiceResult>("voice_transcribe", { workspaceId, audio, mode }),
+  /** One file of the Kokoro pack, relative to its folder (`model_quantized.onnx`, `us_gold.json`, `voices/af_heart.bin`). */
+  file: (path: string) => invoke<ArrayBuffer>("voice_file", { path }),
+};
+
+
 export const events = {
+  onVoiceDownload: (cb: (d: VoiceDownload) => void): Promise<UnlistenFn> => listen<VoiceDownload>("voice-download", (e) => cb(e.payload)),
   onRateLimits: (cb: (limits: RateLimits) => void): Promise<UnlistenFn> =>
     listen<RateLimits>("rate-limits", (e) => cb(e.payload)),
   onAttempts: (cb: (group: AttemptGroup) => void): Promise<UnlistenFn> => listen<AttemptGroup>("attempts", (e) => cb(e.payload)),

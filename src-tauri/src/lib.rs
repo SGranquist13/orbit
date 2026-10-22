@@ -28,6 +28,7 @@ mod handoff;
 mod teammates;
 mod trunk;
 mod usage;
+mod voice;
 
 use agent::{AgentEvent, AgentKind, Command, FileRef, ImageRef, SessionConfig, SessionHandle};
 use db::{Attachment, Db, Repo, StoredEvent, Workspace};
@@ -1520,6 +1521,19 @@ fn startup_dialog(app: &tauri::App, kind: tauri_plugin_dialog::MessageDialogKind
 pub fn run() {
     agent::job::init();
     tauri::Builder::default()
+        .on_permission_request(|webview, permission| {
+            use tauri::webview::{PermissionKind, PermissionResponse};
+            let own_origin = webview.url().is_ok_and(|url| {
+                (url.host_str() == Some("localhost") && url.scheme() == "tauri")
+                    || matches!(url.origin().ascii_serialization().as_str(), "http://tauri.localhost" | "https://tauri.localhost")
+                    || (cfg!(debug_assertions) && url.origin().ascii_serialization() == "http://localhost:1420")
+            });
+            if webview.label() == "main" && own_origin && permission == PermissionKind::Microphone {
+                PermissionResponse::Allow
+            } else {
+                PermissionResponse::Default
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1559,6 +1573,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            voice::voice_models,
+            voice::voice_download,
+            voice::voice_delete_model,
+            voice::voice_transcribe,
+            voice::voice_file,
             code::fs::code_list_dir,
             code::fs::code_read_file,
             code::fs::code_write_file,

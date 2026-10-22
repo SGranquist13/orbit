@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preview: voice. Dictate into the chat (mic button, or hold Ctrl+Shift+Space), tidy speech into a clean prompt, have replies read aloud, or go hands-free. Speech is recognised on your computer.
+
 ## 0.2.1 - 2026-10-21
 
 Nine new previews for running and steering agents: plans, limits, rewind, MCP servers, reviews, Best of N and more.

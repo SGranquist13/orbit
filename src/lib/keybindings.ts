@@ -35,6 +35,8 @@ export const commands: Command[] = [
   command("workbench.theme", "Switch theme", "General", "global", "ctrl+k ctrl+t"),
   command("workbench.focusMode", "Focus mode", "General", "global", "ctrl+k z"),
   command("agent.openChat", "Open workspace chat", "Agent", "global", "ctrl+alt+i"),
+  command("voice.dictate", "Dictate (tap to toggle, hold to talk)", "Agent", "global", "ctrl+shift+space"),
+  command("voice.handsFree", "Toggle hands-free", "Agent", "global"),
   command("agent.askSelection", "Ask about selection", "Agent", "editor", "ctrl+i"),
   command("review.addComment", "Add review comment at cursor", "Agent", "editor"),
   command("review.send", "Send review comments", "Agent", "global"),
