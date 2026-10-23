@@ -95,6 +95,9 @@ fn open(
     for key in crate::agent::process::host_env_keys() {
         cmd.env_remove(key);
     }
+    if let Some(path) = crate::agent::process::child_path() {
+        cmd.env("PATH", path);
+    }
     cmd.env("TERM", "xterm-256color");
     let mut reader = pair.master.try_clone_reader().map_err(error)?;
     let writer = pair.master.take_writer().map_err(error)?;
