@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.2.1"
+version = "0.3.0"
 description = "Orbit: run a fleet of coding agents in parallel worktrees and ship"
 authors = ["SGranquist13"]
 license = "MIT"

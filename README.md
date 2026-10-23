@@ -17,7 +17,7 @@ Every task gets its own git worktree, branch and agent. You get one inbox for al
 [**Download**](https://github.com/SGranquist13/orbit/releases/latest) · [Quick start](#quick-start) · [Features](#features) · [FAQ](#faq) · [Changelog](CHANGELOG.md)
 
 <!-- release:start (written by `bun run release`) -->
-**New in [v0.2.1](https://github.com/SGranquist13/orbit/releases/tag/v0.2.1):** Nine new previews for running and steering agents: plans, limits, rewind, MCP servers, reviews, Best of N and more.
+**New in [v0.3.0](https://github.com/SGranquist13/orbit/releases/tag/v0.3.0):** Talk to your agents: dictate prompts, hear replies in a natural voice, or go hands-free, all on your own computer.
 <!-- release:end -->
 
 <br/>

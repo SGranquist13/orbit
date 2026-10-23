@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-22
+
 Talk to your agents: dictate prompts, hear replies in a natural voice, or go hands-free, all on your own computer.
 
 - Preview: voice. Dictate into the chat (mic button, or hold Ctrl+Shift+Space) and the words land at your cursor; Whisper recognises them on your computer.
