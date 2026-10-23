@@ -2090,4 +2090,53 @@ await step("rewind", async () => {
   await shot("rewind");
 });
 
+await step("voice", async () => {
+  // The harness's fake microphone plays scripts/fixtures/voice-pong.wav once per capture, through the
+  // webview's real getUserMedia, VAD and the real Whisper. Models are downloaded once into a cache outside
+  // the scratch dir (tiny.en 78 MB, Kokoro ~100 MB) and copied into each run's ORBIT_HOME.
+  const cache = path.join(os.tmpdir(), "orbit-e2e-cache");
+  const models = path.join(home, "models");
+  for (const [id, rel] of [["tiny.en", "whisper"], ["kokoro", "kokoro"]]) {
+    const cached = path.join(cache, rel === "whisper" ? "whisper-tiny" : rel);
+    const target = rel === "whisper" ? path.join(models, "whisper") : path.join(models, rel);
+    if (fs.existsSync(cached)) fs.cpSync(cached, target, { recursive: true });
+    else {
+      await invoke("voice_download", { id });
+      fs.cpSync(target, cached, { recursive: true });
+    }
+  }
+  await invoke("update_settings", { patch: { voiceModel: "tiny.en", voiceTtsEngine: "kokoro", voiceReadAloud: "handsfree", voiceAutoSend: false, modelVoiceTidy: "off" } });
+  await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  const composer = `document.querySelector('textarea[placeholder*="Claude"]')`;
+
+  // Dictation: the recording plays in real time (~2 s), then stop inserts the transcript.
+  await js(`document.querySelector('button[aria-label="Dictate"]').click()`);
+  await waitFor("listening", `return !!document.querySelector('button[aria-label="Stop dictation"]')`, 10_000);
+  await sleep(3500);
+  await js(`document.querySelector('button[aria-label="Stop dictation"]').click()`);
+  await waitFor("transcript in the composer", `return /pong/i.test(${composer}?.value ?? '')`, 60_000);
+  const before = await js(turnEnds);
+  await js(`${composer}.focus()`);
+  await key("Enter");
+  await ui.waitTurn(before);
+  await waitFor("pong reply", `return /pong/i.test([...document.querySelectorAll('.prose-chat')].at(-1)?.innerText ?? '')`, 10_000);
+
+  // Read aloud with the natural (Kokoro) voice.
+  await js(`[...document.querySelectorAll('button[aria-label="Read aloud"]')].at(-1).click()`);
+  await waitFor("reading aloud", `return !!document.querySelector('button[aria-label="Stop reading"]')`, 30_000);
+  await js(`document.querySelector('button[aria-label="Stop reading"]').click()`);
+
+  // Hands-free: hears the recording once, sends it, reads the reply back.
+  const users = `return document.querySelectorAll('[data-user-message]').length`;
+  const sent = await js(users);
+  await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
+  await waitFor("hands-free sent", `${users} > ${sent}`, 60_000);
+  await waitFor("reply read back", `return /Speaking/.test(document.querySelector('[data-hands-free]')?.innerText ?? '')`, 240_000);
+  await shot("voice");
+  await js(`document.querySelector('button[aria-label="Hands-free"]').click()`);
+  await waitFor("hands-free off", `return !document.querySelector('[data-hands-free]')`, 5000);
+  const total = await js(users);
+  if (total !== sent + 1) throw new Error(`hands-free sent ${total - sent} messages, expected 1`);
+});
+
 await h.finish();

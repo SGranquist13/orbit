@@ -6,13 +6,14 @@ import { explorerAction, type ExplorerAction } from "./code/Explorer";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
-import { SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, Gauge, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Play, Plug, Plus, Rocket, RotateCcw, ScanSearch, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { Headphones, Mic, Volume2, SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, Gauge, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Play, Plug, Plus, Rocket, RotateCcw, ScanSearch, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { openSelectedInEditor } from "../lib/openEditor";
 import { api, activeProfile, workspacePackItems } from "../lib/ipc";
 import { useApp } from "../stores/app";
 import { startDevServer, stopDevServer } from "../stores/scripts";
+import { useVoice } from "../stores/voice";
 import { pickAttachFolder, requestAttachImage } from "./Chat";
 import { pickRepo } from "./Sidebar";
 import { TeammateAvatar } from "./TeammateAvatar";
@@ -88,7 +89,7 @@ export function Palette() {
           {scope !== "teammates" && (
           <>
           <Command.Group heading="Commands" className={heading}>
-            {commands.map((c) => <Command.Item key={c.id} value={`${c.title} ${c.id} Open ${c.title} Toggle ${c.title}`} className={item} onSelect={run(() => {
+            {commands.filter((c) => !c.id.startsWith("voice.")).map((c) => <Command.Item key={c.id} value={`${c.title} ${c.id} Open ${c.title} Toggle ${c.title}`} className={item} onSelect={run(() => {
               // Restore the editor after the palette unmounts before invoking editor commands.
               window.setTimeout(() => executeCommand(c.id), 0);
             })}><span className="min-w-0 flex-1">{c.title}</span><span className="text-[11px] text-mute">{keyLabel(c.id)}</span></Command.Item>)}
@@ -329,6 +330,34 @@ export function Palette() {
                 >
                   <RotateCcw className="size-3.5" /> New session
                 </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Dictate (speak a prompt, voice input microphone)"
+                  onSelect={run(() => {
+                    useApp.getState().select(selectedId);
+                    void useVoice.getState().toggleDictation(selectedId);
+                  })}
+                >
+                  <Mic className="size-3.5" /> Dictate
+                  <span className="ml-auto text-[11px] text-mute">{keyLabel("voice.dictate")}</span>
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Toggle hands-free (talk to the agent, replies read aloud)"
+                  onSelect={run(() => {
+                    useApp.getState().select(selectedId);
+                    void useVoice.getState().toggleHandsFree(selectedId);
+                  })}
+                >
+                  <Headphones className="size-3.5" /> Toggle hands-free
+                </Command.Item>
+                <Command.Item
+                  className={item}
+                  value="Read last reply aloud (text to speech)"
+                  onSelect={run(() => useVoice.getState().readLastReply(selectedId))}
+                >
+                  <Volume2 className="size-3.5" /> Read last reply aloud
+                </Command.Item>
               </>
             )}
             <Command.Item
@@ -351,6 +380,15 @@ export function Palette() {
               })}
             >
               <Cpu className="size-3.5" /> Local models
+            </Command.Item>
+            <Command.Item className={item} value="Stop speaking (cancel read aloud)" onSelect={run(() => useVoice.getState().stopSpeaking())}>
+              <Square className="size-3.5" /> Stop speaking
+            </Command.Item>
+            <Command.Item className={item} value="Set up voice… (download speech recognition natural voice models)" onSelect={run(() => useVoice.getState().openSetup())}>
+              <Mic className="size-3.5" /> Set up voice…
+            </Command.Item>
+            <Command.Item className={item} value="Voice settings (microphone, speech model, read aloud)" onSelect={run(() => openSettingsAt("voice"))}>
+              <Mic className="size-3.5" /> Voice settings
             </Command.Item>
             <Command.Item className={item} value="Show plan limits usage 5-hour weekly" onSelect={run(() => useApp.getState().openSettingsAt("usage"))}>
               <Gauge className="size-3.5" /> Show plan limits

@@ -6,7 +6,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { previewTimes } from "./routines";
 import { LAUNCH, applyLaunchSeed, launchIssueName, launchMerge, launchSetHero, launchTeammates, launchChanges, launchEvents, launchPr, launchSend, launchSuggestions } from "./mock-launch";
-import type { RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage, McpServer, Review, AttemptGroup, StartAttemptsArgs } from "./ipc";
+import type { VoiceModel, VoiceModelId, VoiceResult, RepoScripts, WorkspaceRunStatus, AgentEvent, Attachment, FileRef, ImageRef, HandoffChip, PartState, PlanPart, PlanView, Teammate, TeammateInput, TeammateMessage, TeammateTask, TeammateView, CleanupCandidate, EnvironmentInfo, FileChange, Issue, Pack, PrStatus, Profile, Related, RemoteDevice, Repo, Routine, RoutineInput, RoutineRun, Settings, SimplifyCandidate, SimplifyRow, SimplifyState, Skill, StoredEvent, Summary, UsageReport, UsageTotals, Workspace, WorkspaceUsage, McpServer, Review, AttemptGroup, StartAttemptsArgs } from "./ipc";
 
 const mockReviews = new Map<string, Review>();
 function fakeReview(workspaceId: string): Review {
@@ -416,6 +416,18 @@ let settings: Settings = {
   modelPrDescription: "default",
   modelTeammateReport: "default",
   modelChiefPlan: "default",
+  modelVoiceTidy: "off",
+  voiceModel: "base.en",
+  voiceDevice: "",
+  voiceAutoSend: false,
+  voiceSilenceMs: 1500,
+  voiceTtsEngine: "kokoro",
+  voiceKokoroVoice: "af_heart",
+  voiceBargeIn: true,
+  voiceMinSpeechMs: 400,
+  voiceReadAloud: "handsfree",
+  voiceTtsVoice: "",
+  voiceTtsRate: 1,
   localAgents: false,
   remoteEnabled: false,
   remotePort: 47821,
@@ -1038,6 +1050,42 @@ function mockTurnPoints(id: string) {
   });
 }
 
+// ── Voice (mock): model downloads, canned transcripts. Capture and speech run in the page, not here. ──
+const voiceModels: VoiceModel[] = [
+  { id: "tiny.en", kind: "stt", sizeBytes: 77_704_715, installed: false },
+  { id: "base.en", kind: "stt", sizeBytes: 147_964_211, installed: false },
+  { id: "small.en", kind: "stt", sizeBytes: 487_614_201, installed: false },
+  { id: "kokoro", kind: "tts", sizeBytes: 102_639_022, installed: false },
+];
+const MOCK_TRANSCRIPTS = [
+  "Add a loading spinner to the sidebar while workspaces load",
+  "Um so like fix the flaky test in the routines file",
+  "Rename the helper in the lib folder and update its callers",
+];
+let voiceUtterance = 0;
+const voiceSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** voice_transcribe: audio is base64 of f32 samples; under half a second is "not a message" like the real filter. */
+async function mockTranscribe(workspaceId: string, audio: string, mode: "dictate" | "handsfree"): Promise<VoiceResult> {
+  const model = voiceModels.find((x) => x.id === settings.voiceModel);
+  if (!model?.installed) throw `no model: download ${settings.voiceModel} in Settings > Voice`;
+  await voiceSleep(600);
+  const samples = Math.floor((audio.length * 3) / 4 / 4);
+  if (samples < 8000) return { workspaceId, text: "", raw: "Thank you.", dropped: true };
+  const raw = MOCK_TRANSCRIPTS[voiceUtterance++ % MOCK_TRANSCRIPTS.length];
+  const text = mode === "dictate" && settings.modelVoiceTidy !== "off" ? raw.replace(/^Um so like /, "").replace(/^./, (c) => c.toUpperCase()) : raw;
+  return { workspaceId, text, raw, dropped: false };
+}
+async function mockVoiceDownload(id: VoiceModelId) {
+  const m = voiceModels.find((x) => x.id === id);
+  if (!m) throw `unknown model ${id}`;
+  const steps = 30;
+  for (let i = 1; i <= steps; i++) {
+    await voiceSleep(100);
+    if (i === steps) m.installed = true;
+    void emit("voice-download", { id, received: Math.round((m.sizeBytes * i) / steps), total: m.sizeBytes, ...(i === steps ? { done: true } : {}) });
+  }
+}
+
 export function installMockBackend() {
   if (LAUNCH) launchTeammates(workspaces);
   mockIPC(
@@ -1615,6 +1663,25 @@ export function installMockBackend() {
           const a2 = args as { schedule: Routine["schedule"]; count?: number };
           return previewTimes(a2.schedule, a2.count ?? 3);
         }
+        case "voice_models":
+          return voiceModels.map((m) => ({ ...m }));
+        case "voice_download":
+          await mockVoiceDownload(id as VoiceModelId);
+          return null;
+        case "voice_delete_model": {
+          const m = voiceModels.find((x) => x.id === id);
+          if (m) m.installed = false;
+          return null;
+        }
+        case "voice_transcribe": {
+          const v = args as { workspaceId: string; audio: string; mode: "dictate" | "handsfree" };
+          return mockTranscribe(v.workspaceId, v.audio, v.mode);
+        }
+        case "voice_file":
+          // The mock has no synthesis model: report "not downloaded" until the fake download finishes, then
+          // hand back junk the engine rejects, so read-aloud falls back to the system voice either way.
+          if (!voiceModels.find((x) => x.id === "kokoro")?.installed) throw "no model: kokoro is not downloaded";
+          return new ArrayBuffer(8);
         case "suggest_prompts":
           await new Promise((r) => setTimeout(r, 1200));
           if (LAUNCH) return launchSuggestions(id);

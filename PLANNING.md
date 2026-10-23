@@ -61,6 +61,16 @@ Show the Claude and Codex plan windows (5-hour, weekly) with used share and rese
 
 ## Design notes
 
+### 14. Voice: talk to your agents
+
+Speak instead of type, in any workspace chat, without sending audio anywhere.
+
+- **Dictation.** A mic button in the composer and a rebindable shortcut (Ctrl+Shift+Space: tap to toggle, hold to talk). What you say is inserted at the cursor, so it adds to a draft instead of replacing it; it works mid-run for steering. Auto-send is a setting, off by default.
+- **On-device recognition.** Whisper (whisper.cpp) runs inside Orbit. Pick tiny, base (default) or small in Settings > Voice and download it once. The workspace's repo, branch, file names and skill ids prime the recogniser, so code words come through.
+- **Tidy-up.** An optional pass turns rambling speech into a clean prompt: filler gone, punctuation fixed, "chat dot tsx" becomes `Chat.tsx`. It is a utility task like the others in Settings > Models (Claude, a local model, or off); if it fails, your words go through as spoken.
+- **Read aloud.** A speaker button on each reply, and a setting to read replies automatically (off / hands-free only / always), with your choice of Windows voice and speed. Code blocks are summarised, not spelled out.
+- **Hands-free.** Talk, pause, and it sends; the reply is read back; then it listens again. The mic is closed while Orbit speaks. Esc, the shortcut or typing ends it; saying "stop" interrupts the agent.
+
 ### 13. VS Code keybindings, rebindable
 
 The whole app follows VS Code's default shortcuts, so muscle memory carries over; Orbit-only views use keys VS Code doesn't.

@@ -24,12 +24,13 @@ pub enum Task {
     PrDescription,
     TeammateReport,
     ChiefPlan,
+    VoiceTidy,
 }
 
 impl Task {
     /// Optional tasks are simply skipped when their backend fails; required ones fall back to Claude.
     pub fn optional(self) -> bool {
-        matches!(self, Task::Suggestions | Task::WorkspaceName)
+        matches!(self, Task::Suggestions | Task::WorkspaceName | Task::VoiceTidy)
     }
 
     /// The task's setting: "default" | "off" | "local:<model>".
@@ -42,6 +43,7 @@ impl Task {
             Task::PrDescription => &s.model_pr_description,
             Task::TeammateReport => &s.model_teammate_report,
             Task::ChiefPlan => &s.model_chief_plan,
+            Task::VoiceTidy => &s.model_voice_tidy,
         }
     }
 }
@@ -111,6 +113,7 @@ pub fn last_errors() -> HashMap<String, String> {
 /// How callers use each task (schemas are suggestions; any object schema works):
 /// - `Suggestions`: `{"suggestions": string[<=3]}`; optional.
 /// - `WorkspaceName`: `{"name": string}` (<= 5 words); optional, off by default.
+/// - `VoiceTidy`: `{"text": string}`; optional, off by default; cleans dictated coding messages.
 /// - `CommitMessage`: `{"subject": string, "body": string}`; required, so `Ok(Some(_))` always (or `Err`).
 /// - `RoutineSummary`: `{"summary": string, "nothingToDo": boolean}`; required.
 /// - `TeammateReport`: `{"summary": string, "needsYou": boolean, "question"?: string}`; required (`teammates::report`).

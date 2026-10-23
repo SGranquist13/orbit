@@ -250,6 +250,9 @@ pub fn command(bin: &str, args: &[String], cwd: &Path) -> anyhow::Result<Command
 
 /// Spawns a child and ties its process tree to Orbit's lifetime on Windows.
 pub fn spawn(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    if let Some(path) = child_path() {
+        cmd.env("PATH", path);
+    }
     let child = cmd.spawn()?;
     super::job::track(&child);
     Ok(child)
@@ -257,6 +260,9 @@ pub fn spawn(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
 
 /// Synchronous counterpart used by git/gh, version probes and check commands.
 pub fn spawn_std(cmd: &mut std::process::Command) -> std::io::Result<std::process::Child> {
+    if let Some(path) = child_path() {
+        cmd.env("PATH", path);
+    }
     let child = cmd.spawn()?;
     super::job::track_std(&child);
     Ok(child)
@@ -268,6 +274,32 @@ fn scrub_env(cmd: &mut Command) {
     for key in host_env_keys() {
         cmd.env_remove(key);
     }
+}
+
+/// PATH for children when Orbit runs from a cargo build (`tauri dev`, `cargo test`). Cargo prepends
+/// every native search directory a build script declares, and whisper-rs-sys declares ~80 CMake folders
+/// under `target`, which pushes PATH past cmd.exe's 8,191-character limit: `cmd /C` then finds nothing
+/// (not even `where`). Drops entries inside the `target` dir holding this exe; `None` when nothing changes
+/// (always the case for the installed app).
+pub(crate) fn child_path() -> Option<&'static OsString> {
+    static PATH: OnceLock<Option<OsString>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let target = exe.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("target")))?;
+        let path = std::env::var_os("PATH")?;
+        let kept: Vec<PathBuf> = std::env::split_paths(&path).filter(|p| !inside(p, target)).collect();
+        if kept.len() == std::env::split_paths(&path).count() {
+            return None;
+        }
+        std::env::join_paths(kept).ok()
+    })
+    .as_ref()
+}
+
+fn inside(path: &Path, dir: &Path) -> bool {
+    let lower = |p: &Path| p.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let (path, dir) = (lower(path), lower(dir));
+    path == dir || path.starts_with(&format!("{dir}\\"))
 }
 
 /// Host session variables that must not leak into agents or interactive terminals.
@@ -290,7 +322,27 @@ fn is_host_var(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{fallback_dirs, is_host_var};
+    use super::{fallback_dirs, inside, is_host_var};
+
+    #[test]
+    fn cargo_build_dirs_are_dropped_from_child_path() {
+        use std::path::Path;
+        let target = Path::new(r"C:\src\orbit\src-tauri\target");
+        assert!(inside(Path::new(r"C:\src\orbit\src-tauri\target\debug\build\whisper-rs-sys-1\out\build"), target));
+        assert!(inside(Path::new(r"c:/SRC/orbit/src-tauri/target/debug/deps/"), target));
+        assert!(inside(Path::new(r"C:\src\orbit\src-tauri\target"), target));
+        assert!(!inside(Path::new(r"C:\Windows\System32"), target));
+        assert!(!inside(Path::new(r"C:\src\orbit\src-tauri\target-other\bin"), target));
+    }
+
+    #[test]
+    fn child_processes_can_run_cmd_builtins_and_system_tools() {
+        // Under `cargo test` PATH holds whisper-rs-sys's build folders; `child_path` must keep cmd usable.
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "where ping"]).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let out = super::spawn_std(&mut cmd).unwrap().wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
 
     #[test]
     fn codex_is_found_where_the_codex_app_and_vscode_extension_keep_it() {
