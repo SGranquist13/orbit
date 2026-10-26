@@ -4,7 +4,8 @@ import type { LocalReview, NewPrComment, PrDetail, PrFile, PrRef, PrThread, Revi
 const VIEWER = "you";
 const hour = 3_600_000;
 const iso = (agoHours: number) => new Date(Date.now() - agoHours * hour).toISOString();
-const avatar = (login: string) => (login === "ghost" ? "" : `https://avatars.githubusercontent.com/${login}?s=64`);
+// The mock's people are made up; real GitHub avatars for their names would show strangers, so cards fall back to initials.
+const avatar = (_login: string) => "";
 
 const BASE = "mb0000000000000000000000000000000000base";
 
