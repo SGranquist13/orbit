@@ -15,7 +15,7 @@ const sessionOld = `export interface Session {
   expiresAt: number;
 }
 
-const SESSION_KEY = "superset.session";
+const SESSION_KEY = "relay.session";
 
 /** Restore a session from storage. */
 export async function restoreSession(): Promise<Session | null> {
@@ -36,7 +36,7 @@ export interface Session {
   expiresAt: number;
 }
 
-const SESSION_KEY = "superset.session";
+const SESSION_KEY = "relay.session";
 const LEEWAY_MS = 30_000;
 
 /** Restore a session only while its token remains valid, refreshing it when it is about to expire. */
@@ -110,14 +110,14 @@ function basePr(repo: string, number: number, title: string, author: string, hea
     headRef: "", baseRef: "main", headSha: head, mergeBaseSha: BASE, reviewDecision: "REVIEW_REQUIRED", mergeable: "MERGEABLE",
     checks: { passed: 4, failed: 0, pending: 0, failing: [] }, createdAt: iso(30), updatedAt: iso(2), files, threads: [], reviews: [], comments: [],
     isCrossRepository: false, headRepo: repo, commits: [], viewerLastReviewSha: null, pendingReview: null,
-    requestedReviewers: [], suggestedReviewers: [], localRepoId: repo === "acme/superset" ? "r1" : null, workspaceId: null,
+    requestedReviewers: [], suggestedReviewers: [], localRepoId: repo === "acme/relay" ? "r1" : null, workspaceId: null,
   };
 }
 
 function seed(): Map<string, MockPr> {
   const prs = new Map<string, MockPr>();
   const head842 = "h842aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  const d842 = basePr("acme/superset", 842, "Refresh sessions before they expire and revoke on sign-out", "dana", head842, [
+  const d842 = basePr("acme/relay", 842, "Refresh sessions before they expire and revoke on sign-out", "dana", head842, [
     file("src/auth/session.ts", "modified", 8, 1),
     file("src/auth/refresh.ts", "added", 11, 0),
     file("docs/AUTH.md", "renamed", 3, 2, "docs/auth.md"),
@@ -164,20 +164,20 @@ function seed(): Map<string, MockPr> {
     [`${c2}:docs/AUTH.md`, authDocOld],
     [`${c1}:src/auth/session.ts`, sessionOld.replace(/^/, 'import { refresh } from "./refresh";\n\n')],
   ]);
-  prs.set("acme/superset#842", { detail: d842, blobs: b842 });
+  prs.set("acme/relay#842", { detail: d842, blobs: b842 });
 
   const head839 = "h839bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-  const d839 = basePr("acme/superset", 839, "Docs: explain the session lifetime", VIEWER, head839, [file("README.md", "modified", 1, 1)]);
+  const d839 = basePr("acme/relay", 839, "Docs: explain the session lifetime", VIEWER, head839, [file("README.md", "modified", 1, 1)]);
   d839.headRef = "you/docs-sessions";
   d839.body = "Small README fix.";
   d839.reviewDecision = "";
   d839.commits = [{ oid: head839, message: "Docs: explain the session lifetime", author: VIEWER, committedAt: iso(9), parentOid: BASE }];
   d839.suggestedReviewers = ["dana"];
-  prs.set("acme/superset#839", {
+  prs.set("acme/relay#839", {
     detail: d839,
     blobs: new Map([
-      [`${BASE}:README.md`, "# Superset\n\n## Authentication\n\nSessions expire after 12 hours.\n"],
-      [`${head839}:README.md`, "# Superset\n\n## Authentication\n\nSessions expire after 24 hours.\n"],
+      [`${BASE}:README.md`, "# Relay\n\n## Authentication\n\nSessions expire after 12 hours.\n"],
+      [`${head839}:README.md`, "# Relay\n\n## Authentication\n\nSessions expire after 24 hours.\n"],
     ]),
   });
 
@@ -203,10 +203,10 @@ function seed(): Map<string, MockPr> {
 
 const prs = seed();
 const queue: ReviewQueueItem[] = [
-  { repo: "acme/superset", number: 842, title: prs.get("acme/superset#842")!.detail.title, url: "https://github.com/acme/superset/pull/842", author: "dana", updatedAt: iso(2), isDraft: false, reviewDecision: "REVIEW_REQUIRED", sources: ["requested", "involves"] },
+  { repo: "acme/relay", number: 842, title: prs.get("acme/relay#842")!.detail.title, url: "https://github.com/acme/relay/pull/842", author: "dana", updatedAt: iso(2), isDraft: false, reviewDecision: "REVIEW_REQUIRED", sources: ["requested", "involves"] },
   { repo: "acme/design-system", number: 845, title: prs.get("acme/design-system#845")!.detail.title, url: "https://github.com/acme/design-system/pull/845", author: "lee", updatedAt: iso(5), isDraft: false, reviewDecision: "REVIEW_REQUIRED", sources: ["requested"] },
-  { repo: "acme/superset", number: 839, title: prs.get("acme/superset#839")!.detail.title, url: "https://github.com/acme/superset/pull/839", author: VIEWER, updatedAt: iso(9), isDraft: false, reviewDecision: "", sources: ["mine"] },
-  { repo: "acme/superset", number: 828, title: "WIP: move auth to a worker", url: "https://github.com/acme/superset/pull/828", author: VIEWER, updatedAt: iso(70), isDraft: true, reviewDecision: "", sources: ["mine"] },
+  { repo: "acme/relay", number: 839, title: prs.get("acme/relay#839")!.detail.title, url: "https://github.com/acme/relay/pull/839", author: VIEWER, updatedAt: iso(9), isDraft: false, reviewDecision: "", sources: ["mine"] },
+  { repo: "acme/relay", number: 828, title: "WIP: move auth to a worker", url: "https://github.com/acme/relay/pull/828", author: VIEWER, updatedAt: iso(70), isDraft: true, reviewDecision: "", sources: ["mine"] },
 ];
 
 let nextId = 100;
@@ -280,7 +280,7 @@ export async function mockReviewCommand(cmd: string, args: unknown, host: MockHo
       await wait(400);
       return clone(queue);
     case "pr_review_parse_ref":
-      return parseRefMock(a.input, a.repoId === "r1" ? "acme/superset" : null);
+      return parseRefMock(a.input, a.repoId === "r1" ? "acme/relay" : null);
     case "pr_review_detail":
       await wait(300);
       return clone(get(a.repo, a.number).detail);
