@@ -257,13 +257,18 @@ pub struct FileChange {
     pub untracked: bool,
 }
 
+/// Merge base used for workspace changes, falling back to HEAD for a new base.
+pub fn changes_merge_base(worktree: &Path, base: &str) -> String {
+    let origin_base = format!("origin/{base}");
+    run(worktree, &["merge-base", "HEAD", &origin_base])
+        .or_else(|_| run(worktree, &["merge-base", "HEAD", base]))
+        .unwrap_or_else(|_| "HEAD".into())
+}
+
 /// Everything this workspace changed relative to where it branched from base:
 /// committed + uncommitted tracked changes, plus untracked files.
 pub fn changes(worktree: &Path, base: &str) -> anyhow::Result<Vec<FileChange>> {
-    let origin_base = format!("origin/{base}");
-    let merge_base = run(worktree, &["merge-base", "HEAD", &origin_base])
-        .or_else(|_| run(worktree, &["merge-base", "HEAD", base]))
-        .unwrap_or_else(|_| "HEAD".into());
+    let merge_base = changes_merge_base(worktree, base);
 
     let mut out: Vec<FileChange> = run(worktree, &["diff", "--numstat", &merge_base])?
         .lines()

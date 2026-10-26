@@ -549,6 +549,15 @@ export interface Settings {
   terminalShell: string;
   /** null selects the first detected editor. */
   editorCommand: string | null;
+  // Review view
+  reviewDiffLayout: "unified" | "split";
+  /** Unchanged lines kept around each change before the rest collapses. */
+  reviewContextLines: number;
+  reviewWrapLines: boolean;
+  /** Which GitHub searches feed the Review queue. */
+  reviewQueueSources: ReviewQueueSource[];
+  /** Moving to the next file marks the current one viewed. */
+  reviewMarkViewedOnNext: boolean;
 }
 
 /** `llm.rs`: local model servers for utility tasks. */
@@ -994,6 +1003,151 @@ export const voiceApi = {
   file: (path: string) => invoke<ArrayBuffer>("voice_file", { path }),
 };
 
+
+// ── Review view (src-tauri/src/pr_review.rs). `repo` is always "owner/name". ──
+export type ReviewQueueSource = "requested" | "mine" | "involves";
+export interface PrRef {
+  repo: string;
+  number: number;
+}
+export interface ReviewQueueItem {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** "" | "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" */
+  reviewDecision: string;
+  /** Every queue search that returned this PR. */
+  sources: ReviewQueueSource[];
+}
+export type PrFileStatus = "added" | "modified" | "removed" | "renamed" | "copied" | "changed";
+export interface PrFile {
+  path: string;
+  /** Set for renames and copies: the path on the base side. */
+  previousPath: string | null;
+  additions: number;
+  deletions: number;
+  status: PrFileStatus;
+  /** GitHub's per-viewer "Viewed" checkbox. */
+  viewed: boolean;
+}
+export interface PrComment {
+  /** REST id (databaseId): the one replies use. */
+  id: number;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+  isMine: boolean;
+}
+/** "old" = the base side (GitHub LEFT), "new" = the head side (RIGHT). */
+export type DiffSide = "old" | "new";
+export interface PrThread {
+  /** GraphQL node id: resolve/unresolve use it. */
+  id: string;
+  path: string;
+  side: DiffSide;
+  /** null when the thread is outdated and no longer maps onto the current diff. */
+  line: number | null;
+  startLine: number | null;
+  originalLine: number | null;
+  isResolved: boolean;
+  isOutdated: boolean;
+  canResolve: boolean;
+  comments: PrComment[];
+}
+export interface PrReviewSummary {
+  id: string;
+  author: string;
+  avatarUrl: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  body: string;
+  submittedAt: string | null;
+}
+export interface PrTimelineComment {
+  id: number;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+}
+export interface PrDetail {
+  /** GraphQL node id of the PR (mark-viewed uses it). */
+  id: string;
+  repo: string;
+  number: number;
+  title: string;
+  /** Markdown. */
+  body: string;
+  url: string;
+  author: string;
+  authorAvatarUrl: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  viewerLogin: string;
+  /** GitHub refuses Approve / Request changes on your own PR. */
+  viewerDidAuthor: boolean;
+  headRef: string;
+  baseRef: string;
+  headSha: string;
+  /** The diff's old side, as GitHub computes it (merge base of base and head). */
+  mergeBaseSha: string;
+  reviewDecision: string;
+  mergeable: string;
+  checks: PrStatus["checks"];
+  createdAt: string;
+  updatedAt: string;
+  files: PrFile[];
+  threads: PrThread[];
+  reviews: PrReviewSummary[];
+  comments: PrTimelineComment[];
+}
+export type ReviewVerdict = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+/** A comment to post: `line` is the last line of the range, `startLine` its first (null = one line). */
+export interface NewPrComment {
+  path: string;
+  side: DiffSide;
+  line: number;
+  startLine: number | null;
+  body: string;
+}
+/** A local workspace's pending changes: everything in its worktree vs the merge base with its base branch. */
+export interface LocalReview {
+  workspaceId: string;
+  root: string;
+  baseSha: string;
+  headSha: string;
+  /** Uncommitted or untracked changes present. */
+  dirty: boolean;
+  files: FileChange[];
+}
+
+export const reviewApi = {
+  /** Open PRs from the configured searches, newest first; rejects with "gh is not logged in…" when gh can't reach GitHub. */
+  queue: () => invoke<ReviewQueueItem[]>("pr_review_queue"),
+  /** Parses a PR URL, `owner/repo#12` or `#12` / `12` (the latter need `repoId`, resolved through its GitHub remote). */
+  parseRef: (input: string, repoId: string | null) => invoke<PrRef>("pr_review_parse_ref", { input, repoId }),
+  detail: (repo: string, number: number) => invoke<PrDetail>("pr_review_detail", { repo, number }),
+  /** File text at a commit; null when absent there, binary, or over 1 MB. */
+  file: (repo: string, sha: string, path: string) => invoke<string | null>("pr_review_file", { repo, sha, path }),
+  /** Rejects with "stale: …" when the PR head moved past `commitId`. */
+  submit: (repo: string, number: number, commitId: string, event: ReviewVerdict, body: string, comments: NewPrComment[]) =>
+    invoke<void>("pr_review_submit", { repo, number, commitId, event, body, comments }),
+  /** A single inline comment, posted at once (outside a review). */
+  comment: (repo: string, number: number, commitId: string, comment: NewPrComment) =>
+    invoke<void>("pr_review_comment", { repo, number, commitId, comment }),
+  reply: (repo: string, number: number, commentId: number, body: string) =>
+    invoke<void>("pr_review_reply", { repo, number, commentId, body }),
+  resolve: (threadId: string, resolved: boolean) => invoke<void>("pr_review_resolve", { threadId, resolved }),
+  viewed: (prId: string, path: string, viewed: boolean) => invoke<void>("pr_review_viewed", { prId, path, viewed }),
+  /** A conversation (timeline) comment. */
+  issueComment: (repo: string, number: number, body: string) => invoke<void>("pr_review_issue_comment", { repo, number, body }),
+  /** Text per file comes from codeApi.fileAt(root, path, "base") and codeApi.readFile(root, path). */
+  local: (workspaceId: string) => invoke<LocalReview>("local_review", { workspaceId }),
+};
 
 export const events = {
   onVoiceDownload: (cb: (d: VoiceDownload) => void): Promise<UnlistenFn> => listen<VoiceDownload>("voice-download", (e) => cb(e.payload)),

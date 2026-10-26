@@ -24,7 +24,6 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 **Exploring**
 - Approving or denying tool calls interactively
-- A full code-review view
 - macOS and Linux builds
 
 ## Fleet & workspaces
@@ -162,6 +161,22 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Ask about a selection (Ctrl+I) | ✅ | Sends the lines + your question to the workspace's agent |
 | Open in Code from the chat header, Ship panel and palette | ✅ | |
 | Settings > Editor: font size, tabs, word wrap, autosave, follow the agent, terminal shell | 🧪 | |
+
+## Review
+
+| Feature | Status | Notes |
+|---|---|---|
+| **Review view** (Alt+6): one queue for local workspaces with changes and GitHub pull requests waiting on you | 🧪 | Sidebar badge counts your review requests |
+| Review a workspace's changes against its base (commits, uncommitted and new files), file by file with viewed marks | 🧪 | |
+| Comment on any line, a range (Shift-click) or a removed line, then send everything to the agent as one message | 🧪 | Shares drafts with the Code view's diff comments |
+| Mark reviewed: see when the agent changes a workspace again | 🧪 | |
+| Review GitHub PRs: open by link, `owner/repo#12` or `#12` | 🧪 | Uses your `gh` login |
+| Inline comments on either side, multi-line ranges and suggested changes | 🧪 | Add to your review, or post a single comment at once |
+| Reply to and resolve threads; outdated comments kept above the file | 🧪 | |
+| Mark files viewed (synced with GitHub) | 🧪 | |
+| Submit Comment, Approve or Request changes, with a summary | 🧪 | Warns when new commits arrive while you review |
+| Conversation tab: description, reviews and comments, with a comment box | 🧪 | |
+| Unified and split diffs, syntax highlighting, word-level changes, collapsed unchanged lines | 🧪 | Settings > Review |
 
 ## Look & feel
 

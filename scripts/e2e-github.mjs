@@ -318,6 +318,83 @@ await h.step("preflight-flags-consumer", async () => {
   }
 });
 
+// Review view on a real PR (PLANNING #15): inline comments on both sides, a range, submit, reply, resolve, viewed.
+await h.step("review-pr", async () => {
+  const clone = path.join(scratch, "review-clone");
+  const branch = `e2e/review-${stamp}`;
+  fs.rmSync(clone, { recursive: true, force: true });
+  execFileSync("gh", ["repo", "clone", SANDBOX, clone, "--", "-q"], { stdio: "ignore" });
+  const git = (...a) => execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.com", ...a], { cwd: clone, stdio: "ignore" });
+  git("checkout", "-q", "-b", branch);
+  // Every README line changes, so old-side lines 1-2 are both removed lines.
+  const readme = path.join(clone, "README.md");
+  fs.writeFileSync(readme, fs.readFileSync(readme, "utf8").split("\n").map((l, i, a) => (i === a.length - 1 && l === "" ? l : `${l} (e2e)`)).join("\n"));
+  git("commit", "-qam", "e2e: review fixture");
+  git("push", "-q", "-u", "origin", branch);
+  const url = gh(["pr", "create", "--head", branch, "--title", `e2e review ${stamp}`, "--body", "Throwaway PR for the Review view e2e."], clone);
+  const number = Number(String(url).split("/").pop());
+  const set = (sel, text) => `const t = ${sel}; Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true }));`;
+  const col = (kind) => (kind === "del" ? 0 : 1);
+  const row = (kind, n) => `[...document.querySelectorAll('[data-review-diff="README.md"] .rv-row.rv-${kind}')].find(r => r.querySelectorAll('.rv-num')[${col(kind)}].innerText === '${n}')`;
+  const press = (kind, n, shift = false) => h.js(`${row(kind, n)}.querySelectorAll('.rv-num')[${col(kind)}].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, shiftKey: ${shift} }))`);
+  const addDraft = async (text) => {
+    await h.waitFor("comment box", `return !!document.querySelector('[data-composer] textarea')`, 5000);
+    await h.js(set(`document.querySelector('[data-composer] textarea')`, text));
+    await h.js(`[...document.querySelectorAll('[data-composer] button')].find(b => b.innerText === 'Add review comment').click()`);
+    await h.waitFor("composer closed", `return !document.querySelector('[data-composer]')`, 5000);
+  };
+  try {
+    await h.key("6", { alt: true });
+    await h.waitFor("Review view", `return !!document.querySelector('[data-view="review"]')`, 10_000);
+    const input = `document.querySelector('input[aria-label="Open a pull request"]')`;
+    await h.js(`const i = ${input}; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ${JSON.stringify(`${SANDBOX}#${number}`)}); i.dispatchEvent(new Event('input', { bubbles: true }));`);
+    await h.js(`${input}.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+    await h.waitFor("PR open", `return document.querySelector('[data-view="review"] h1')?.innerText.includes(${JSON.stringify(`e2e review ${stamp}`)})`, 30_000);
+    await h.js(`document.querySelector('[data-review-file="README.md"]').click(); document.querySelector('button[title="Unified"]')?.click()`);
+    await h.waitFor("diff rendered", `return !!${row("add", 1)}`, 30_000);
+    await press("add", 1);
+    await addDraft("New side comment from the e2e.");
+    await press("del", 1);
+    await sleep(200);
+    await press("del", 2, true);
+    await h.waitFor("old-side range", `return document.querySelector('[data-composer]')?.innerText.includes('lines 1–2 (base)')`, 5000);
+    await addDraft("Old side range from the e2e.");
+    await h.js(`document.querySelector('[data-testid="review-submit-open"]').click()`);
+    await h.js(set(`document.querySelector('textarea[placeholder^="Leave a summary"]')`, "Review from the Orbit e2e."));
+    await h.js(`document.querySelector('[data-testid="review-submit"]').click()`);
+    await h.waitFor("threads posted", `return document.querySelectorAll('[data-thread]').length >= 2 && !document.querySelector('[data-draft]')`, 60_000);
+    const comments = gh(["api", `repos/${SANDBOX}/pulls/${number}/comments`], clone);
+    const right = comments.find((c) => c.body.includes("New side comment"));
+    const left = comments.find((c) => c.body.includes("Old side range"));
+    if (right?.side !== "RIGHT" || right?.line !== 1 || right?.path !== "README.md") throw new Error(`new-side comment wrong: ${JSON.stringify(right)}`);
+    if (left?.side !== "LEFT" || left?.start_line !== 1 || left?.line !== 2) throw new Error(`old-side range wrong: ${JSON.stringify(left)}`);
+    const reviews = gh(["api", `repos/${SANDBOX}/pulls/${number}/reviews`], clone);
+    if (!reviews.some((r) => r.state === "COMMENTED" && r.body === "Review from the Orbit e2e.")) throw new Error("review summary missing");
+
+    // Reply and resolve on the new-side thread, then mark the file viewed.
+    const thread = `[...document.querySelectorAll('[data-thread]')].find(t => t.innerText.includes('New side comment'))`;
+    await h.js(`[...${thread}.querySelectorAll('button')].find(b => b.innerText.includes('Reply')).click()`);
+    await h.js(set(`${thread}.querySelector('textarea')`, "Reply from the e2e."));
+    await h.js(`[...${thread}.querySelectorAll('button')].find(b => b.innerText === 'Reply').click()`);
+    await h.until("reply posted", async () => gh(["api", `repos/${SANDBOX}/pulls/${number}/comments`], clone).some((c) => c.in_reply_to_id === right.id && c.body === "Reply from the e2e."), 60_000, 1000);
+    await h.waitFor("reply shown", `return !!${thread} && ${thread}.innerText.includes('Reply from the e2e.')`, 30_000);
+    await h.js(`[...${thread}.querySelectorAll('button')].find(b => b.innerText === 'Resolve').click()`);
+    await h.js(`document.querySelector('[data-testid="review-viewed"]').click()`);
+    const [owner, name] = SANDBOX.split("/");
+    const query = `query { repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { reviewThreads(first: 10) { nodes { isResolved comments(first: 1) { nodes { body } } } } files(first: 10) { nodes { path viewerViewedState } } } } }`;
+    await h.until("resolved and viewed on GitHub", async () => {
+      const pr = gh(["api", "graphql", "-f", `query=${query}`], clone).data.repository.pullRequest;
+      const resolved = pr.reviewThreads.nodes.find((t) => t.comments.nodes[0]?.body.includes("New side comment"))?.isResolved;
+      const viewed = pr.files.nodes.find((f) => f.path === "README.md")?.viewerViewedState === "VIEWED";
+      return resolved && viewed;
+    }, 60_000, 2000);
+    await h.shot("gh-05-review-pr");
+  } finally {
+    closePr(number, branch);
+    await h.key("1", { alt: true });
+  }
+});
+
 // Leave the sandbox tidy: close anything this run left open.
 for (const { number, headRefName } of gh(["pr", "list", "--state", "open", "--json", "number,headRefName"])) closePr(number, headRefName);
 await h.finish();

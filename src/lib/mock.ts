@@ -1,4 +1,5 @@
 import { mockCodeCommand, simulateCodeTurn } from "./code/mock";
+import { mockReviewCommand } from "./review/mock";
 import { BUILTIN_MODELS } from "./settings";
 // Browser-only mock backend: `bun run dev` + open http://localhost:1420 to iterate on UI
 // without building the Rust app. Never loaded inside Tauri.
@@ -399,6 +400,11 @@ let settings: Settings = {
   editorLiveTyping: "stream",
   terminalShell: "",
   editorCommand: null,
+  reviewDiffLayout: "unified",
+  reviewContextLines: 3,
+  reviewWrapLines: false,
+  reviewQueueSources: ["requested", "mine"],
+  reviewMarkViewedOnNext: false,
   syncIntervalMinutes: 10,
   staleDays: 3,
   staleBehind: 20,
@@ -1094,6 +1100,7 @@ export function installMockBackend() {
       const id = a.id ?? "";
       // Code filesystem and the tiny PTY shell share the same per-root mock trees.
       if (cmd.startsWith("code_") || cmd.startsWith("pty_")) return mockCodeCommand(cmd, args);
+      if (cmd.startsWith("pr_review_") || cmd === "local_review") return mockReviewCommand(cmd, args, (id) => workspaces.find((w) => w.id === id)?.path ?? null);
       switch (cmd) {
         case "attempt_group": {
           const group = attemptGroups.find((g) => g.id === id);

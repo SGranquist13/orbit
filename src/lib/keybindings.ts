@@ -23,7 +23,7 @@ export const commands: Command[] = [
   command("workbench.toggleSidebar", "Toggle sidebar", "General", "global", "ctrl+b"),
   command("code.toggleActivity", "Toggle Activity column", "Code", "global", "ctrl+alt+b"),
   command("workbench.toggleShip", "Toggle Ship panel", "General", "global", "ctrl+shift+g"),
-  ...["inbox", "code", "routines", "teammates", "issues"].map((v, i) =>
+  ...["inbox", "code", "routines", "teammates", "issues", "review"].map((v, i) =>
     command(`views.${v}`, `Open ${v}`, "Views", "global", `alt+${i + 1}`),
   ),
   command("workbench.newWorkspace", "New workspace", "General", "notEditor", "ctrl+n"),

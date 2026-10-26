@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Review your agents' work and your team's pull requests in one place, without leaving Orbit.
+
+- Preview: the Review view (Alt+6). Read what each workspace's agent changed, file by file, comment on any line (or a range, or a removed line) and send all your comments to the agent as one message. Mark a workspace reviewed and Orbit shows when its agent changes things again.
+- Preview: review GitHub pull requests in Orbit. Your review requests and your own PRs are listed for you, or open any PR by link or number. Comment inline, suggest changes, reply to and resolve threads, mark files viewed, and submit Comment, Approve or Request changes.
+- Preview: unified or split diffs with syntax highlighting, word-level changes and collapsed unchanged lines; Settings > Review sets the defaults.
+
 ## 0.3.0 - 2026-10-22
 
 Talk to your agents: dictate prompts, hear replies in a natural voice, or go hands-free, all on your own computer.

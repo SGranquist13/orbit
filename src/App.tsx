@@ -25,6 +25,7 @@ const Settings = lazy(() => import("./components/Settings").then((m) => ({ defau
 const Routines = lazy(() => import("./components/Routines").then((m) => ({ default: m.Routines })));
 const Teammates = lazy(() => import("./components/Teammates").then((m) => ({ default: m.Teammates })));
 const TeammateEditor = lazy(() => import("./components/Teammates").then((m) => ({ default: m.TeammateEditor })));
+const ReviewView = lazy(() => import("./components/review/ReviewView").then((m) => ({ default: m.ReviewView })));
 const Attempts = lazy(() => import("./components/Attempts").then((m) => ({ default: m.Attempts })));
 const SimplifyPanel = lazy(() => import("./components/SimplifyPanel").then((m) => ({ default: m.SimplifyPanel })));
 
@@ -72,6 +73,8 @@ export default function App() {
         <Lazy><Issues /></Lazy>
       ) : view === "routines" ? (
         <Lazy><Routines /></Lazy>
+      ) : view === "review" ? (
+        <Lazy><ReviewView /></Lazy>
       ) : view === "attempts" ? (
         <Lazy><Attempts /></Lazy>
       ) : view === "teammate" ? (

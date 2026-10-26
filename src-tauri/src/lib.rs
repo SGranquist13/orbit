@@ -21,6 +21,7 @@ mod editor;
 mod setup;
 mod simplify;
 mod review;
+mod pr_review;
 mod skills;
 mod chief;
 mod attempts;
@@ -1622,6 +1623,17 @@ pub fn run() {
             rewind::rewind_workspace,
             rewind::branch_from_turn,
             workspace_changes,
+            pr_review::pr_review_queue,
+            pr_review::pr_review_parse_ref,
+            pr_review::pr_review_detail,
+            pr_review::pr_review_file,
+            pr_review::pr_review_submit,
+            pr_review::pr_review_comment,
+            pr_review::pr_review_reply,
+            pr_review::pr_review_resolve,
+            pr_review::pr_review_viewed,
+            pr_review::pr_review_issue_comment,
+            pr_review::local_review,
             archive_workspace,
             get_setting,
             get_settings,

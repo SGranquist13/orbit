@@ -129,7 +129,7 @@ fn parse_pr(v: &Value) -> PrStatus {
 }
 
 /// Rollup items are either CheckRuns (`status`/`conclusion`) or StatusContexts (`state`).
-fn summarize_checks(rollup: &Value) -> Checks {
+pub(crate) fn summarize_checks(rollup: &Value) -> Checks {
     let mut c = Checks::default();
     for item in rollup.as_array().into_iter().flatten() {
         let name = item["name"].as_str().or(item["context"].as_str()).unwrap_or("check").to_string();

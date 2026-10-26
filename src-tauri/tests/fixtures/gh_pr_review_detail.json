@@ -1,0 +1,127 @@
+{
+  "data": {
+    "viewer": {
+      "login": "me"
+    },
+    "repository": {
+      "nameWithOwner": "o/r",
+      "pullRequest": {
+        "id": "PR1",
+        "number": 12,
+        "title": "Rename file",
+        "body": "Body",
+        "url": "https://github.com/o/r/pull/12",
+        "author": {
+          "login": "author",
+          "avatarUrl": "avatar"
+        },
+        "state": "OPEN",
+        "isDraft": false,
+        "viewerDidAuthor": false,
+        "headRefName": "feature",
+        "baseRefName": "main",
+        "headRefOid": "head",
+        "baseRefOid": "base",
+        "reviewDecision": null,
+        "mergeable": "MERGEABLE",
+        "createdAt": "2026-01-01",
+        "updatedAt": "2026-02-01",
+        "files": {
+          "nodes": [
+            {
+              "path": "new.rs",
+              "viewerViewedState": "VIEWED"
+            },
+            {
+              "path": "removed.rs",
+              "viewerViewedState": "UNVIEWED"
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "reviewThreads": {
+          "nodes": [
+            {
+              "id": "T1",
+              "path": "new.rs",
+              "line": 8,
+              "startLine": 2,
+              "originalLine": 8,
+              "diffSide": "LEFT",
+              "isResolved": true,
+              "isOutdated": false,
+              "viewerCanResolve": false,
+              "viewerCanUnresolve": true,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 5,
+                    "body": "Comment",
+                    "createdAt": "2026-01-01",
+                    "author": {
+                      "login": "me",
+                      "avatarUrl": "a"
+                    },
+                    "viewerDidAuthor": true
+                  }
+                ]
+              }
+            },
+            {
+              "id": "T2",
+              "path": "new.rs",
+              "line": null,
+              "startLine": null,
+              "originalLine": 3,
+              "diffSide": "RIGHT",
+              "isResolved": false,
+              "isOutdated": true,
+              "viewerCanResolve": true,
+              "viewerCanUnresolve": false,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 5,
+                    "body": "Comment",
+                    "createdAt": "2026-01-01",
+                    "author": null,
+                    "viewerDidAuthor": false
+                  }
+                ]
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "reviews": {
+          "nodes": [
+            {
+              "id": "R1",
+              "state": "PENDING",
+              "body": "",
+              "submittedAt": null,
+              "author": null
+            }
+          ]
+        },
+        "comments": {
+          "nodes": [
+            {
+              "databaseId": 5,
+              "body": "Comment",
+              "createdAt": "2026-01-01",
+              "author": null,
+              "viewerDidAuthor": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
