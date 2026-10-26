@@ -17,9 +17,10 @@ export function splitLines(text: string | null): string[] {
 }
 
 /** One BMP code unit per distinct line, so the character diff becomes a line diff. */
-function encode(lines: string[], ids: Map<string, number>): string {
+function encode(lines: string[], ids: Map<string, number>, norm: (l: string) => string): string {
   let out = "";
-  for (const l of lines) {
+  for (const raw of lines) {
+    const l = norm(raw);
     let id = ids.get(l);
     if (id === undefined) {
       const n = ids.size;
@@ -32,9 +33,13 @@ function encode(lines: string[], ids: Map<string, number>): string {
   return out;
 }
 
-export function lineDiff(a: string[], b: string[]): Row[] {
+/** Lines that differ only in whitespace compare equal (indentation, trailing spaces, spacing inside a line). */
+const squash = (l: string) => l.replace(/\s+/g, " ").trim();
+
+export function lineDiff(a: string[], b: string[], options: { ignoreWhitespace?: boolean } = {}): Row[] {
   const ids = new Map<string, number>();
-  const changes = diff(encode(a, ids), encode(b, ids), { scanLimit: 20_000, timeout: 1_000 });
+  const norm = options.ignoreWhitespace ? squash : (l: string) => l;
+  const changes = diff(encode(a, ids, norm), encode(b, ids, norm), { scanLimit: 20_000, timeout: 1_000 });
   const rows: Row[] = [];
   let i = 0,
     j = 0;

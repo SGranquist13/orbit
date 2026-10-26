@@ -156,6 +156,13 @@ pub fn create_worktree_from(repo: &Path, path: &Path, branch: &str, start: &str)
     Ok(())
 }
 
+/// Attach a worktree to an existing local branch without resetting it.
+pub fn create_worktree_existing(repo: &Path, path: &Path, branch: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
+    run(repo, &["worktree", "add", &path.to_string_lossy(), branch])?;
+    Ok(())
+}
+
 /// Removes the worktree folder. A folder that is already gone is fine: stale records are pruned.
 pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
     if !path.exists() {

@@ -1,7 +1,7 @@
 import { Check, MessageSquare } from "lucide-react";
 import { useMemo } from "react";
 import type { PrFileStatus } from "../../lib/ipc";
-import { usePrReview, type Opened } from "../../stores/prReview";
+import { usePrReview, type Opened, type ReviewFile } from "../../stores/prReview";
 import { useReviewComments } from "../../stores/review";
 import { DiffStat, cn } from "../ui";
 
@@ -20,34 +20,35 @@ export function StatusLetter({ status }: { status: PrFileStatus }) {
 }
 
 /** Files grouped by folder, with viewed boxes and comment counts. */
-export function FileTree({ opened, selected }: { opened: Opened; selected: string | null }) {
-  const drafts = useReviewComments(opened.key);
+export function FileTree({ opened, files, selected }: { opened: Opened; files: ReviewFile[]; selected: string | null }) {
+  const localDrafts = useReviewComments(opened.key);
+  const drafts = opened.pr ? (opened.pr.pendingReview?.comments ?? []) : localDrafts;
   const { selectFile, setViewed } = usePrReview.getState();
   const groups = useMemo(() => {
-    const m = new Map<string, typeof opened.files>();
-    for (const f of opened.files) {
+    const m = new Map<string, ReviewFile[]>();
+    for (const f of files) {
       const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : "";
       m.set(dir, [...(m.get(dir) ?? []), f]);
     }
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [opened.files]);
+  }, [files]);
   const counts = useMemo(() => {
     const c = new Map<string, number>();
     for (const t of opened.pr?.threads ?? []) if (!t.isResolved) c.set(t.path, (c.get(t.path) ?? 0) + 1);
     for (const d of drafts) c.set(d.path, (c.get(d.path) ?? 0) + 1);
     return c;
   }, [opened.pr, drafts]);
-  const viewed = opened.files.filter((f) => f.viewed).length;
+  const viewed = files.filter((f) => f.viewed).length;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 px-3 pb-2 pt-3">
         <span className="label text-mute">Files</span>
-        <span className="text-[11px] tabular-nums text-mute">{opened.files.length}</span>
-        <span className="ml-auto text-[11px] tabular-nums text-mute">{viewed}/{opened.files.length} viewed</span>
+        <span className="text-[11px] tabular-nums text-mute">{files.length}</span>
+        <span className="ml-auto text-[11px] tabular-nums text-mute">{viewed}/{files.length} viewed</span>
       </div>
       <div className="mx-3 mb-2 h-[3px] overflow-hidden rounded-full bg-line">
-        <div className="h-full bg-fg/70 transition-[width]" style={{ width: `${opened.files.length ? (viewed / opened.files.length) * 100 : 0}%` }} />
+        <div className="h-full bg-fg/70 transition-[width]" style={{ width: `${files.length ? (viewed / files.length) * 100 : 0}%` }} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
         {groups.map(([dir, files]) => (

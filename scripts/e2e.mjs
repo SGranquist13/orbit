@@ -2166,6 +2166,11 @@ await step("review-local", async () => {
     await waitFor("marked reviewed", `return document.querySelector('[data-testid="review-mark-reviewed"]')?.innerText === 'Reviewed'`, 5000);
     await waitFor("file viewed", `return document.querySelector('[data-testid="review-viewed"]')?.checked === true`, 5000);
     await shot("review-local");
+    // O opens the file in Orbit's Code view (the workspace's worktree), then back to Review.
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', bubbles: true }))`);
+    await waitFor("opened in Code", `return !!document.querySelector('[data-code-view]') && document.querySelector('[data-code-view]').offsetParent !== null && document.querySelector('.cm-content')?.innerText.includes('repo-lib-renamed')`, 15_000);
+    await key("6", { alt: true });
+    await waitFor("back in Review", `return !!document.querySelector('[data-testid="review-send-agent"]')`, 10_000);
     await js(`document.querySelector('[data-testid="review-send-agent"]').click()`);
     const um = await until("review message sent", async () => (await wsEvents(ws.id)).find((e) => e.type === "userMessage" && e.text?.includes("Review comments on your changes")), 30_000, 500);
     if (!um.text.includes("`package.json:2 (removed, base side)`") || !um.text.includes("Keep the old package name.")) throw new Error(`review message lacks the anchor or comment: ${JSON.stringify(um.text)}`);

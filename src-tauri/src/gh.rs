@@ -88,7 +88,7 @@ pub fn post_review(worktree: &Path, review: &crate::review::Review) -> anyhow::R
 
 /// Arguments for `gh pr merge`. The local branch is held by a worktree, so `--delete-branch` is
 /// never used; the remote ref is deleted separately (see `merge`).
-fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
     let flag = match method {
         "squash" | "merge" | "rebase" => format!("--{method}"),
         other => anyhow::bail!("unknown merge method {other}"),

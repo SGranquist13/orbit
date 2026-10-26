@@ -25,6 +25,15 @@ describe("lineDiff", () => {
     const rows = lineDiff(L("a\nb\nc"), L("a\nnew\nb\nc"));
     expect(rows.at(-1)).toEqual({ kind: "ctx", old: 3, new: 4 });
   });
+  test("whitespace-only changes can be ignored", () => {
+    const a = L("if (x) {\n  y();\n}"),
+      b = L("if (x) {\n    y();  \n}");
+    expect(stats(lineDiff(a, b))).toEqual({ additions: 1, deletions: 1 });
+    expect(stats(lineDiff(a, b, { ignoreWhitespace: true }))).toEqual({ additions: 0, deletions: 0 });
+    expect(stats(lineDiff(L("a = b + c"), L("a  =  b +\tc"), { ignoreWhitespace: true }))).toEqual({ additions: 0, deletions: 0 });
+    expect(stats(lineDiff(L("sss"), L("s"), { ignoreWhitespace: true }))).toEqual({ additions: 1, deletions: 1 });
+    expect(stats(lineDiff(a, L("if (x) {\n  z();\n}"), { ignoreWhitespace: true }))).toEqual({ additions: 1, deletions: 1 });
+  });
   test("CRLF and a missing final newline don't create changes", () => {
     expect(stats(lineDiff(L("a\r\nb\r\n"), L("a\nb")))).toEqual({ additions: 0, deletions: 0 });
   });

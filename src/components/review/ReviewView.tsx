@@ -1,7 +1,9 @@
-import { ChevronLeft, ChevronRight, Columns2, LoaderCircle, Rows2, WrapText } from "lucide-react";
+import { ChevronLeft, ChevronRight, Code2, Columns2, Eye, LoaderCircle, Rows2, Space, WrapText } from "lucide-react";
 import { useEffect } from "react";
 import { useApp } from "../../stores/app";
-import { usePrReview } from "../../stores/prReview";
+import { rangeShas, usePrReview, type Range } from "../../stores/prReview";
+import type { PrDetail } from "../../lib/ipc";
+import { isImage, isRich } from "./RichDiff";
 import { Kbd, cn } from "../ui";
 import { Conversation } from "./Conversation";
 import { FileTree, StatusLetter } from "./FileTree";
@@ -19,7 +21,13 @@ export function ReviewView() {
   const layout = usePrReview((s) => s.layout) ?? settings?.reviewDiffLayout ?? "unified";
   const wrap = usePrReview((s) => s.wrap) ?? settings?.reviewWrapLines ?? false;
   const context = settings?.reviewContextLines ?? 3;
-  const current = opened?.files.find((f) => f.path === file) ?? null;
+  const hideWhitespace = usePrReview((s) => s.hideWhitespace) ?? settings?.reviewHideWhitespace ?? false;
+  const preview = usePrReview((s) => s.preview);
+  const rangeView = usePrReview((s) => s.rangeView);
+  const range = usePrReview((s) => s.range);
+  // A range has its own file list; viewed marks always come from the whole PR.
+  const files = rangeView ? rangeView.files.map((f) => ({ ...f, viewed: opened?.files.find((x) => x.path === f.path)?.viewed ?? false })) : (opened?.files ?? []);
+  const current = files.find((f) => f.path === file) ?? null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -29,6 +37,8 @@ export function ReviewView() {
       if (e.key === "]") s.step(1);
       else if (e.key === "[") s.step(-1);
       else if (e.key === "v" && s.file) s.setViewed(s.file, !s.opened.files.find((f) => f.path === s.file)?.viewed);
+      else if (e.key === "w") s.setHideWhitespace(!(s.hideWhitespace ?? useApp.getState().settings?.reviewHideWhitespace ?? false));
+      else if (e.key === "o" && s.file) void s.openInCode(s.file);
       else return;
       e.preventDefault();
     };
@@ -62,8 +72,11 @@ export function ReviewView() {
               <div className="grid flex-1 place-items-center text-[12.5px] text-mute">No changes to review.</div>
             ) : (
               <div className="flex min-h-0 flex-1">
-                <div className="w-[300px] shrink-0 border-r-[1.5px] border-line">
-                  <FileTree opened={opened} selected={file} />
+                <div className="flex w-[300px] shrink-0 flex-col border-r-[1.5px] border-line">
+                  {opened.pr && opened.pr.commits.length > 0 && <RangePicker pr={opened.pr} range={range} />}
+                  <div className="min-h-0 flex-1">
+                    <FileTree opened={opened} files={files} selected={file} />
+                  </div>
                 </div>
                 <div className="flex min-w-0 flex-1 flex-col">
                   {current && (
@@ -80,16 +93,25 @@ export function ReviewView() {
                         Viewed
                       </label>
                       <span className="mx-1 h-4 w-[1.5px] bg-line" />
+                      {isRich(current.path) && (
+                        <Seg active={preview} onClick={() => usePrReview.getState().setPreview(!preview)} title={preview ? "Show the source diff" : "Show it rendered"}><Eye className="size-3.5" /></Seg>
+                      )}
+                      {!isImage(current.path) && (
+                        <Seg active={hideWhitespace} onClick={() => usePrReview.getState().setHideWhitespace(!hideWhitespace)} title="Hide whitespace changes (W)"><Space className="size-3.5" /></Seg>
+                      )}
                       <Seg active={layout === "unified"} onClick={() => usePrReview.getState().setLayout("unified")} title="Unified"><Rows2 className="size-3.5" /></Seg>
                       <Seg active={layout === "split"} onClick={() => usePrReview.getState().setLayout("split")} title="Split"><Columns2 className="size-3.5" /></Seg>
                       <Seg active={wrap} onClick={() => usePrReview.getState().setWrap(!wrap)} title="Wrap lines"><WrapText className="size-3.5" /></Seg>
                       <span className="mx-1 h-4 w-[1.5px] bg-line" />
+                      <Seg onClick={() => void usePrReview.getState().openInCode(current.path)} title={current.status === "removed" ? "Deleted in this change" : "Open in Code (O)"} disabled={current.status === "removed"}>
+                        <Code2 className="size-3.5" />
+                      </Seg>
                       <Seg onClick={() => usePrReview.getState().step(-1)} title="Previous file ([)"><ChevronLeft className="size-3.5" /></Seg>
                       <Seg onClick={() => usePrReview.getState().step(1)} title="Next file (])"><ChevronRight className="size-3.5" /></Seg>
                     </div>
                   )}
                   <div className="min-h-0 flex-1 overflow-auto">
-                    {current && <ReviewDiff key={`${opened.key}:${current.path}`} opened={opened} file={current} layout={layout} wrap={wrap} context={context} />}
+                    {current && <ReviewDiff key={`${opened.key}:${current.path}`} opened={opened} file={current} layout={layout} wrap={wrap} context={context} hideWhitespace={hideWhitespace} preview={preview} rangeView={rangeView} />}
                   </div>
                 </div>
               </div>
@@ -110,11 +132,41 @@ function Tab({ active, onClick, count, children }: { active: boolean; onClick: (
   );
 }
 
-function Seg({ active, onClick, title, children }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
+function Seg({ active, onClick, title, disabled, children }: { active?: boolean; onClick: () => void; title: string; disabled?: boolean; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={title} aria-pressed={active} className={cn("grid size-7 place-items-center rounded-[4px]", active ? "bg-raised text-fg" : "text-mute hover:bg-hover hover:text-fg")}>
+    <button onClick={onClick} title={title} aria-label={title} aria-pressed={active} disabled={disabled} className={cn("grid size-7 place-items-center rounded-[4px] disabled:opacity-40", active ? "bg-raised text-fg" : "text-mute hover:bg-hover hover:text-fg")}>
       {children}
     </button>
+  );
+}
+
+/** All changes, only what's new since your last review, or one commit. */
+function RangePicker({ pr, range }: { pr: PrDetail; range: Range }) {
+  const since = rangeShas(pr, { kind: "since" });
+  const value = range.kind === "commit" ? `commit:${range.oid}` : range.kind;
+  const pick = (v: string) =>
+    void usePrReview.getState().setRange(v === "all" ? { kind: "all" } : v === "since" ? { kind: "since" } : { kind: "commit", oid: v.slice(7) });
+  return (
+    <div className="border-b-[1.5px] border-line px-3 py-2.5">
+      <select
+        value={value}
+        onChange={(e) => pick(e.target.value)}
+        aria-label="Changes to show"
+        data-testid="review-range"
+        className="h-7 w-full rounded-[4px] border-[1.5px] border-line-strong bg-bg px-2 text-[12px] font-medium text-fg focus:outline-none"
+      >
+        <option value="all">All changes ({pr.commits.length} commit{pr.commits.length === 1 ? "" : "s"})</option>
+        {since && <option value="since">{since.label}</option>}
+        <optgroup label="One commit">
+          {pr.commits.map((c) => (
+            <option key={c.oid} value={`commit:${c.oid}`}>
+              {c.oid.slice(0, 7)} {c.message}
+            </option>
+          ))}
+        </optgroup>
+      </select>
+      {range.kind === "since" && <p className="mt-1.5 text-[11px] text-mute">Only what changed after the commit you last reviewed.</p>}
+    </div>
   );
 }
 
@@ -131,6 +183,8 @@ function Empty({ loading, error }: { loading: boolean; error: string | null }) {
           <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-1.5 text-[11.5px] text-mute">
             <span className="flex items-center gap-1.5"><Kbd>[</Kbd><Kbd>]</Kbd> files</span>
             <span className="flex items-center gap-1.5"><Kbd>V</Kbd> viewed</span>
+            <span className="flex items-center gap-1.5"><Kbd>W</Kbd> whitespace</span>
+            <span className="flex items-center gap-1.5"><Kbd>O</Kbd> open in Code</span>
             <span className="flex items-center gap-1.5"><Kbd>Shift</Kbd> click for a range</span>
           </div>
         </div>

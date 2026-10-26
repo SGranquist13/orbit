@@ -3,9 +3,10 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { DiffSide, PrThread } from "../../lib/ipc";
 import { collapse, inlineChanges, lineDiff, pairs, splitLines, splitRows, type Block, type Ranges, type Row } from "../../lib/review/diff";
 import { highlightLines, type Token } from "../../lib/review/highlight";
-import { usePrReview, type Opened, type ReviewFile, type Texts } from "../../stores/prReview";
+import { usePrReview, type Opened, type RangeView, type ReviewFile, type Texts } from "../../stores/prReview";
 import { useReview, useReviewComments, type ReviewComment } from "../../stores/review";
 import { cn } from "../ui";
+import { ImageDiff, RichPreview, isImage, isRich } from "./RichDiff";
 import { Composer, DraftCard, ThreadCard } from "./ThreadCard";
 
 const LARGE = 4_000;
@@ -38,7 +39,25 @@ function renderLine(tokens: Token[] | undefined, plain: string, ranges: Ranges |
   return out;
 }
 
-export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Opened; file: ReviewFile; layout: "unified" | "split"; wrap: boolean; context: number }) {
+export interface DiffProps {
+  opened: Opened;
+  file: ReviewFile;
+  layout: "unified" | "split";
+  wrap: boolean;
+  context: number;
+  hideWhitespace: boolean;
+  preview: boolean;
+  rangeView: RangeView | null;
+}
+
+/** The right view for a file: an image diff, a rendered Markdown/SVG preview, or the line diff. */
+export function ReviewDiff(props: DiffProps) {
+  if (isImage(props.file.path)) return <ImageDiff {...props} />;
+  if (props.preview && isRich(props.file.path)) return <RichPreview {...props} />;
+  return <TextDiff {...props} />;
+}
+
+function TextDiff({ opened, file, layout, wrap, context, hideWhitespace, rangeView }: DiffProps) {
   const [texts, setTexts] = useState<Texts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokens, setTokens] = useState<{ old: Token[][]; new: Token[][] } | null>(null);
@@ -47,7 +66,19 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
   const [anchor, setAnchor] = useState<{ side: DiffSide; line: number } | null>(null);
   const [forceLarge, setForceLarge] = useState(false);
   const github = !!opened.pr;
-  const drafts = useReviewComments(opened.key);
+  const localDrafts = useReviewComments(opened.key);
+  const busy = usePrReview((s) => s.busy);
+  // GitHub drafts are your pending review on GitHub; local ones live in the drafts store (shared with the Code view).
+  const drafts: ReviewComment[] = useMemo(
+    () =>
+      opened.pr
+        ? (opened.pr.pendingReview?.comments ?? []).map((c) => ({ id: c.id, path: c.path, side: c.side, startLine: c.startLine ?? c.line, endLine: c.line, text: c.body, excerpt: "" }))
+        : localDrafts,
+    [opened.pr, localDrafts],
+  );
+  // A range that doesn't end at the PR head has different line numbers from the PR diff, so nothing anchors there.
+  const canComment = (side: DiffSide) => !rangeView || (rangeView.comment === "new" && side === "new");
+  const range = rangeView ? `${rangeView.base}..${rangeView.head}` : "";
 
   useEffect(() => {
     let live = true;
@@ -68,11 +99,11 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
     return () => {
       live = false;
     };
-  }, [opened.key, opened.pr?.headSha, opened.local?.headSha, file.path, file.previousPath, file.additions, file.deletions]);
+  }, [opened.key, opened.pr?.headSha, opened.local?.headSha, range, file.path, file.previousPath, file.additions, file.deletions]);
 
   const oldLines = useMemo(() => splitLines(texts?.old ?? null), [texts]);
   const newLines = useMemo(() => splitLines(texts?.new ?? null), [texts]);
-  const rows = useMemo(() => (texts ? lineDiff(oldLines, newLines) : []), [texts, oldLines, newLines]);
+  const rows = useMemo(() => (texts ? lineDiff(oldLines, newLines, { ignoreWhitespace: hideWhitespace }) : []), [texts, oldLines, newLines, hideWhitespace]);
   const paired = useMemo(() => pairs(rows), [rows]);
   const inline = useMemo(() => {
     const m = new Map<number, { a: Ranges; b: Ranges }>();
@@ -85,9 +116,12 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
     return m;
   }, [paired, inline]);
 
-  const threads = useMemo(() => (opened.pr?.threads ?? []).filter((t) => t.path === file.path), [opened.pr, file.path]);
-  const outdated = threads.filter((t) => t.line === null);
-  const fileDrafts = drafts.filter((d) => d.path === file.path);
+  const threads = useMemo(
+    () => (opened.pr?.threads ?? []).filter((t) => t.path === file.path && (!rangeView || (rangeView.comment === "new" && t.side === "new"))),
+    [opened.pr, file.path, rangeView],
+  );
+  const outdated = rangeView ? [] : threads.filter((t) => t.line === null);
+  const fileDrafts = drafts.filter((d) => d.path === file.path && canComment(d.side));
   const anchored = useMemo(() => {
     const m = new Map<string, { threads: PrThread[]; drafts: ReviewComment[] }>();
     const slot = (k: string) => m.get(k) ?? (m.set(k, { threads: [], drafts: [] }), m.get(k)!);
@@ -105,7 +139,8 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
   if (!texts) return <Notice><LoaderCircle className="mr-2 inline size-3.5 animate-spin" />Loading {file.path}…</Notice>;
   if (texts.unreadable) return <Notice>Binary file or too large to show.</Notice>;
   if (!rows.length) return <Notice>Empty file.</Notice>;
-  if (!rows.some((r) => r.kind !== "ctx")) return <Notice>{file.status === "renamed" ? `Renamed from ${file.previousPath} without changes.` : "No changes in this file."}</Notice>;
+  if (!rows.some((r) => r.kind !== "ctx"))
+    return <Notice>{file.status === "renamed" ? `Renamed from ${file.previousPath} without changes.` : hideWhitespace ? "Only whitespace changed in this file." : "No changes in this file."}</Notice>;
   if (rows.length > LARGE && !forceLarge)
     return (
       <Notice>
@@ -115,7 +150,9 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
     );
 
   const sideText = (side: DiffSide, a: number, b: number) => (side === "old" ? oldLines : newLines).slice(a - 1, b);
-  const clickLine = (side: DiffSide, line: number, shift: boolean) => {
+  const clickLine = (side: DiffSide, line: number, shift: boolean, open = false) => {
+    if (open) return void usePrReview.getState().openInCode(file.path, side === "new" && file.status !== "removed" ? line : undefined);
+    if (!canComment(side)) return;
     if (shift && anchor && anchor.side === side) setPick({ side, start: Math.min(anchor.line, line), end: Math.max(anchor.line, line) });
     else setPick({ side, start: line, end: line });
     setAnchor({ side, line });
@@ -130,7 +167,14 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
       <>
         {slot?.threads.map((t) => <ThreadCard key={t.id} thread={t} original={sideText(t.side, t.startLine ?? t.line!, t.line!)} />)}
         {slot?.drafts.map((d) => (
-          <DraftCard key={d.id} draftKey={opened.key} c={d} original={sideText(d.side, d.startLine, d.endLine)} onEdit={() => setPick({ side: d.side, start: d.startLine, end: d.endLine, editId: d.id, text: d.text })} />
+          <DraftCard
+            key={d.id}
+            c={d}
+            github={github}
+            original={sideText(d.side, d.startLine, d.endLine)}
+            onEdit={() => setPick({ side: d.side, start: d.startLine, end: d.endLine, editId: d.id, text: d.text })}
+            onDelete={() => (github ? void usePrReview.getState().draftDelete(d.id) : useReview.getState().remove(opened.key, d.id))}
+          />
         ))}
         {composing && (
           <Composer
@@ -141,10 +185,17 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
             canSuggest={pick.side === "new"}
             selected={sideText(pick.side, pick.start, pick.end)}
             onCancel={() => setPick(null)}
-            onDraft={(text) => {
-              const r = useReview.getState();
-              if (pick.editId) r.update(opened.key, pick.editId, text);
-              else r.add(opened.key, { path: file.path, side: pick.side, startLine: pick.start, endLine: pick.end, text, excerpt: sideText(pick.side, pick.start, pick.end).join("\n") });
+            saving={busy === "draft"}
+            onDraft={async (text) => {
+              const c = { path: file.path, side: pick.side, startLine: pick.start, endLine: pick.end, text };
+              if (github) {
+                const s = usePrReview.getState();
+                if (!(await (pick.editId ? s.draftEdit(pick.editId, text) : s.draftAdd(c)))) return;
+              } else {
+                const r = useReview.getState();
+                if (pick.editId) r.update(opened.key, pick.editId, text);
+                else r.add(opened.key, { ...c, excerpt: sideText(pick.side, pick.start, pick.end).join("\n") });
+              }
               setPick(null);
             }}
             onPostNow={github && !pick.editId ? (text) => usePrReview.getState().postNow({ path: file.path, side: pick.side, startLine: pick.start, endLine: pick.end, text }) : undefined}
@@ -156,14 +207,18 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
 
   const num = (side: DiffSide, line: number | undefined) =>
     line === undefined ? <span className="rv-num" /> : (
-      <span className="rv-num" onMouseDown={(e) => (e.preventDefault(), clickLine(side, line, e.shiftKey))} title="Comment (Shift-click for a range)">
+      <span
+        className="rv-num"
+        onMouseDown={(e) => (e.preventDefault(), clickLine(side, line, e.shiftKey, e.ctrlKey || e.metaKey))}
+        title={canComment(side) ? "Comment (Shift-click for a range, Ctrl-click to open in Code)" : "Ctrl-click to open in Code"}
+      >
         {line}
       </span>
     );
   const sign = (side: DiffSide, line: number | undefined, ch: string) => (
     <span className="rv-sign">
       {ch}
-      {line !== undefined && (
+      {line !== undefined && canComment(side) && (
         <span className="rv-plus" onMouseDown={(e) => (e.preventDefault(), clickLine(side, line, e.shiftKey))} title="Comment (Shift-click for a range)">+</span>
       )}
     </span>
@@ -226,6 +281,7 @@ export function ReviewDiff({ opened, file, layout, wrap, context }: { opened: Op
 
   return (
     <div className={cn("rv-code select-text", wrap && "rv-wrap")} data-review-diff={file.path}>
+      {rangeView?.comment === "none" && <div className="border-b border-line px-4 py-1.5 font-sans text-[11.5px] text-mute">Viewing one commit. Comments go on the full diff or a range that ends at the latest commit.</div>}
       {outdated.length > 0 && (
         <div className="border-b-[1.5px] border-line py-1.5">
           <div className="px-4 pb-1 font-sans text-[11px] font-medium text-mute">Comments on lines that have since changed</div>

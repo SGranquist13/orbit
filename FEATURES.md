@@ -177,6 +177,13 @@ What Orbit does today and where it's heading. For how features were designed, an
 | Submit Comment, Approve or Request changes, with a summary | 🧪 | Warns when new commits arrive while you review |
 | Conversation tab: description, reviews and comments, with a comment box | 🧪 | |
 | Unified and split diffs, syntax highlighting, word-level changes, collapsed unchanged lines | 🧪 | Settings > Review |
+| Hide whitespace changes | 🧪 | W, or Settings > Review |
+| Changes since your last review, or one commit at a time | 🧪 | Picker above the file list |
+| Image diffs (side by side, swipe, onion skin); rendered Markdown and SVG | 🧪 | |
+| Pending review saved on GitHub as you write it | 🧪 | Also visible to you on github.com; submit or discard from Orbit |
+| Open in Code at the line you're reading | 🧪 | O, or Ctrl-click a line number; checks a PR out first |
+| Check a PR out into a workspace | 🧪 | Same-repo PRs push back to the PR branch |
+| Request or re-request reviewers, mark ready, merge | 🧪 | Merge method and branch deletion default to Settings > GitHub |
 
 ## Look & feel
 

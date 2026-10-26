@@ -6,6 +6,7 @@ import { useApp } from "../../stores/app";
 import { localSig, usePrReview, type Opened } from "../../stores/prReview";
 import { discardReview, sendReview, useReviewComments } from "../../stores/review";
 import { AgentIcon, Button, cn } from "../ui";
+import { PrActions } from "./PrActions";
 import { Avatar } from "./ThreadCard";
 
 function StateBadge({ pr }: { pr: PrDetail }) {
@@ -52,9 +53,10 @@ export function ReviewHeader({ opened }: { opened: Opened }) {
       {refresh}
       {opened.pr ? (
         <>
-          <Button variant="ghost" onClick={() => void openUrl(opened.pr!.url)} title="Open on GitHub">
-            <ExternalLink className="size-3.5" /> GitHub
+          <Button variant="ghost" onClick={() => void openUrl(opened.pr!.url)} title="Open on GitHub" aria-label="Open on GitHub">
+            <ExternalLink className="size-3.5" />
           </Button>
+          <PrActions pr={opened.pr} />
           <SubmitReview opened={opened} pr={opened.pr} />
         </>
       ) : (
@@ -144,8 +146,9 @@ const VERDICTS: { v: ReviewVerdict; label: string; hint: string }[] = [
   { v: "REQUEST_CHANGES", label: "Request changes", hint: "Feedback that must be addressed before merging." },
 ];
 
-function SubmitReview({ opened, pr }: { opened: Opened; pr: PrDetail }) {
-  const drafts = useReviewComments(opened.key);
+function SubmitReview({ pr }: { opened: Opened; pr: PrDetail }) {
+  // Your pending review lives on GitHub, so it is also visible (to you) on github.com.
+  const drafts = pr.pendingReview?.comments ?? [];
   const busy = usePrReview((s) => s.busy);
   const error = usePrReview((s) => s.error);
   const [open, setOpen] = useState(false);
@@ -178,7 +181,14 @@ function SubmitReview({ opened, pr }: { opened: Opened; pr: PrDetail }) {
         <div className="absolute right-0 top-9 z-30 w-[420px] rounded-[6px] border-[1.5px] border-line-strong bg-panel p-3 shadow-pop">
           <div className="mb-2 flex items-baseline justify-between">
             <span className="text-[13px] font-semibold">Finish your review</span>
-            <span className="text-[11.5px] text-mute tabular-nums">{drafts.length} pending comment{drafts.length === 1 ? "" : "s"}</span>
+            <span className="text-[11.5px] text-mute tabular-nums">
+              {drafts.length} pending comment{drafts.length === 1 ? "" : "s"}
+              {pr.pendingReview && (
+                <button className="ml-2 underline underline-offset-2 hover:text-bad" onClick={async () => (await usePrReview.getState().discardPending()) && setOpen(false)} data-testid="review-discard-pending">
+                  Discard
+                </button>
+              )}
+            </span>
           </div>
           <textarea
             autoFocus

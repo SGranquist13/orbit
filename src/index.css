@@ -409,3 +409,5 @@ input:focus-visible {
 .rv-code .tok-number, .rv-code .tok-bool, .rv-code .tok-atom { color: var(--warn); }
 .rv-code .tok-punctuation, .rv-code .tok-operator { color: var(--dim); }
 .rv-code .tok-meta, .rv-code .tok-heading { color: var(--fg); font-weight: 500; }
+/* Transparent-image backdrop for the Review view's image diffs. */
+.checker { background: repeating-conic-gradient(var(--raised) 0% 25%, var(--panel) 0% 50%) 0 0 / 14px 14px; }

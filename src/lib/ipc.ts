@@ -558,6 +558,8 @@ export interface Settings {
   reviewQueueSources: ReviewQueueSource[];
   /** Moving to the next file marks the current one viewed. */
   reviewMarkViewedOnNext: boolean;
+  /** Compare lines ignoring whitespace changes (the toolbar toggles it for the session). */
+  reviewHideWhitespace: boolean;
 }
 
 /** `llm.rs`: local model servers for utility tasks. */
@@ -1104,7 +1106,47 @@ export interface PrDetail {
   threads: PrThread[];
   reviews: PrReviewSummary[];
   comments: PrTimelineComment[];
+  /** Head branch lives in a fork: a checkout can't push back to the PR. */
+  isCrossRepository: boolean;
+  /** "owner/name" of the head branch's repository. */
+  headRepo: string;
+  /** Oldest first. */
+  commits: PrCommit[];
+  /** Commit your latest submitted review was made against (null if you haven't reviewed). */
+  viewerLastReviewSha: string | null;
+  /** Your unsubmitted review on GitHub (also visible on github.com), with its comments. */
+  pendingReview: PendingReview | null;
+  requestedReviewers: string[];
+  /** GitHub's suggestions, minus the ones already requested. */
+  suggestedReviewers: string[];
+  /** The Orbit repo whose GitHub remote is this PR's repo. */
+  localRepoId: string | null;
+  /** An Orbit workspace already on the PR's head branch. */
+  workspaceId: string | null;
 }
+export interface PrCommit {
+  oid: string;
+  /** First line of the message. */
+  message: string;
+  author: string;
+  committedAt: string;
+  /** First parent; null for a root commit. */
+  parentOid: string | null;
+}
+export interface PendingComment {
+  /** GraphQL node id (edit/delete use it). */
+  id: string;
+  path: string;
+  side: DiffSide;
+  line: number;
+  startLine: number | null;
+  body: string;
+}
+export interface PendingReview {
+  id: string;
+  comments: PendingComment[];
+}
+export type MergeMethod = "squash" | "merge" | "rebase";
 export type ReviewVerdict = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 /** A comment to post: `line` is the last line of the range, `startLine` its first (null = one line). */
 export interface NewPrComment {
@@ -1147,6 +1189,27 @@ export const reviewApi = {
   issueComment: (repo: string, number: number, body: string) => invoke<void>("pr_review_issue_comment", { repo, number, body }),
   /** Text per file comes from codeApi.fileAt(root, path, "base") and codeApi.readFile(root, path). */
   local: (workspaceId: string) => invoke<LocalReview>("local_review", { workspaceId }),
+  /** Files changed between two commits of the PR (compare API), for "since your last review" and per-commit views. */
+  rangeFiles: (repo: string, base: string, head: string) => invoke<PrFile[]>("pr_review_range_files", { repo, base, head }),
+  /** Raw bytes at a commit as base64 (images); null when absent there or over 10 MB. */
+  blob: (repo: string, sha: string, path: string) => invoke<string | null>("pr_review_blob", { repo, sha, path }),
+  /** Raw bytes as base64: "old" = at the merge base, "new" = on disk. null when absent or over 10 MB. */
+  localBlob: (workspaceId: string, path: string, side: DiffSide) => invoke<string | null>("local_review_blob", { workspaceId, path, side }),
+  /** A workspace on the PR's head branch (same-repo PRs push back to it; forks get a local pr/<n>-… branch). Rejects with "Add owner/name to Orbit first" when no repo matches. */
+  checkout: (repo: string, number: number, agent: AgentKind | null) => invoke<Workspace>("pr_review_checkout", { repo, number, agent }),
+  merge: (repo: string, number: number, method: MergeMethod, deleteBranch: boolean) => invoke<void>("pr_review_merge", { repo, number, method, deleteBranch }),
+  /** Draft → ready for review. */
+  ready: (repo: string, number: number) => invoke<void>("pr_review_ready", { repo, number }),
+  /** Also re-requests a review from someone who already reviewed. */
+  requestReviewers: (repo: string, number: number, add: string[], remove: string[]) => invoke<void>("pr_review_request_reviewers", { repo, number, add, remove }),
+  /** Adds a comment to your pending review on GitHub, starting one at `commitId` if needed. */
+  draftAdd: (prId: string, commitId: string, comment: NewPrComment) => invoke<void>("pr_review_draft_add", { prId, commitId, comment }),
+  draftEdit: (commentId: string, body: string) => invoke<void>("pr_review_draft_edit", { commentId, body }),
+  draftDelete: (commentId: string) => invoke<void>("pr_review_draft_delete", { commentId }),
+  /** Submits your pending review. Rejects with "stale: …" when the head moved past `commitId`. */
+  submitPending: (repo: string, number: number, commitId: string, reviewId: string, event: ReviewVerdict, body: string) =>
+    invoke<void>("pr_review_submit_pending", { repo, number, commitId, reviewId, event, body }),
+  discardPending: (reviewId: string) => invoke<void>("pr_review_discard_pending", { reviewId }),
 };
 
 export const events = {

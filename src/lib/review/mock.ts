@@ -1,5 +1,5 @@
 // Mock backend for the Review view (pr_review_* / local_review). Browser-only, like ../mock.ts.
-import type { LocalReview, NewPrComment, PrDetail, PrFile, PrRef, PrThread, ReviewQueueItem, ReviewVerdict } from "../ipc";
+import type { LocalReview, NewPrComment, PrDetail, PrFile, PrRef, PrThread, ReviewQueueItem, ReviewVerdict, Workspace } from "../ipc";
 
 const VIEWER = "you";
 const hour = 3_600_000;
@@ -108,6 +108,8 @@ function basePr(repo: string, number: number, title: string, author: string, hea
     author, authorAvatarUrl: avatar(author), state: "OPEN", isDraft: false, viewerLogin: VIEWER, viewerDidAuthor: author === VIEWER,
     headRef: "", baseRef: "main", headSha: head, mergeBaseSha: BASE, reviewDecision: "REVIEW_REQUIRED", mergeable: "MERGEABLE",
     checks: { passed: 4, failed: 0, pending: 0, failing: [] }, createdAt: iso(30), updatedAt: iso(2), files, threads: [], reviews: [], comments: [],
+    isCrossRepository: false, headRepo: repo, commits: [], viewerLastReviewSha: null, pendingReview: null,
+    requestedReviewers: [], suggestedReviewers: [], localRepoId: repo === "acme/superset" ? "r1" : null, workspaceId: null,
   };
 }
 
@@ -122,6 +124,16 @@ function seed(): Map<string, MockPr> {
     file("assets/logo.png", "modified", 0, 0),
   ]);
   d842.headRef = "dana/session-refresh";
+  const c1 = "c1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", c2 = "c2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  d842.commits = [
+    { oid: c1, message: "Add refresh() for sessions about to expire", author: "dana", committedAt: iso(30), parentOid: BASE },
+    { oid: c2, message: "Revoke the session on sign-out", author: "dana", committedAt: iso(26), parentOid: c1 },
+    { oid: head842, message: "Refresh inside the leeway window; docs", author: "dana", committedAt: iso(3), parentOid: c2 },
+  ];
+  d842.viewerLastReviewSha = c2;
+  d842.requestedReviewers = ["you", "acme/web-platform"];
+  d842.suggestedReviewers = ["lee", "sam"];
+  d842.pendingReview = { id: "PRR_pending", comments: [{ id: "PRRC_1", path: "src/auth/refresh.ts", side: "new", line: 5, startLine: null, body: "Should this send the refresh token instead of the access token?" }] };
   d842.body = "Sessions now refresh in their last 30 seconds instead of silently expiring mid-request.\n\n- `restoreSession` refreshes inside a leeway window\n- `signOut` revokes the session on the server\n- removes the unused legacy token helpers\n\nCloses #811.";
   d842.checks = { passed: 3, failed: 0, pending: 1, failing: [] };
   d842.threads = [
@@ -146,6 +158,10 @@ function seed(): Map<string, MockPr> {
     [`${BASE}:src/legacy/token.ts`, tokenOld],
     [`${BASE}:assets/logo.png`, null],
     [`${head842}:assets/logo.png`, null],
+    // The state after c2 (what you last reviewed): refresh existed, the leeway check did not.
+    [`${c2}:src/auth/session.ts`, sessionNew.replace("  if (session.expiresAt - Date.now() < LEEWAY_MS) return refresh(session);\n", "").replace("const LEEWAY_MS = 30_000;\n", "")],
+    [`${c2}:docs/AUTH.md`, authDocOld],
+    [`${c1}:src/auth/session.ts`, sessionOld.replace(/^/, 'import { refresh } from "./refresh";\n\n')],
   ]);
   prs.set("acme/superset#842", { detail: d842, blobs: b842 });
 
@@ -154,6 +170,8 @@ function seed(): Map<string, MockPr> {
   d839.headRef = "you/docs-sessions";
   d839.body = "Small README fix.";
   d839.reviewDecision = "";
+  d839.commits = [{ oid: head839, message: "Docs: explain the session lifetime", author: VIEWER, committedAt: iso(9), parentOid: BASE }];
+  d839.suggestedReviewers = ["dana"];
   prs.set("acme/superset#839", {
     detail: d839,
     blobs: new Map([
@@ -169,6 +187,9 @@ function seed(): Map<string, MockPr> {
   d845.headRef = "lee/icons-codegen";
   d845.body = "Regenerated with `bun run icons`. No hand edits.";
   d845.checks = { passed: 2, failed: 1, pending: 0, failing: ["visual-regression"] };
+  d845.isCrossRepository = true;
+  d845.headRepo = "lee/design-system";
+  d845.commits = [{ oid: head845, message: "Generate icon components", author: "lee", committedAt: iso(5), parentOid: BASE }];
   const b845 = new Map<string, string | null>();
   big.forEach((p, i) => {
     const name = `Icon${i + 1}`;
@@ -197,6 +218,27 @@ const get = (repo: string, number: number) => {
 const wait = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
 
+/** A small PNG drawn on a canvas (mock image diffs); `ring` draws the "after" version. */
+function png(ring: boolean): string | null {
+  if (typeof document === "undefined") return null;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#e5e5e5";
+  g.fillRect(0, 0, 64, 64);
+  g.fillStyle = "#111";
+  g.beginPath();
+  g.arc(32, 32, ring ? 24 : 18, 0, Math.PI * 2);
+  g.fill();
+  if (ring) {
+    g.fillStyle = "#e5e5e5";
+    g.beginPath();
+    g.arc(32, 32, 12, 0, Math.PI * 2);
+    g.fill();
+  }
+  return c.toDataURL("image/png").split(",")[1];
+}
+
 function addThread(pr: MockPr, c: NewPrComment) {
   const id = ++nextId;
   pr.detail.threads.push({
@@ -219,11 +261,19 @@ export function parseRefMock(input: string, defaultRepo: string | null): PrRef {
   throw "Not a PR link or number";
 }
 
-export async function mockReviewCommand(cmd: string, args: unknown, workspacePath: (id: string) => string | null): Promise<unknown> {
+export interface MockHost {
+  workspacePath: (id: string) => string | null;
+  /** Adds a workspace on an exact branch and announces it like the backend does. */
+  createWorkspace: (repoId: string, name: string, branch: string) => Workspace;
+}
+
+export async function mockReviewCommand(cmd: string, args: unknown, host: MockHost): Promise<unknown> {
   const a = (args ?? {}) as {
     repo: string; number: number; sha: string; path: string; input: string; repoId: string | null; commitId: string; event: ReviewVerdict;
     body: string; comments: NewPrComment[]; comment: NewPrComment; commentId: number; threadId: string; resolved: boolean; prId: string; viewed: boolean; workspaceId: string;
+    base: string; head: string; side: "old" | "new"; method: string; deleteBranch: boolean; add: string[]; remove: string[]; reviewId: string; draftId: string;
   };
+  const byId = (prId: string) => [...prs.values()].find((p) => p.detail.id === prId);
   switch (cmd) {
     case "pr_review_queue":
       await wait(400);
@@ -282,7 +332,7 @@ export async function mockReviewCommand(cmd: string, args: unknown, workspacePat
       return null;
     }
     case "local_review": {
-      const root = workspacePath(a.workspaceId);
+      const root = host.workspacePath(a.workspaceId);
       if (!root) throw "Workspace not found";
       // Matches the code mock's seeded HEAD/base revisions (src/lib/code/mock.ts).
       const review: LocalReview = {
@@ -291,9 +341,94 @@ export async function mockReviewCommand(cmd: string, args: unknown, workspacePat
           { path: "README.md", additions: 3, deletions: 3, untracked: false },
           { path: "src/main.ts", additions: 1, deletions: 2, untracked: false },
           { path: "src/components/Login.tsx", additions: 13, deletions: 0, untracked: true },
+          { path: "logo.png", additions: 0, deletions: 0, untracked: false },
         ],
       };
       return review;
+    }
+    case "pr_review_range_files": {
+      await wait(200);
+      const pr = get(a.repo, 842);
+      // Files touched between two commits of #842 (enough for "since your last review" and per-commit views).
+      const touched: Record<string, string[]> = {
+        [`${pr.detail.commits[1]?.oid}..${pr.detail.headSha}`]: ["src/auth/session.ts", "docs/AUTH.md"],
+        [`${BASE}..${pr.detail.commits[0]?.oid}`]: ["src/auth/session.ts", "src/auth/refresh.ts"],
+        [`${pr.detail.commits[0]?.oid}..${pr.detail.commits[1]?.oid}`]: ["src/auth/session.ts", "src/legacy/token.ts"],
+      };
+      const paths = touched[`${a.base}..${a.head}`] ?? pr.detail.files.map((f) => f.path);
+      return pr.detail.files.filter((f) => paths.includes(f.path)).map((f) => ({ ...f, viewed: false, additions: Math.max(1, f.additions - 3), deletions: Math.max(0, f.deletions - 1) }));
+    }
+    case "pr_review_blob":
+      await wait(120);
+      return a.path.endsWith(".png") ? png(a.sha !== BASE) : null;
+    case "local_review_blob":
+      return a.path.endsWith(".png") ? png(a.side === "new") : null;
+    case "pr_review_checkout": {
+      await wait(600);
+      const pr = get(a.repo, a.number);
+      if (!pr.detail.localRepoId) throw `Add ${a.repo} to Orbit first (its GitHub remote must be ${a.repo})`;
+      const branch = pr.detail.isCrossRepository ? `pr/${a.number}-checkout` : pr.detail.headRef;
+      const w = host.createWorkspace(pr.detail.localRepoId, pr.detail.title, branch);
+      pr.detail.workspaceId = w.id;
+      return w;
+    }
+    case "pr_review_merge": {
+      await wait(500);
+      const pr = get(a.repo, a.number);
+      if (pr.detail.mergeable === "CONFLICTING") throw "Pull request is not mergeable: the merge commit cannot be cleanly created.";
+      pr.detail.state = "MERGED";
+      return null;
+    }
+    case "pr_review_ready":
+      get(a.repo, a.number).detail.isDraft = false;
+      return null;
+    case "pr_review_request_reviewers": {
+      await wait(200);
+      const d = get(a.repo, a.number).detail;
+      d.requestedReviewers = [...new Set([...d.requestedReviewers.filter((r) => !a.remove.includes(r)), ...a.add])];
+      d.suggestedReviewers = d.suggestedReviewers.filter((r) => !d.requestedReviewers.includes(r));
+      return null;
+    }
+    case "pr_review_draft_add": {
+      await wait(250);
+      const pr = byId(a.prId);
+      if (!pr) throw "PR not found";
+      pr.detail.pendingReview ??= { id: `PRR_${++nextId}`, comments: [] };
+      pr.detail.pendingReview.comments.push({ id: `PRRC_${++nextId}`, path: a.comment.path, side: a.comment.side, line: a.comment.line, startLine: a.comment.startLine, body: a.comment.body });
+      return null;
+    }
+    case "pr_review_draft_edit":
+    case "pr_review_draft_delete": {
+      await wait(150);
+      for (const pr of prs.values()) {
+        const pending = pr.detail.pendingReview;
+        if (!pending) continue;
+        if (cmd === "pr_review_draft_edit") pending.comments = pending.comments.map((c) => (c.id === a.commentId as unknown as string ? { ...c, body: a.body } : c));
+        else pending.comments = pending.comments.filter((c) => c.id !== (a.commentId as unknown as string));
+      }
+      return null;
+    }
+    case "pr_review_discard_pending":
+      for (const pr of prs.values()) if (pr.detail.pendingReview?.id === a.reviewId) pr.detail.pendingReview = null;
+      return null;
+    case "pr_review_submit_pending": {
+      await wait(500);
+      const pr = get(a.repo, a.number);
+      if (pr.staleOnce) {
+        pr.staleOnce = false;
+        throw "stale: the PR changed since you loaded it; reload to review the new commits";
+      }
+      if (a.event !== "COMMENT" && pr.detail.viewerDidAuthor) throw "You can't approve or request changes on your own pull request";
+      for (const c of pr.detail.pendingReview?.comments ?? []) addThread(pr, c);
+      pr.detail.pendingReview = null;
+      pr.detail.reviews.push({
+        id: `R${++nextId}`, author: VIEWER, avatarUrl: "", body: a.body, submittedAt: new Date().toISOString(),
+        state: a.event === "APPROVE" ? "APPROVED" : a.event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED",
+      });
+      pr.detail.viewerLastReviewSha = pr.detail.headSha;
+      if (a.event === "APPROVE") pr.detail.reviewDecision = "APPROVED";
+      if (a.event === "REQUEST_CHANGES") pr.detail.reviewDecision = "CHANGES_REQUESTED";
+      return null;
     }
   }
   return null;

@@ -2,7 +2,7 @@ import { Check, ChevronRight, CornerDownRight, Pencil, Trash2 } from "lucide-rea
 import { useState } from "react";
 import type { PrComment, PrThread } from "../../lib/ipc";
 import { usePrReview } from "../../stores/prReview";
-import { useReview, type ReviewComment } from "../../stores/review";
+import type { ReviewComment } from "../../stores/review";
 import MarkdownText from "../MarkdownText";
 import { Button, cn } from "../ui";
 
@@ -157,16 +157,16 @@ export function ThreadCard({ thread, original }: { thread: PrThread; original?: 
   );
 }
 
-/** One of your pending comments: not posted yet (GitHub: part of your review; local: goes to the agent). */
-export function DraftCard({ draftKey, c, original, onEdit }: { draftKey: string; c: ReviewComment; original?: string[]; onEdit: () => void }) {
+/** One of your pending comments: GitHub: part of your pending review (also visible on github.com); local: goes to the agent. */
+export function DraftCard({ c, github, original, onEdit, onDelete }: { c: ReviewComment; github: boolean; original?: string[]; onEdit: () => void; onDelete: () => void }) {
   return (
     <div className={cardCls} data-draft={c.id}>
       <div className="flex items-center gap-2 border-b border-line px-3 py-1 text-[11px] text-mute">
-        <span className="rounded-[3px] border border-warn/60 px-1.5 font-medium text-warn">Pending</span>
+        <span className="rounded-[3px] border border-warn/60 px-1.5 font-medium text-warn" title={github ? "Saved on GitHub as part of your pending review; nobody sees it until you submit" : "Sent to the agent with Send to agent"}>Pending</span>
         <span>{c.startLine === c.endLine ? `Line ${c.startLine}` : `Lines ${c.startLine}–${c.endLine}`}{c.side === "old" ? " (base)" : ""}</span>
         <span className="ml-auto flex gap-1">
           <button onClick={onEdit} title="Edit" className="grid size-6 place-items-center rounded-[3px] hover:bg-hover hover:text-fg"><Pencil className="size-3.5" /></button>
-          <button onClick={() => useReview.getState().remove(draftKey, c.id)} title="Delete" className="grid size-6 place-items-center rounded-[3px] hover:bg-hover hover:text-bad"><Trash2 className="size-3.5" /></button>
+          <button onClick={onDelete} title="Delete" className="grid size-6 place-items-center rounded-[3px] hover:bg-hover hover:text-bad"><Trash2 className="size-3.5" /></button>
         </span>
       </div>
       <div className="px-3 py-2.5">
@@ -186,6 +186,7 @@ export function Composer({
   onCancel,
   onDraft,
   onPostNow,
+  saving,
 }: {
   label: string;
   initial: string;
@@ -195,6 +196,7 @@ export function Composer({
   onCancel: () => void;
   onDraft: (text: string) => void;
   onPostNow?: (text: string) => Promise<boolean>;
+  saving?: boolean;
 }) {
   const [text, setText] = useState(initial);
   const [posting, setPosting] = useState(false);
@@ -238,8 +240,8 @@ export function Composer({
             {posting ? "Posting…" : "Add single comment"}
           </Button>
         )}
-        <Button variant="primary" disabled={!text.trim()} onClick={() => onDraft(text.trim())}>
-          {initial ? "Save" : github ? "Add review comment" : "Add comment"}
+        <Button variant="primary" disabled={!text.trim() || saving} onClick={() => onDraft(text.trim())}>
+          {saving ? "Saving…" : initial ? "Save" : github ? "Add review comment" : "Add comment"}
         </Button>
       </div>
     </div>

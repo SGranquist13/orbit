@@ -69,7 +69,8 @@ Agents produce a lot of change; reviewing it well should be as comfortable as ch
 - **Local review talks to the agent.** Comments (on any line, a range, or a removed line) collect as drafts and go to the workspace's agent as one message, the same drafts the Code view's diff uses. "Mark reviewed" remembers the state, so the queue shows when the agent changes it again.
 - **GitHub review without the website.** Inline comments on either side, multi-line ranges, `suggestion` blocks, replies, resolve/unresolve, files marked viewed (synced), and submit Comment / Approve / Request changes. Drafts are kept locally until you submit them as one review; "Add single comment" posts at once. If new commits land while you review, Orbit refuses to submit against the old head and offers a reload.
 - **The diff.** Unified or split, syntax-highlighted with the Code view's parsers, word-level highlights inside changed lines, unchanged runs collapsed (context lines are a setting), keyboard `[` `]` for files and `V` for viewed.
-- **Later.** Review requests in the inbox, an AI pre-review whose comments you keep or drop, checking a PR out into a workspace, and sending a PR's review comments to an agent.
+- **Closing the gaps with GitHub and editors.** Hide whitespace; only what changed since your last review, or one commit; image diffs and rendered Markdown/SVG; the pending review lives on GitHub (so it is on github.com too); Open in Code at the current line (a PR is checked out into a workspace first: same-repo PRs on their own branch so pushes update the PR, forks on a local `pr/<n>-…` branch); reviewers, ready for review and merge from the PR header.
+- **Later.** Review requests in the inbox, an AI pre-review whose comments you keep or drop, and sending a PR's review comments to an agent in its checked-out workspace.
 
 ### 14. Voice: talk to your agents
 

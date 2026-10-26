@@ -359,6 +359,11 @@ await h.step("review-pr", async () => {
     await press("del", 2, true);
     await h.waitFor("old-side range", `return document.querySelector('[data-composer]')?.innerText.includes('lines 1–2 (base)')`, 5000);
     await addDraft("Old side range from the e2e.");
+    // Drafts are a pending review on GitHub itself (visible on github.com to you), not local state.
+    const [owner, name] = SANDBOX.split("/");
+    const pendingQuery = `query { repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { reviews(states: [PENDING], first: 5) { nodes { viewerDidAuthor comments(first: 10) { totalCount } } } } } }`;
+    const pending = gh(["api", "graphql", "-f", `query=${pendingQuery}`], clone).data.repository.pullRequest.reviews.nodes.find((r) => r.viewerDidAuthor);
+    if (pending?.comments.totalCount !== 2) throw new Error(`expected 2 pending comments on GitHub, got ${JSON.stringify(pending)}`);
     await h.js(`document.querySelector('[data-testid="review-submit-open"]').click()`);
     await h.js(set(`document.querySelector('textarea[placeholder^="Leave a summary"]')`, "Review from the Orbit e2e."));
     await h.js(`document.querySelector('[data-testid="review-submit"]').click()`);
@@ -380,7 +385,6 @@ await h.step("review-pr", async () => {
     await h.waitFor("reply shown", `return !!${thread} && ${thread}.innerText.includes('Reply from the e2e.')`, 30_000);
     await h.js(`[...${thread}.querySelectorAll('button')].find(b => b.innerText === 'Resolve').click()`);
     await h.js(`document.querySelector('[data-testid="review-viewed"]').click()`);
-    const [owner, name] = SANDBOX.split("/");
     const query = `query { repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { reviewThreads(first: 10) { nodes { isResolved comments(first: 1) { nodes { body } } } } files(first: 10) { nodes { path viewerViewedState } } } } }`;
     await h.until("resolved and viewed on GitHub", async () => {
       const pr = gh(["api", "graphql", "-f", `query=${query}`], clone).data.repository.pullRequest;
@@ -389,6 +393,14 @@ await h.step("review-pr", async () => {
       return resolved && viewed;
     }, 60_000, 2000);
     await h.shot("gh-05-review-pr");
+
+    // Check the PR out into a workspace on its own branch, then open the file in Orbit's Code view.
+    await h.js(`document.querySelector('[data-testid="review-checkout"]').click()`);
+    await h.waitFor("workspace button", `return [...document.querySelectorAll('header button')].some(b => b.innerText.trim() === 'Workspace')`, 120_000);
+    const ws = (await h.invoke("list_workspaces")).find((w) => w.branch === branch);
+    if (!ws) throw new Error(`no workspace on ${branch}`);
+    await h.js(`document.querySelector('button[title="Open in Code (O)"]').click()`);
+    await h.waitFor("opened in Code", `return document.querySelector('[data-code-view]')?.offsetParent !== null && document.querySelector('.cm-content')?.innerText.includes('(e2e)')`, 30_000);
   } finally {
     closePr(number, branch);
     await h.key("1", { alt: true });

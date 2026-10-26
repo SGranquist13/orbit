@@ -128,6 +128,7 @@ pub struct Settings {
     pub review_wrap_lines: bool,
     pub review_queue_sources: Vec<String>,
     pub review_mark_viewed_on_next: bool,
+    pub review_hide_whitespace: bool,
 }
 
 impl Default for Settings {
@@ -211,6 +212,7 @@ impl Default for Settings {
             review_wrap_lines: false,
             review_queue_sources: vec!["requested".into(), "mine".into()],
             review_mark_viewed_on_next: false,
+            review_hide_whitespace: false,
         }
     }
 }
@@ -469,7 +471,7 @@ mod tests {
         assert_eq!(s.default_agent, "claude");
         assert_eq!(s.review_diff_layout, "unified");
         assert_eq!(s.review_context_lines, 3);
-        assert!(!s.review_wrap_lines && !s.review_mark_viewed_on_next);
+        assert!(!s.review_wrap_lines && !s.review_mark_viewed_on_next && !s.review_hide_whitespace);
         assert_eq!(s.review_queue_sources, ["requested", "mine"]);
         // An empty blob deserializes to the same defaults.
         assert_eq!(Settings::load(Some("{}"), None), s);

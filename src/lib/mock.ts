@@ -405,6 +405,7 @@ let settings: Settings = {
   reviewWrapLines: false,
   reviewQueueSources: ["requested", "mine"],
   reviewMarkViewedOnNext: false,
+  reviewHideWhitespace: false,
   syncIntervalMinutes: 10,
   staleDays: 3,
   staleBehind: 20,
@@ -1100,7 +1101,16 @@ export function installMockBackend() {
       const id = a.id ?? "";
       // Code filesystem and the tiny PTY shell share the same per-root mock trees.
       if (cmd.startsWith("code_") || cmd.startsWith("pty_")) return mockCodeCommand(cmd, args);
-      if (cmd.startsWith("pr_review_") || cmd === "local_review") return mockReviewCommand(cmd, args, (id) => workspaces.find((w) => w.id === id)?.path ?? null);
+      if (cmd.startsWith("pr_review_") || cmd.startsWith("local_review")) return mockReviewCommand(cmd, args, {
+        workspacePath: (id) => workspaces.find((w) => w.id === id)?.path ?? null,
+        createWorkspace: (repoId, name, branch) => {
+          const w = ws(`w${workspaces.length + 1}`, repoId, name, settings.defaultAgent, "idle");
+          w.branch = branch;
+          workspaces.unshift(w);
+          void emit("workspace", { ...w });
+          return { ...w };
+        },
+      });
       switch (cmd) {
         case "attempt_group": {
           const group = attemptGroups.find((g) => g.id === id);

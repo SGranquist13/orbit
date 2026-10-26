@@ -92,6 +92,7 @@ pub async fn start_attempts(app: AppHandle, state: State<'_, AppState>, repo_id:
     for (i, a) in args.attempts.into_iter().enumerate() {
         let letter = (b'a' + i as u8) as char;
         let result = crate::create_workspace_inner(&app, &state, NewWorkspaceArgs {
+            branch: None, existing_branch: false,
             repo_id: repo.id.clone(), name: format!("{slug} · {}", letter.to_ascii_uppercase()), agent: a.agent, model: a.model,
             issue_number: None, profile: args.profile.clone(), routine_id: None, branch_prefix: None, teammate: None,
             start_ref: start_ref.clone(), attempt_group: Some(group.id.clone()), branch_suffix: Some(letter.to_string()),

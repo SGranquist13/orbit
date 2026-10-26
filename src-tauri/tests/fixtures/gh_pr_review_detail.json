@@ -58,14 +58,26 @@
               "comments": {
                 "nodes": [
                   {
-                    "databaseId": 5,
                     "body": "Comment",
                     "createdAt": "2026-01-01",
                     "author": {
                       "login": "me",
                       "avatarUrl": "a"
                     },
-                    "viewerDidAuthor": true
+                    "viewerDidAuthor": true,
+                    "id": "T1C0",
+                    "fullDatabaseId": "5",
+                    "state": "SUBMITTED"
+                  },
+                  {
+                    "id": "D1",
+                    "path": "new.rs",
+                    "line": null,
+                    "originalLine": 9,
+                    "startLine": null,
+                    "originalStartLine": 4,
+                    "body": "Draft",
+                    "state": "PENDING"
                   }
                 ]
               }
@@ -84,11 +96,31 @@
               "comments": {
                 "nodes": [
                   {
-                    "databaseId": 5,
                     "body": "Comment",
                     "createdAt": "2026-01-01",
                     "author": null,
-                    "viewerDidAuthor": false
+                    "viewerDidAuthor": false,
+                    "id": "T2C0",
+                    "fullDatabaseId": "5",
+                    "state": "SUBMITTED"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "DRAFT",
+              "diffSide": "LEFT",
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "D2",
+                    "path": "new.rs",
+                    "line": null,
+                    "originalLine": 9,
+                    "startLine": null,
+                    "originalStartLine": 4,
+                    "body": "Draft",
+                    "state": "PENDING"
                   }
                 ]
               }
@@ -107,6 +139,33 @@
               "body": "",
               "submittedAt": null,
               "author": null
+            },
+            {
+              "id": "R2",
+              "viewerDidAuthor": true,
+              "state": "COMMENTED",
+              "submittedAt": "2026-01-02",
+              "commit": {
+                "oid": "first"
+              }
+            },
+            {
+              "id": "R3",
+              "viewerDidAuthor": true,
+              "state": "APPROVED",
+              "submittedAt": "2026-01-03",
+              "commit": {
+                "oid": "second"
+              }
+            },
+            {
+              "id": "R4",
+              "viewerDidAuthor": false,
+              "state": "APPROVED",
+              "submittedAt": "2026-01-04",
+              "commit": {
+                "oid": "other"
+              }
             }
           ]
         },
@@ -117,10 +176,121 @@
               "body": "Comment",
               "createdAt": "2026-01-01",
               "author": null,
-              "viewerDidAuthor": true
+              "viewerDidAuthor": true,
+              "fullDatabaseId": "invalid"
             }
           ]
-        }
+        },
+        "isCrossRepository": false,
+        "headRepository": {
+          "nameWithOwner": "o/r"
+        },
+        "pending": {
+          "nodes": [
+            {
+              "id": "OTHER",
+              "viewerDidAuthor": false,
+              "comments": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "P1",
+              "viewerDidAuthor": true,
+              "comments": {
+                "nodes": [
+                  {
+                    "id": "D1",
+                    "path": "new.rs",
+                    "line": null,
+                    "originalLine": 9,
+                    "startLine": null,
+                    "originalStartLine": 4,
+                    "body": "Draft"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "commits": {
+          "nodes": [
+            {
+              "commit": {
+                "oid": "first",
+                "messageHeadline": "First",
+                "committedDate": "2026-01-01",
+                "author": {
+                  "name": "Name",
+                  "user": null
+                },
+                "parents": {
+                  "nodes": []
+                }
+              }
+            },
+            {
+              "commit": {
+                "oid": "second",
+                "messageHeadline": "Second",
+                "committedDate": "2026-01-02",
+                "author": {
+                  "name": "Name",
+                  "user": {
+                    "login": "me"
+                  }
+                },
+                "parents": {
+                  "nodes": [
+                    {
+                      "oid": "first"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "reviewRequests": {
+          "nodes": [
+            {
+              "requestedReviewer": {
+                "__typename": "User",
+                "login": "requested"
+              }
+            },
+            {
+              "requestedReviewer": {
+                "__typename": "Team",
+                "slug": "reviewers",
+                "organization": {
+                  "login": "o"
+                }
+              }
+            }
+          ]
+        },
+        "suggestedReviewers": [
+          {
+            "reviewer": {
+              "login": "requested"
+            }
+          },
+          {
+            "reviewer": {
+              "login": "author"
+            }
+          },
+          {
+            "reviewer": {
+              "login": "suggested"
+            }
+          }
+        ]
       }
     }
   }
