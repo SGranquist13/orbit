@@ -604,6 +604,7 @@ async fn launch(app: &AppHandle, state: &AppState, routine: &Routine) -> Result<
                 app,
                 state,
                 NewWorkspaceArgs {
+            branch: None, existing_branch: false,
                     attempt_group: None,
                     branch_suffix: None,
                     repo_id: routine.repo_id.clone(),

@@ -88,7 +88,7 @@ pub fn post_review(worktree: &Path, review: &crate::review::Review) -> anyhow::R
 
 /// Arguments for `gh pr merge`. The local branch is held by a worktree, so `--delete-branch` is
 /// never used; the remote ref is deleted separately (see `merge`).
-fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn merge_args(number: u64, method: &str) -> anyhow::Result<Vec<String>> {
     let flag = match method {
         "squash" | "merge" | "rebase" => format!("--{method}"),
         other => anyhow::bail!("unknown merge method {other}"),
@@ -129,7 +129,7 @@ fn parse_pr(v: &Value) -> PrStatus {
 }
 
 /// Rollup items are either CheckRuns (`status`/`conclusion`) or StatusContexts (`state`).
-fn summarize_checks(rollup: &Value) -> Checks {
+pub(crate) fn summarize_checks(rollup: &Value) -> Checks {
     let mut c = Checks::default();
     for item in rollup.as_array().into_iter().flatten() {
         let name = item["name"].as_str().or(item["context"].as_str()).unwrap_or("check").to_string();

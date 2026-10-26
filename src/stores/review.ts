@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { confirmAction } from "../lib/confirm";
-import { api } from "../lib/ipc";
+import { api, type DiffSide } from "../lib/ipc";
 import { useApp } from "./app";
 
 export interface ReviewComment {
@@ -9,7 +9,8 @@ export interface ReviewComment {
   /** Inclusive, 1-based document line numbers throughout the UI and dev hook. */
   startLine: number;
   endLine: number;
-  side: "new";
+  /** "old" comments on removed/base lines (Review view only; the Code view comments on the new side). */
+  side: DiffSide;
   text: string;
   /** The commented source lines, verbatim. */
   excerpt: string;
@@ -76,11 +77,15 @@ export const useReview = create<ReviewState>((set, get) => {
 const EMPTY: ReviewComment[] = [];
 export const useReviewComments = (ws: string | undefined) => useReview((s) => (ws ? (s.drafts[ws] ?? EMPTY) : EMPTY));
 
+/** Draft keys: a workspace id, or `gh:owner/name#12` for a GitHub PR reviewed in the Review view. */
+export const ghDraftKey = (repo: string, number: number) => `gh:${repo}#${number}`;
+const isWorkspaceKey = (key: string) => !key.startsWith("gh:");
+
 /** One message for all drafts, in file and line order. */
 export function reviewMessage(comments: ReviewComment[]): string {
   const fence = (text: string) => "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)));
   const items = comments.map((c, i) => {
-    const range = c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`;
+    const range = (c.startLine === c.endLine ? `${c.startLine}` : `${c.startLine}-${c.endLine}`) + (c.side === "old" ? " (removed, base side)" : "");
     const f = fence(c.excerpt);
     return `${i + 1}. \`${c.path}:${range}\`\n${f}\n${c.excerpt.replace(/\n+$/, "")}\n${f}\n${c.text.trim()}`;
   });
@@ -132,6 +137,6 @@ export function reviewTarget(): string | null {
   const drafts = useReview.getState().drafts;
   const selected = useApp.getState().selectedId;
   if (selected && drafts[selected]?.length) return selected;
-  const ids = Object.keys(drafts).filter((id) => drafts[id].length);
+  const ids = Object.keys(drafts).filter((id) => isWorkspaceKey(id) && drafts[id].length);
   return ids.length === 1 ? ids[0] : null;
 }

@@ -34,7 +34,7 @@ import { confirmAction } from "../lib/confirm";
 import { rememberTeammate, rememberedTeammate } from "../lib/lastTeammate";
 import { applyUsage } from "../lib/usage";
 
-export type View = "code" | "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate" | "attempts";
+export type View = "code" | "workspace" | "inbox" | "issues" | "settings" | "routines" | "teammate" | "attempts" | "review";
 
 interface AppState {
   repos: Repo[];

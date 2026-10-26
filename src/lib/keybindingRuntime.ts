@@ -38,7 +38,7 @@ export function installKeybindings(hint: (message: string) => void) {
   add("workbench.openInEditor", () => openSelectedInEditor());
   add("code.quickOpen", () => void showCode(false, true));
   add("code.focusExplorer", () => void showCode(true));
-  for (const v of ["inbox", "code", "routines", "teammates", "issues"] as const) {
+  for (const v of ["inbox", "code", "routines", "teammates", "issues", "review"] as const) {
     add(`views.${v}`, () => (v === "code" ? void showCode() : useApp.getState().setView(v === "teammates" ? "teammate" : v)));
   }
   add("workbench.newWorkspace", () => useApp.getState().setNewWorkspaceOpen(true));

@@ -187,6 +187,7 @@ pub async fn branch_from_turn(app: AppHandle, state: State<'_, AppState>, worksp
         (ws, kept, note)
     };
     let new = create_workspace_inner(&app, &state, NewWorkspaceArgs {
+            branch: None, existing_branch: false,
         repo_id: ws.repo_id,
         name: name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{} from turn {}", ws.name, kept.turn_index)),
         agent: ws.agent, model: ws.model, issue_number: ws.issue_number, profile: ws.profile,

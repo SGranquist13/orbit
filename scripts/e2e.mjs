@@ -2139,4 +2139,51 @@ await step("voice", async () => {
   if (total !== sent + 1) throw new Error(`hands-free sent ${total - sent} messages, expected 1`);
 });
 
+// ── Review view: local workspace review (PLANNING #15) ───────
+await step("review-local", async () => {
+  const ws = await newWorkspace({ agent: "claude", model: "haiku", prompt: "" });
+  const pkg = path.join(ws.path, "package.json");
+  // Old side line 2 is `"name": "repo-lib"`; the change replaces it, so line 2 exists on both sides.
+  fs.writeFileSync(pkg, fs.readFileSync(pkg, "utf8").replace('"repo-lib"', '"repo-lib-renamed"'));
+  const set = (sel, text) => `const t = document.querySelector(${JSON.stringify(sel)}); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, ${JSON.stringify(text)}); t.dispatchEvent(new Event('input', { bubbles: true }));`;
+  try {
+    await key("6", { alt: true });
+    await waitFor("Review view", `return !!document.querySelector('[data-view="review"]')`, 10_000);
+    await waitFor("workspace in the queue", `return !!document.querySelector('[data-testid="review-local-${ws.id}"]')`, 20_000);
+    await js(`document.querySelector('[data-testid="review-local-${ws.id}"]').click()`);
+    await waitFor("changed file listed", `return !!document.querySelector('[data-review-file="package.json"]')`, 15_000);
+    await js(`document.querySelector('[data-review-file="package.json"]').click(); document.querySelector('button[title="Unified"]')?.click()`);
+    await waitFor("diff rendered", `return [...document.querySelectorAll('[data-review-diff="package.json"] .rv-row.rv-add')].some(r => r.innerText.includes('repo-lib-renamed'))`, 15_000);
+    // Comment on the removed line (old side), the case CodeMirror's unified view can't anchor.
+    await js(`document.querySelector('[data-review-diff="package.json"] .rv-row.rv-del .rv-num').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))`);
+    await waitFor("comment box", `return !!document.querySelector('[data-composer] textarea')`, 5000);
+    await js(set("[data-composer] textarea", "Keep the old package name."));
+    await js(`[...document.querySelectorAll('[data-composer] button')].find(b => b.innerText === 'Add comment').click()`);
+    await waitFor("pending card", `return !!document.querySelector('[data-draft]')`, 5000);
+    const draft = await js(`return window.__ORBIT_REVIEW__.list(${JSON.stringify(ws.id)})[0]`);
+    if (draft?.side !== "old" || draft?.startLine !== 2 || draft?.path !== "package.json" || !draft?.excerpt.includes("repo-lib")) throw new Error(`wrong draft: ${JSON.stringify(draft)}`);
+    await js(`document.querySelector('[data-testid="review-mark-reviewed"]').click()`);
+    await waitFor("marked reviewed", `return document.querySelector('[data-testid="review-mark-reviewed"]')?.innerText === 'Reviewed'`, 5000);
+    await waitFor("file viewed", `return document.querySelector('[data-testid="review-viewed"]')?.checked === true`, 5000);
+    await shot("review-local");
+    // O opens the file in Orbit's Code view (the workspace's worktree), then back to Review.
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'o', bubbles: true }))`);
+    await waitFor("opened in Code", `return !!document.querySelector('[data-code-view]') && document.querySelector('[data-code-view]').offsetParent !== null && document.querySelector('.cm-content')?.innerText.includes('repo-lib-renamed')`, 15_000);
+    await key("6", { alt: true });
+    await waitFor("back in Review", `return !!document.querySelector('[data-testid="review-send-agent"]')`, 10_000);
+    await js(`document.querySelector('[data-testid="review-send-agent"]').click()`);
+    const um = await until("review message sent", async () => (await wsEvents(ws.id)).find((e) => e.type === "userMessage" && e.text?.includes("Review comments on your changes")), 30_000, 500);
+    if (!um.text.includes("`package.json:2 (removed, base side)`") || !um.text.includes("Keep the old package name.")) throw new Error(`review message lacks the anchor or comment: ${JSON.stringify(um.text)}`);
+    await until("turn ended", async () => (await invoke("list_workspaces")).find((w) => w.id === ws.id)?.status !== "running", 120_000, 500);
+    // A later change marks the workspace as new since your review.
+    fs.appendFileSync(path.join(ws.path, "AFTER-REVIEW.txt"), "later\n");
+    await key("6", { alt: true });
+    await waitFor("Review view again", `return !!document.querySelector('[data-view="review"]')`, 10_000);
+    await js(`document.querySelector('[data-view="review"] button[title="Refresh"]').click()`);
+    await waitFor("new since review", `return !!document.querySelector('[data-testid="review-local-${ws.id}"] [title="Changed since you marked it reviewed"]')`, 20_000);
+  } finally {
+    await key("1", { alt: true });
+  }
+});
+
 await h.finish();

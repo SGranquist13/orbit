@@ -6,12 +6,13 @@ import { explorerAction, type ExplorerAction } from "./code/Explorer";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { Command } from "cmdk";
 import { useState } from "react";
-import { Headphones, Mic, Volume2, SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, Gauge, GitBranch, GitMerge, History, ListChecks, Minimize2, Package, Paperclip, Play, Plug, Plus, Rocket, RotateCcw, ScanSearch, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
+import { Headphones, Mic, Volume2, SquareArrowOutUpRight, AlarmClock, Archive, CalendarClock, Check, Cpu, FolderPlus, FolderSymlink, Gauge, GitBranch, GitMerge, GitPullRequest, History, ListChecks, Minimize2, Package, Paperclip, Play, Plug, Plus, Rocket, RotateCcw, ScanSearch, Shrink, Smartphone, Sparkles, Square, Trash2, Undo2, UserRound, Users, Zap } from "lucide-react";
 import { snoozeOptions } from "../lib/attention";
 import { confirmAction } from "../lib/confirm";
 import { openSelectedInEditor } from "../lib/openEditor";
 import { api, activeProfile, workspacePackItems } from "../lib/ipc";
 import { useApp } from "../stores/app";
+import { usePrReview } from "../stores/prReview";
 import { startDevServer, stopDevServer } from "../stores/scripts";
 import { useVoice } from "../stores/voice";
 import { pickAttachFolder, requestAttachImage } from "./Chat";
@@ -138,6 +139,21 @@ export function Palette() {
             >
               <Users className="size-3.5" /> Ask a teammate…
             </Command.Item>
+            <Command.Item className={item} value="Review changes and pull requests" onSelect={run(() => useApp.getState().setView("review"))}>
+              <GitPullRequest className="size-3.5" /> Review changes and pull requests
+            </Command.Item>
+            {selected && (
+              <Command.Item
+                className={item}
+                value={`Review this workspace's changes ${selected.name}`}
+                onSelect={run(() => {
+                  useApp.getState().setView("review");
+                  void usePrReview.getState().open({ kind: "local", workspaceId: selected.id });
+                })}
+              >
+                <GitPullRequest className="size-3.5" /> Review this workspace's changes
+              </Command.Item>
+            )}
             <Command.Item className={item} value="New teammate" onSelect={run(() => useApp.getState().setTeammateEditor("new"))}>
               <Plus className="size-3.5" /> New teammate
             </Command.Item>
