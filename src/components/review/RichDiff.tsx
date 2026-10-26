@@ -86,14 +86,24 @@ export function ImageDiff({ opened, file, rangeView }: DiffProps) {
 }
 
 function Frame({ side, label, tone }: { side: Side; label: string; tone: "ok" | "bad" }) {
-  const [dims, setDims] = useState("");
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  // Icons and other small images are scaled up by a whole factor, with crisp pixels, so changes are visible.
+  const zoom = size && size.w < 128 && size.h < 128 ? Math.min(4, Math.ceil(128 / Math.max(size.w, size.h))) : 1;
   return (
     <figure className="flex flex-col items-center gap-2">
       <div className={cn("checker border-[1.5px] p-0", tone === "ok" ? "border-ok/70" : "border-bad/70")}>
-        <img src={side.url} alt={label} onLoad={(e) => setDims(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight}`)} className="block max-h-[60vh] max-w-[40vw]" />
+        <img
+          src={side.url}
+          alt={label}
+          onLoad={(e) => setSize({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          style={size && zoom > 1 ? { width: size.w * zoom, height: size.h * zoom, imageRendering: "pixelated" } : undefined}
+          className="block max-h-[60vh] max-w-[40vw]"
+        />
       </div>
       <figcaption className="text-[11.5px] text-mute tabular-nums">
-        <span className={cn("font-medium", tone === "ok" ? "text-ok" : "text-bad")}>{label}</span> · {dims} · {kb(side.bytes)}
+        <span className={cn("font-medium", tone === "ok" ? "text-ok" : "text-bad")}>{label}</span>
+        {size && ` · ${size.w} × ${size.h}`} · {kb(side.bytes)}
+        {zoom > 1 && ` · shown at ${zoom}×`}
       </figcaption>
     </figure>
   );
