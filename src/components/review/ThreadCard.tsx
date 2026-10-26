@@ -44,13 +44,15 @@ export function CommentBody({ body, original }: { body: string; original?: strin
         p.suggestion ? (
           <div key={i} className="overflow-hidden rounded-[4px] border-[1.5px] border-line">
             <div className="border-b border-line bg-raised px-2 py-1 text-[11px] font-medium text-mute">Suggested change</div>
-            <div className="rv-code py-1">
-              {(original ?? []).map((l, k) => (
-                <div key={`o${k}`} className="rv-del flex px-2"><span className="w-4 shrink-0 text-mute">−</span><span className="whitespace-pre-wrap">{l || " "}</span></div>
-              ))}
-              {p.suggestion.map((l, k) => (
-                <div key={`n${k}`} className="rv-add flex px-2"><span className="w-4 shrink-0 text-mute">+</span><span className="whitespace-pre-wrap">{l || " "}</span></div>
-              ))}
+            <div className="rv-code overflow-x-auto py-1">
+              <div className="w-max min-w-full">
+                {(original ?? []).map((l, k) => (
+                  <div key={`o${k}`} className="rv-del flex px-2"><span className="w-4 shrink-0 text-mute">−</span><span className="whitespace-pre">{l || " "}</span></div>
+                ))}
+                {p.suggestion.map((l, k) => (
+                  <div key={`n${k}`} className="rv-add flex px-2"><span className="w-4 shrink-0 text-mute">+</span><span className="whitespace-pre">{l || " "}</span></div>
+                ))}
+              </div>
             </div>
           </div>
         ) : p.md!.trim() ? (
