@@ -209,7 +209,7 @@ What Orbit does today and where it's heading. For how features were designed, an
 
 | Feature | Status | Notes |
 |---|---|---|
-| Windows 10/11 desktop app (Tauri 2) with installer | ✅ | Latest: v0.3.0 ([changelog](CHANGELOG.md)) |
+| Windows 10/11 desktop app (Tauri 2) with installer | ✅ | Latest: v0.4.0 ([changelog](CHANGELOG.md)) |
 | Content-security-policy in every build | ✅ | |
 | Continuous integration (licence checks, typecheck, Rust tests and lints) | ✅ | |
 | Tested with an end-to-end suite that drives the real app with real agents and real GitHub | ✅ | |

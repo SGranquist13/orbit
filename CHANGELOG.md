@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-26
+
 Review your agents' work and your team's pull requests in one place, without leaving Orbit.
 
 - Preview: the Review view (Alt+6). Read what each workspace's agent changed, file by file, comment on any line (or a range, or a removed line) and send all your comments to the agent as one message. Mark a workspace reviewed and Orbit shows when its agent changes things again.
