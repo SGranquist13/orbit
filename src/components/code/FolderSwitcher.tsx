@@ -8,7 +8,7 @@ import { StatusDot } from "../ui";
 
 export async function openCodeFolder() {
   try {
-    const path = isTauri() ? await open({ directory: true, title: "Open folder in Code" }) : "C:/code/superset";
+    const path = isTauri() ? await open({ directory: true, title: "Open folder in Code" }) : "C:/code/relay";
     if (typeof path === "string") {
       useApp.getState().setView("code");
       await useCode.getState().openRoot(path);

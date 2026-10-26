@@ -29,7 +29,7 @@ function tree(root: string) {
     "package.json":
       JSON.stringify(
         {
-          name: "superset",
+          name: "relay",
           private: true,
           scripts: { dev: "vite", build: "tsc && vite build" },
           dependencies: { react: "^19.1.0" },
@@ -38,11 +38,11 @@ function tree(root: string) {
         2,
       ) + "\n",
     "README.md":
-      "# Superset\n\nA focused workspace for your team.\n\n## Development\n\nRun `bun install`, then `bun run dev`.\n\n## Authentication\n\nSessions expire after 24 hours.\n",
+      "# Relay\n\nA focused workspace for your team.\n\n## Development\n\nRun `bun install`, then `bun run dev`.\n\n## Authentication\n\nSessions expire after 24 hours.\n",
     "src/main.ts":
       'import { restoreSession } from "./auth/session";\nimport "./styles.css";\n\nasync function main() {\n  const session = await restoreSession();\n  console.info("Welcome", session?.user.name ?? "guest");\n}\n\nvoid main();\n',
     "src/auth/session.ts":
-      'export interface Session {\n  token: string;\n  user: { id: string; name: string };\n  expiresAt: number;\n}\n\nconst SESSION_KEY = "superset.session";\n\n/** Restore a session only while its token remains valid. */\nexport async function restoreSession(): Promise<Session | null> {\n  const raw = localStorage.getItem(SESSION_KEY);\n  if (!raw) return null;\n  const session: Session = JSON.parse(raw);\n  if (session.expiresAt < Date.now()) {\n    localStorage.removeItem(SESSION_KEY);\n    return null;\n  }\n  return session;\n}\n\nexport function signOut() {\n  localStorage.removeItem(SESSION_KEY);\n}\n',
+      'export interface Session {\n  token: string;\n  user: { id: string; name: string };\n  expiresAt: number;\n}\n\nconst SESSION_KEY = "relay.session";\n\n/** Restore a session only while its token remains valid. */\nexport async function restoreSession(): Promise<Session | null> {\n  const raw = localStorage.getItem(SESSION_KEY);\n  if (!raw) return null;\n  const session: Session = JSON.parse(raw);\n  if (session.expiresAt < Date.now()) {\n    localStorage.removeItem(SESSION_KEY);\n    return null;\n  }\n  return session;\n}\n\nexport function signOut() {\n  localStorage.removeItem(SESSION_KEY);\n}\n',
     "src/components/Login.tsx":
       'import { useState } from "react";\n\nexport function Login() {\n  const [email, setEmail] = useState("");\n  return (\n    <form onSubmit={(event) => event.preventDefault()}>\n      <label htmlFor="email">Email address</label>\n      <input id="email" type="email" value={email}\n        onChange={(event) => setEmail(event.target.value)} />\n      <button type="submit">Continue</button>\n    </form>\n  );\n}\n',
     "src/styles.css":
@@ -53,7 +53,7 @@ function tree(root: string) {
     "dist/bundle.js": '(()=>{console.log("production bundle")})();\n',
     "logo.png": "\u0089PNG\u0000\u0001",
     "tsconfig.json": '{\n  "compilerOptions": { "strict": true, "target": "ES2022", "jsx": "react-jsx" }\n}\n',
-    "config/app.toml": '[app]\nname = "Superset"\nport = 1420\n',
+    "config/app.toml": '[app]\nname = "Relay"\nport = 1420\n',
   };
   for (const [rel, text] of Object.entries(seed)) {
     const segments = rel.split("/");

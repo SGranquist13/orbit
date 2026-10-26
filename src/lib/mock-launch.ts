@@ -201,7 +201,6 @@ const TRANSCRIPTS: Record<string, StoredEvent[]> = {
 export function applyLaunchSeed(d: {
   ws: Ws; sum: Sum; repos: Repo[]; workspaces: Workspace[]; summaries: Summary[]; issues: Issue[]; suggested: Related[];
 }) {
-  for (const r of d.suggested) r.evidence = r.evidence.replace("@acme/superset", "@acme/relay");
   d.repos.splice(0, d.repos.length, ...REPOS);
   d.workspaces.splice(0, d.workspaces.length, ...FLEET.map(([id, repo, name, agent, status, profile, issue, age, seen]) => {
     const w = d.ws(id, repo, name, agent, status);
