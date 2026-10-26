@@ -88,12 +88,12 @@ export function ReviewQueue() {
                       <span className="truncate font-medium">{w.name}</span>
                       {fresh && <span title="Changed since you marked it reviewed" className="size-1.5 shrink-0 rounded-full bg-fg" />}
                     </div>
-                    <div className="flex items-center gap-1.5 text-[11px] text-mute">
-                      <span className="truncate">{repo}</span>
-                      <span>·</span>
-                      <span className="tabular-nums">{files.length} file{files.length === 1 ? "" : "s"}</span>
-                      {pending > 0 && <span className="text-warn">· {pending} pending</span>}
-                      {w.status === "running" && <span className="text-run">· working</span>}
+                    <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-mute">
+                      <span className="min-w-0 truncate">{repo}</span>
+                      <span className="shrink-0">·</span>
+                      <span className="shrink-0 tabular-nums">{files.length} file{files.length === 1 ? "" : "s"}</span>
+                      {pending > 0 && <span className="shrink-0 text-warn">· {pending} pending</span>}
+                      {w.status === "running" && <span className="shrink-0 text-run">· working</span>}
                     </div>
                   </div>
                   <DiffStat additions={t.additions} deletions={t.deletions} className="text-[10.5px]" />
