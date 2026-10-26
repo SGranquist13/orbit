@@ -549,6 +549,17 @@ export interface Settings {
   terminalShell: string;
   /** null selects the first detected editor. */
   editorCommand: string | null;
+  // Review view
+  reviewDiffLayout: "unified" | "split";
+  /** Unchanged lines kept around each change before the rest collapses. */
+  reviewContextLines: number;
+  reviewWrapLines: boolean;
+  /** Which GitHub searches feed the Review queue. */
+  reviewQueueSources: ReviewQueueSource[];
+  /** Moving to the next file marks the current one viewed. */
+  reviewMarkViewedOnNext: boolean;
+  /** Compare lines ignoring whitespace changes (the toolbar toggles it for the session). */
+  reviewHideWhitespace: boolean;
 }
 
 /** `llm.rs`: local model servers for utility tasks. */
@@ -994,6 +1005,212 @@ export const voiceApi = {
   file: (path: string) => invoke<ArrayBuffer>("voice_file", { path }),
 };
 
+
+// ── Review view (src-tauri/src/pr_review.rs). `repo` is always "owner/name". ──
+export type ReviewQueueSource = "requested" | "mine" | "involves";
+export interface PrRef {
+  repo: string;
+  number: number;
+}
+export interface ReviewQueueItem {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  updatedAt: string;
+  isDraft: boolean;
+  /** "" | "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" */
+  reviewDecision: string;
+  /** Every queue search that returned this PR. */
+  sources: ReviewQueueSource[];
+}
+export type PrFileStatus = "added" | "modified" | "removed" | "renamed" | "copied" | "changed";
+export interface PrFile {
+  path: string;
+  /** Set for renames and copies: the path on the base side. */
+  previousPath: string | null;
+  additions: number;
+  deletions: number;
+  status: PrFileStatus;
+  /** GitHub's per-viewer "Viewed" checkbox. */
+  viewed: boolean;
+}
+export interface PrComment {
+  /** REST id (databaseId): the one replies use. */
+  id: number;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+  isMine: boolean;
+}
+/** "old" = the base side (GitHub LEFT), "new" = the head side (RIGHT). */
+export type DiffSide = "old" | "new";
+export interface PrThread {
+  /** GraphQL node id: resolve/unresolve use it. */
+  id: string;
+  path: string;
+  side: DiffSide;
+  /** null when the thread is outdated and no longer maps onto the current diff. */
+  line: number | null;
+  startLine: number | null;
+  originalLine: number | null;
+  isResolved: boolean;
+  isOutdated: boolean;
+  canResolve: boolean;
+  comments: PrComment[];
+}
+export interface PrReviewSummary {
+  id: string;
+  author: string;
+  avatarUrl: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  body: string;
+  submittedAt: string | null;
+}
+export interface PrTimelineComment {
+  id: number;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+}
+export interface PrDetail {
+  /** GraphQL node id of the PR (mark-viewed uses it). */
+  id: string;
+  repo: string;
+  number: number;
+  title: string;
+  /** Markdown. */
+  body: string;
+  url: string;
+  author: string;
+  authorAvatarUrl: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  viewerLogin: string;
+  /** GitHub refuses Approve / Request changes on your own PR. */
+  viewerDidAuthor: boolean;
+  headRef: string;
+  baseRef: string;
+  headSha: string;
+  /** The diff's old side, as GitHub computes it (merge base of base and head). */
+  mergeBaseSha: string;
+  reviewDecision: string;
+  mergeable: string;
+  checks: PrStatus["checks"];
+  createdAt: string;
+  updatedAt: string;
+  files: PrFile[];
+  threads: PrThread[];
+  reviews: PrReviewSummary[];
+  comments: PrTimelineComment[];
+  /** Head branch lives in a fork: a checkout can't push back to the PR. */
+  isCrossRepository: boolean;
+  /** "owner/name" of the head branch's repository. */
+  headRepo: string;
+  /** Oldest first. */
+  commits: PrCommit[];
+  /** Commit your latest submitted review was made against (null if you haven't reviewed). */
+  viewerLastReviewSha: string | null;
+  /** Your unsubmitted review on GitHub (also visible on github.com), with its comments. */
+  pendingReview: PendingReview | null;
+  requestedReviewers: string[];
+  /** GitHub's suggestions, minus the ones already requested. */
+  suggestedReviewers: string[];
+  /** The Orbit repo whose GitHub remote is this PR's repo. */
+  localRepoId: string | null;
+  /** An Orbit workspace already on the PR's head branch. */
+  workspaceId: string | null;
+}
+export interface PrCommit {
+  oid: string;
+  /** First line of the message. */
+  message: string;
+  author: string;
+  committedAt: string;
+  /** First parent; null for a root commit. */
+  parentOid: string | null;
+}
+export interface PendingComment {
+  /** GraphQL node id (edit/delete use it). */
+  id: string;
+  path: string;
+  side: DiffSide;
+  line: number;
+  startLine: number | null;
+  body: string;
+}
+export interface PendingReview {
+  id: string;
+  comments: PendingComment[];
+}
+export type MergeMethod = "squash" | "merge" | "rebase";
+export type ReviewVerdict = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
+/** A comment to post: `line` is the last line of the range, `startLine` its first (null = one line). */
+export interface NewPrComment {
+  path: string;
+  side: DiffSide;
+  line: number;
+  startLine: number | null;
+  body: string;
+}
+/** A local workspace's pending changes: everything in its worktree vs the merge base with its base branch. */
+export interface LocalReview {
+  workspaceId: string;
+  root: string;
+  baseSha: string;
+  headSha: string;
+  /** Uncommitted or untracked changes present. */
+  dirty: boolean;
+  files: FileChange[];
+}
+
+export const reviewApi = {
+  /** Open PRs from the configured searches, newest first; rejects with "gh is not logged in…" when gh can't reach GitHub. */
+  queue: () => invoke<ReviewQueueItem[]>("pr_review_queue"),
+  /** Parses a PR URL, `owner/repo#12` or `#12` / `12` (the latter need `repoId`, resolved through its GitHub remote). */
+  parseRef: (input: string, repoId: string | null) => invoke<PrRef>("pr_review_parse_ref", { input, repoId }),
+  detail: (repo: string, number: number) => invoke<PrDetail>("pr_review_detail", { repo, number }),
+  /** File text at a commit; null when absent there, binary, or over 1 MB. */
+  file: (repo: string, sha: string, path: string) => invoke<string | null>("pr_review_file", { repo, sha, path }),
+  /** Rejects with "stale: …" when the PR head moved past `commitId`. */
+  submit: (repo: string, number: number, commitId: string, event: ReviewVerdict, body: string, comments: NewPrComment[]) =>
+    invoke<void>("pr_review_submit", { repo, number, commitId, event, body, comments }),
+  /** A single inline comment, posted at once (outside a review). */
+  comment: (repo: string, number: number, commitId: string, comment: NewPrComment) =>
+    invoke<void>("pr_review_comment", { repo, number, commitId, comment }),
+  reply: (repo: string, number: number, commentId: number, body: string) =>
+    invoke<void>("pr_review_reply", { repo, number, commentId, body }),
+  resolve: (threadId: string, resolved: boolean) => invoke<void>("pr_review_resolve", { threadId, resolved }),
+  viewed: (prId: string, path: string, viewed: boolean) => invoke<void>("pr_review_viewed", { prId, path, viewed }),
+  /** A conversation (timeline) comment. */
+  issueComment: (repo: string, number: number, body: string) => invoke<void>("pr_review_issue_comment", { repo, number, body }),
+  /** Text per file comes from codeApi.fileAt(root, path, "base") and codeApi.readFile(root, path). */
+  local: (workspaceId: string) => invoke<LocalReview>("local_review", { workspaceId }),
+  /** Files changed between two commits of the PR (compare API), for "since your last review" and per-commit views. */
+  rangeFiles: (repo: string, base: string, head: string) => invoke<PrFile[]>("pr_review_range_files", { repo, base, head }),
+  /** Raw bytes at a commit as base64 (images); null when absent there or over 10 MB. */
+  blob: (repo: string, sha: string, path: string) => invoke<string | null>("pr_review_blob", { repo, sha, path }),
+  /** Raw bytes as base64: "old" = at the merge base, "new" = on disk. null when absent or over 10 MB. */
+  localBlob: (workspaceId: string, path: string, side: DiffSide) => invoke<string | null>("local_review_blob", { workspaceId, path, side }),
+  /** A workspace on the PR's head branch (same-repo PRs push back to it; forks get a local pr/<n>-… branch). Rejects with "Add owner/name to Orbit first" when no repo matches. */
+  checkout: (repo: string, number: number, agent: AgentKind | null) => invoke<Workspace>("pr_review_checkout", { repo, number, agent }),
+  merge: (repo: string, number: number, method: MergeMethod, deleteBranch: boolean) => invoke<void>("pr_review_merge", { repo, number, method, deleteBranch }),
+  /** Draft → ready for review. */
+  ready: (repo: string, number: number) => invoke<void>("pr_review_ready", { repo, number }),
+  /** Also re-requests a review from someone who already reviewed. */
+  requestReviewers: (repo: string, number: number, add: string[], remove: string[]) => invoke<void>("pr_review_request_reviewers", { repo, number, add, remove }),
+  /** Adds a comment to your pending review on GitHub, starting one at `commitId` if needed. */
+  draftAdd: (prId: string, commitId: string, comment: NewPrComment) => invoke<void>("pr_review_draft_add", { prId, commitId, comment }),
+  draftEdit: (commentId: string, body: string) => invoke<void>("pr_review_draft_edit", { commentId, body }),
+  draftDelete: (commentId: string) => invoke<void>("pr_review_draft_delete", { commentId }),
+  /** Submits your pending review. Rejects with "stale: …" when the head moved past `commitId`. */
+  submitPending: (repo: string, number: number, commitId: string, reviewId: string, event: ReviewVerdict, body: string) =>
+    invoke<void>("pr_review_submit_pending", { repo, number, commitId, reviewId, event, body }),
+  discardPending: (reviewId: string) => invoke<void>("pr_review_discard_pending", { reviewId }),
+};
 
 export const events = {
   onVoiceDownload: (cb: (d: VoiceDownload) => void): Promise<UnlistenFn> => listen<VoiceDownload>("voice-download", (e) => cb(e.payload)),

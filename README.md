@@ -79,6 +79,12 @@ Agents write the code; Orbit keeps the fleet organised and moving. When you want
 - **Watch mode** follows the agent as it edits: change flashes, gutter marks and a per-turn activity timeline. Edits stream in as the agent writes them.
 - Select some lines and **ask the agent about them** (Ctrl+I).
 
+### Review (preview)
+- **One queue** (`Alt+6`) for what your agents changed and the pull requests waiting on you. Open any PR by link or number.
+- **Review an agent's work before it ships:** comment on any line, a range or a removed line, and send every note to the agent as one message.
+- **Review GitHub PRs without the browser:** comment on either side, suggest changes, reply, resolve, mark files viewed, then Comment, Approve or Request changes. Your pending review is saved on GitHub as you write it.
+- Unified or split diffs, hidden whitespace, only what changed since your last review, image and Markdown previews, and *Open in Code* at the line you're reading.
+
 ### Voice (preview)
 - **Dictate** into any chat with the mic button, or hold `Ctrl+Shift+Space` to talk.
 - **Hands-free:** talk, pause, and it sends. Replies are read aloud as the agent writes them, and talking over it stops it.
@@ -116,7 +122,7 @@ VS Code keybindings throughout, including the editor and `Ctrl+K` chords.
 | `Alt+5` | Issues | `Ctrl+P` | Quick open file |
 | `Ctrl+B` | Toggle sidebar | `Ctrl+K Z` | Focus mode |
 | `Ctrl+K Ctrl+T` | Dark / light theme | `Esc` | Stop the running turn |
-| `Ctrl+Shift+Space` | Dictate (hold to talk) | | |
+| `Ctrl+Shift+Space` | Dictate (hold to talk) | `Alt+6` | Review |
 
 Every action is also in the command palette. Rebind any shortcut in Settings (`Ctrl+,`) > Keyboard shortcuts, where you can also adjust almost every other behaviour.
 

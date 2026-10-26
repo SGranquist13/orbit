@@ -21,6 +21,7 @@ mod editor;
 mod setup;
 mod simplify;
 mod review;
+mod pr_review;
 mod skills;
 mod chief;
 mod attempts;
@@ -458,11 +459,13 @@ pub(crate) struct NewWorkspaceArgs {
     pub start_ref: Option<String>,
     pub attempt_group: Option<String>,
     pub branch_suffix: Option<String>,
+    pub branch: Option<String>,
+    pub existing_branch: bool,
 }
 
 /// Worktree + branch + DB row + attachments; shared by `create_workspace` and routine runs.
 pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, args: NewWorkspaceArgs) -> CmdResult<Workspace> {
-    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix, teammate, start_ref, attempt_group, branch_suffix } = args;
+    let NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id, branch_prefix, teammate, start_ref, attempt_group, branch_suffix, branch, existing_branch } = args;
     AgentKind::parse(&agent).ok_or("unknown agent")?;
     let repo = state.db().repo(&repo_id).map_err(err)?;
     let slug = match issue_number {
@@ -473,13 +476,19 @@ pub(crate) async fn create_workspace_inner(app: &AppHandle, state: &AppState, ar
     let suffix = &uuid::Uuid::new_v4().simple().to_string()[..4];
     let tail = branch_suffix.map(|s| format!("-{s}")).unwrap_or_default();
     let dir_name = format!("{slug}-{suffix}{tail}");
-    let branch = format!("{}{slug}-{suffix}{tail}", branch_prefix.unwrap_or_else(|| state.branch_prefix()));
+    let branch = branch.unwrap_or_else(|| format!("{}{slug}-{suffix}{tail}", branch_prefix.unwrap_or_else(|| state.branch_prefix())));
     let path = state.home.join("worktrees").join(&repo.name).join(&dir_name);
 
     let (repo_path, base, wt_path, br) = (PathBuf::from(&repo.path), repo.base_branch.clone(), path.clone(), branch.clone());
-    tauri::async_runtime::spawn_blocking(move || match start_ref {
-        Some(start) => git::create_worktree_from(&repo_path, &wt_path, &br, &start),
-        None => git::create_worktree(&repo_path, &wt_path, &br, &base),
+    tauri::async_runtime::spawn_blocking(move || {
+        if existing_branch {
+            git::create_worktree_existing(&repo_path, &wt_path, &br)
+        } else {
+            match start_ref {
+                Some(start) => git::create_worktree_from(&repo_path, &wt_path, &br, &start),
+                None => git::create_worktree(&repo_path, &wt_path, &br, &base),
+            }
+        }
     })
         .await
         .map_err(err)?
@@ -537,7 +546,7 @@ async fn create_workspace(
     issue_number: Option<i64>,
     profile: Option<String>,
 ) -> CmdResult<Workspace> {
-    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None, start_ref: None, attempt_group: None, branch_suffix: None }).await?;
+    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None, start_ref: None, attempt_group: None, branch_suffix: None, branch: None, existing_branch: false }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
         if issue_number.is_none() && is_derived_name(&ws.name, &p) {
@@ -1622,6 +1631,29 @@ pub fn run() {
             rewind::rewind_workspace,
             rewind::branch_from_turn,
             workspace_changes,
+            pr_review::pr_review_queue,
+            pr_review::pr_review_parse_ref,
+            pr_review::pr_review_detail,
+            pr_review::pr_review_file,
+            pr_review::pr_review_submit,
+            pr_review::pr_review_comment,
+            pr_review::pr_review_reply,
+            pr_review::pr_review_resolve,
+            pr_review::pr_review_viewed,
+            pr_review::pr_review_issue_comment,
+            pr_review::local_review,
+            pr_review::pr_review_range_files,
+            pr_review::pr_review_blob,
+            pr_review::local_review_blob,
+            pr_review::pr_review_checkout,
+            pr_review::pr_review_merge,
+            pr_review::pr_review_ready,
+            pr_review::pr_review_request_reviewers,
+            pr_review::pr_review_draft_add,
+            pr_review::pr_review_draft_edit,
+            pr_review::pr_review_draft_delete,
+            pr_review::pr_review_submit_pending,
+            pr_review::pr_review_discard_pending,
             archive_workspace,
             get_setting,
             get_settings,

@@ -123,6 +123,12 @@ pub struct Settings {
     pub remote_push: bool,
     // routines
     pub routine_concurrency: u32,
+    pub review_diff_layout: String,
+    pub review_context_lines: u32,
+    pub review_wrap_lines: bool,
+    pub review_queue_sources: Vec<String>,
+    pub review_mark_viewed_on_next: bool,
+    pub review_hide_whitespace: bool,
 }
 
 impl Default for Settings {
@@ -201,6 +207,12 @@ impl Default for Settings {
             remote_port: crate::remote::server::DEFAULT_PORT,
             remote_push: true,
             routine_concurrency: 2,
+            review_diff_layout: "unified".into(),
+            review_context_lines: 3,
+            review_wrap_lines: false,
+            review_queue_sources: vec!["requested".into(), "mine".into()],
+            review_mark_viewed_on_next: false,
+            review_hide_whitespace: false,
         }
     }
 }
@@ -325,6 +337,16 @@ impl Settings {
         if !(1..=600).contains(&self.local_timeout_secs) {
             return Err(format!("invalid localTimeoutSecs {} (expected 1-600)", self.local_timeout_secs));
         }
+        check("reviewDiffLayout", &self.review_diff_layout, &["unified", "split"])?;
+        if self.review_context_lines > 50 {
+            return Err("invalid reviewContextLines (expected 0-50)".into());
+        }
+        let mut sources = Vec::new();
+        for source in &self.review_queue_sources {
+            check("reviewQueueSources", source, &["requested", "mine", "involves"])?;
+            if !sources.contains(source) { sources.push(source.clone()); }
+        }
+        self.review_queue_sources = sources;
         check("reviewOnShip", &self.review_on_ship, &["off", "draft", "post"])?;
         check("reviewModel", &self.review_model, SIMPLIFY_MODELS)?;
         if !(1..=30).contains(&self.review_max_findings) {
@@ -447,6 +469,10 @@ mod tests {
         assert!(s.notifications && s.notify_only_unfocused && s.ai_suggestions && !s.delete_branch_on_merge);
         assert_eq!(s.suggestion_model, "haiku");
         assert_eq!(s.default_agent, "claude");
+        assert_eq!(s.review_diff_layout, "unified");
+        assert_eq!(s.review_context_lines, 3);
+        assert!(!s.review_wrap_lines && !s.review_mark_viewed_on_next && !s.review_hide_whitespace);
+        assert_eq!(s.review_queue_sources, ["requested", "mine"]);
         // An empty blob deserializes to the same defaults.
         assert_eq!(Settings::load(Some("{}"), None), s);
         assert_eq!(Settings::load(None, None), s);
@@ -532,6 +558,11 @@ mod tests {
     #[test]
     fn review_settings_defaults_and_validation() {
         let d = Settings::load(Some("{}"), None);
+        for patch in [json!({"reviewDiffLayout":"bad"}), json!({"reviewContextLines":51}), json!({"reviewQueueSources":["bad"]})] {
+            assert!(d.patched(&patch).is_err());
+        }
+        let s = d.patched(&json!({"reviewDiffLayout":"split", "reviewContextLines":0, "reviewQueueSources":["mine","mine","involves"]})).unwrap();
+        assert_eq!(s.review_queue_sources, ["mine", "involves"]);
         assert_eq!((d.review_on_ship.as_str(), d.review_model.as_str(), d.review_max_findings), ("off", "sonnet", 8));
         for mode in ["off", "draft", "post"] {
             let s = d.patched(&json!({"reviewOnShip": mode, "reviewModel": "haiku", "reviewMaxFindings": 3})).unwrap();

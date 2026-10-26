@@ -381,3 +381,33 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .cm-agent-caret, .cm-agent-writing-line::before { animation: none; }
 }
+
+/* Review view diff (src/components/review/ReviewDiff.tsx). Hue only for meaning: ok = added, bad = removed. */
+.rv-code { font-family: var(--font-mono); font-size: 12px; line-height: 20px; }
+.rv-row { display: grid; grid-template-columns: 44px 44px 18px minmax(0, 1fr); }
+.rv-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.rv-split > .rv-half { display: grid; grid-template-columns: 44px 18px minmax(0, 1fr); min-width: 0; }
+.rv-split > .rv-half + .rv-half { border-left: 1.5px solid var(--line); }
+.rv-num { color: var(--mute); text-align: right; padding-right: 8px; user-select: none; font-variant-numeric: tabular-nums; cursor: pointer; }
+.rv-num:hover { color: var(--fg); }
+.rv-sign { color: var(--mute); text-align: center; user-select: none; position: relative; }
+.rv-text { white-space: pre; padding-right: 16px; overflow: hidden; }
+.rv-wrap .rv-text { white-space: pre-wrap; word-break: break-word; }
+.rv-add { background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.rv-add .rv-num, .rv-add .rv-sign { color: color-mix(in srgb, var(--ok) 75%, var(--mute)); background: color-mix(in srgb, var(--ok) 6%, transparent); }
+.rv-del { background: color-mix(in srgb, var(--bad) 9%, transparent); }
+.rv-del .rv-num, .rv-del .rv-sign { color: color-mix(in srgb, var(--bad) 75%, var(--mute)); background: color-mix(in srgb, var(--bad) 6%, transparent); }
+.rv-add .rv-word { background: color-mix(in srgb, var(--ok) 28%, transparent); border-radius: 2px; }
+.rv-del .rv-word { background: color-mix(in srgb, var(--bad) 28%, transparent); border-radius: 2px; }
+.rv-empty { background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--line) 55%, transparent) 6px 7px); }
+.rv-picked { box-shadow: inset 3px 0 0 var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.rv-plus { position: absolute; inset: 1px 1px; display: none; place-items: center; border-radius: 3px; background: var(--accent); color: var(--accent-fg); font-family: var(--font-sans); font-weight: 600; font-size: 12px; line-height: 1; cursor: pointer; }
+.rv-line:hover .rv-plus, .rv-half:hover .rv-plus { display: grid; }
+.rv-code .tok-comment { color: var(--mute); font-style: italic; }
+.rv-code .tok-keyword { color: var(--fg); font-weight: 500; }
+.rv-code .tok-string, .rv-code .tok-string2 { color: var(--info); }
+.rv-code .tok-number, .rv-code .tok-bool, .rv-code .tok-atom { color: var(--warn); }
+.rv-code .tok-punctuation, .rv-code .tok-operator { color: var(--dim); }
+.rv-code .tok-meta, .rv-code .tok-heading { color: var(--fg); font-weight: 500; }
+/* Transparent-image backdrop for the Review view's image diffs. */
+.checker { background: repeating-conic-gradient(var(--raised) 0% 25%, var(--panel) 0% 50%) 0 0 / 14px 14px; }

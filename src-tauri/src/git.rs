@@ -156,6 +156,13 @@ pub fn create_worktree_from(repo: &Path, path: &Path, branch: &str, start: &str)
     Ok(())
 }
 
+/// Attach a worktree to an existing local branch without resetting it.
+pub fn create_worktree_existing(repo: &Path, path: &Path, branch: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
+    run(repo, &["worktree", "add", &path.to_string_lossy(), branch])?;
+    Ok(())
+}
+
 /// Removes the worktree folder. A folder that is already gone is fine: stale records are pruned.
 pub fn remove_worktree(repo: &Path, path: &Path) -> anyhow::Result<()> {
     if !path.exists() {
@@ -257,13 +264,18 @@ pub struct FileChange {
     pub untracked: bool,
 }
 
+/// Merge base used for workspace changes, falling back to HEAD for a new base.
+pub fn changes_merge_base(worktree: &Path, base: &str) -> String {
+    let origin_base = format!("origin/{base}");
+    run(worktree, &["merge-base", "HEAD", &origin_base])
+        .or_else(|_| run(worktree, &["merge-base", "HEAD", base]))
+        .unwrap_or_else(|_| "HEAD".into())
+}
+
 /// Everything this workspace changed relative to where it branched from base:
 /// committed + uncommitted tracked changes, plus untracked files.
 pub fn changes(worktree: &Path, base: &str) -> anyhow::Result<Vec<FileChange>> {
-    let origin_base = format!("origin/{base}");
-    let merge_base = run(worktree, &["merge-base", "HEAD", &origin_base])
-        .or_else(|_| run(worktree, &["merge-base", "HEAD", base]))
-        .unwrap_or_else(|_| "HEAD".into());
+    let merge_base = changes_merge_base(worktree, base);
 
     let mut out: Vec<FileChange> = run(worktree, &["diff", "--numstat", &merge_base])?
         .lines()

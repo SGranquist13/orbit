@@ -1,0 +1,15 @@
+[
+  {
+    "filename": "new.rs",
+    "previous_filename": "old.rs",
+    "status": "renamed",
+    "additions": 3,
+    "deletions": 1
+  },
+  {
+    "filename": "removed.rs",
+    "status": "removed",
+    "additions": 0,
+    "deletions": 12
+  }
+]

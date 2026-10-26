@@ -1,13 +1,14 @@
 import { useKeybindingLabels } from "../lib/useKeybinding";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { ChevronDown, ChevronRight, Code2, CircleDot, Clock, FolderPlus, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, Code2, CircleDot, Clock, FolderPlus, GitPullRequest, Inbox, PanelLeft, Plus, Search, Settings, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { attentionReason, isUnread } from "../lib/attention";
 import { archiveWithWorktree } from "../lib/archive";
 import { confirmAction } from "../lib/confirm";
 import { api, type Repo, type Workspace } from "../lib/ipc";
 import { diffTotals, useApp } from "../stores/app";
+import { usePrReview } from "../stores/prReview";
 import { TeammateLabel } from "./TeammateAvatar";
 import { AgentIcon, DiffStat, Kbd, OrbitMark, StatusDot, ThemeToggle, cn } from "./ui";
 
@@ -34,8 +35,11 @@ export function Sidebar() {
   const teammatesNeedYou = useApp((s) => s.teammates.filter((t) => t.status === "needsYou").length);
   const needsYou = workspaces.filter((w) => attentionReason(w, summaries[w.id], prs[w.id], undefined, reviews[w.id]?.review)).length + teammatesNeedYou;
   const activeRoutines = useApp((s) => s.routines.filter((r) => r.enabled).length);
+  const reviewRequests = usePrReview((s) => s.queue?.filter((q) => q.sources.includes("requested")).length ?? 0);
+  // One quiet GitHub search at startup feeds the Review badge; the view refreshes it when opened.
+  useEffect(() => void usePrReview.getState().loadQueue(), []);
   const collapsed = useApp((s) => s.sidebarCollapsed);
-  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} teammatesNeedYou={teammatesNeedYou} />;
+  if (collapsed) return <Rail workspaces={workspaces} needsYou={needsYou} activeRoutines={activeRoutines} teammatesNeedYou={teammatesNeedYou} reviewRequests={reviewRequests} />;
 
   return (
     <aside className="relative flex h-full w-[216px] shrink-0 flex-col border-r-[1.5px] border-line bg-panel">
@@ -94,6 +98,14 @@ export function Sidebar() {
           active={view === "issues"}
           onClick={() => useApp.getState().setView(view === "issues" ? "workspace" : "issues")}
         />
+        <NavItem
+          icon={<GitPullRequest className="size-3.5" strokeWidth={2.5} />}
+          label="Review"
+          kbd={keyLabel("views.review")}
+          active={view === "review"}
+          count={reviewRequests}
+          onClick={() => useApp.getState().setView(view === "review" ? "workspace" : "review")}
+        />
         <NavItem icon={<Plus className="size-3.5" strokeWidth={2.5} />} label="New workspace" kbd={keyLabel("workbench.newWorkspace")} onClick={() => useApp.getState().setNewWorkspaceOpen(true)} />
         <NavItem icon={<Search className="size-3.5" strokeWidth={2.5} />} label="Command palette" kbd={keyLabel("workbench.commandPalette")} onClick={() => useApp.getState().setPaletteOpen(true)} />
       </nav>
@@ -126,7 +138,7 @@ export function Sidebar() {
 }
 
 /** Icon-only sidebar: nav actions plus one status dot per workspace. */
-function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number; teammatesNeedYou: number }) {
+function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou, reviewRequests }: { workspaces: Workspace[]; needsYou: number; activeRoutines: number; teammatesNeedYou: number; reviewRequests: number }) {
   const keyLabel = useKeybindingLabels();
   const view = useApp((s) => s.view);
   const selectedId = useApp((s) => s.selectedId);
@@ -184,6 +196,18 @@ function Rail({ workspaces, needsYou, activeRoutines, teammatesNeedYou }: { work
           className={cn(btn, view === "issues" && "bg-raised text-fg")}
         >
           <CircleDot className="size-3.5" strokeWidth={2.5} />
+        </button>
+        <button
+          onClick={() => useApp.getState().setView(view === "review" ? "workspace" : "review")}
+          title={"Review" + (keyLabel("views.review") ? ` (${keyLabel("views.review")})` : "")}
+          className={cn(btn, view === "review" && "bg-raised text-fg")}
+        >
+          <GitPullRequest className="size-3.5" strokeWidth={2.5} />
+          {reviewRequests > 0 && (
+            <span className="absolute right-0.5 top-0.5 rounded-[3px] bg-fg px-1 text-[9px] font-semibold leading-3.5 tabular-nums text-bg">
+              {reviewRequests}
+            </span>
+          )}
         </button>
         <button onClick={() => useApp.getState().setNewWorkspaceOpen(true)} title={"New workspace" + (keyLabel("workbench.newWorkspace") ? ` (${keyLabel("workbench.newWorkspace")})` : "")} className={btn}>
           <Plus className="size-3.5" strokeWidth={2.5} />

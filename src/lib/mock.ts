@@ -1,4 +1,5 @@
 import { mockCodeCommand, simulateCodeTurn } from "./code/mock";
+import { mockReviewCommand } from "./review/mock";
 import { BUILTIN_MODELS } from "./settings";
 // Browser-only mock backend: `bun run dev` + open http://localhost:1420 to iterate on UI
 // without building the Rust app. Never loaded inside Tauri.
@@ -25,7 +26,7 @@ const repoScripts: Record<string, RepoScripts> = { r1: { setupScript: "bun insta
 const workspaceRuns: Record<string, WorkspaceRunStatus> = {};
 const now = Date.now();
 const repos: Repo[] = [
-  { id: "r1", name: "superset", path: "C:/code/superset", baseBranch: "main" },
+  { id: "r1", name: "relay", path: "C:/code/relay", baseBranch: "main" },
   { id: "r2", name: "marketing-site", path: "C:/code/marketing-site", baseBranch: "main" },
 ];
 
@@ -226,7 +227,7 @@ const pr: PrStatus = {
 
 const ago = (h: number) => new Date(now - h * 3_600_000).toISOString();
 const issue = (number: number, title: string, labels: string[], author: string, hoursAgo: number, comments: number): Issue => ({
-  number, title, labels, author, comments, state: "OPEN", url: `https://github.com/acme/superset/issues/${number}`, updatedAt: ago(hoursAgo),
+  number, title, labels, author, comments, state: "OPEN", url: `https://github.com/acme/relay/issues/${number}`, updatedAt: ago(hoursAgo),
 });
 const issues: Issue[] = [
   issue(412, "Dark mode flashes white on first paint", ["bug", "ui"], "ada", 2, 3),
@@ -247,7 +248,7 @@ const attachments: Attachment[] = [
 ];
 const suggested: Related[] = [
   { path: "C:/code/design-tokens", name: "design-tokens", relation: "dependency", evidence: 'package.json depends on "@acme/design-tokens"' },
-  { path: "C:/code/mobile-app", name: "mobile-app", relation: "dependent", evidence: 'package.json depends on "@acme/superset"' },
+  { path: "C:/code/mobile-app", name: "mobile-app", relation: "dependent", evidence: 'package.json depends on "@acme/relay"' },
 ];
 const relatedDefaults: Record<string, string[]> = { r1: ["C:/code/shared-ui"] };
 if (LAUNCH) applyLaunchSeed({ ws, sum, repos, workspaces, summaries, issues, suggested });
@@ -399,6 +400,12 @@ let settings: Settings = {
   editorLiveTyping: "stream",
   terminalShell: "",
   editorCommand: null,
+  reviewDiffLayout: "unified",
+  reviewContextLines: 3,
+  reviewWrapLines: false,
+  reviewQueueSources: ["requested", "mine"],
+  reviewMarkViewedOnNext: false,
+  reviewHideWhitespace: false,
   syncIntervalMinutes: 10,
   staleDays: 3,
   staleBehind: 20,
@@ -1094,6 +1101,16 @@ export function installMockBackend() {
       const id = a.id ?? "";
       // Code filesystem and the tiny PTY shell share the same per-root mock trees.
       if (cmd.startsWith("code_") || cmd.startsWith("pty_")) return mockCodeCommand(cmd, args);
+      if (cmd.startsWith("pr_review_") || cmd.startsWith("local_review")) return mockReviewCommand(cmd, args, {
+        workspacePath: (id) => workspaces.find((w) => w.id === id)?.path ?? null,
+        createWorkspace: (repoId, name, branch) => {
+          const w = ws(`w${workspaces.length + 1}`, repoId, name, settings.defaultAgent, "idle");
+          w.branch = branch;
+          workspaces.unshift(w);
+          void emit("workspace", { ...w });
+          return { ...w };
+        },
+      });
       switch (cmd) {
         case "attempt_group": {
           const group = attemptGroups.find((g) => g.id === id);
@@ -1359,7 +1376,7 @@ export function installMockBackend() {
           await new Promise((r) => setTimeout(r, 300));
           return issues;
         case "issue_url":
-          return `https://github.com/acme/${LAUNCH ? "relay" : "superset"}/issues/${workspaces.find((x) => x.id === a.workspaceId)?.issueNumber ?? 0}`;
+          return `https://github.com/acme/${LAUNCH ? "relay" : "relay"}/issues/${workspaces.find((x) => x.id === a.workspaceId)?.issueNumber ?? 0}`;
         case "create_workspace":
         case "start_issue": {
           const n = args as { repoId: string; name?: string; title?: string; agent: "claude" | "codex"; number?: number; issueNumber?: number; profile?: string | null };
