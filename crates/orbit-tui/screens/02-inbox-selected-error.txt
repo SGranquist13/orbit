@@ -1,0 +1,36 @@
+  Inbox · 5 need you · 2 running · 1 done
+
+  needs you
+  ● readme-badge     Finished: Added the badge under the title and a Check section. There was n…   3m
+  ● review-copy      Asked you: The old line, The IDE for agents, still reads well. Keep the ol…   8m
+  ● bump-deps        Needs sync: conflicts in 2 files                                             25m
+  ● api-retry        Failed: API Error: 529 overloaded                                            47m   enter open
+                     1 Try that again   2 Explain what went wrong and propose a fix
+  ● ci-node-22       Checks failing: 1 of 4 checks failing                                         2h
+
+  running
+  ● tidy-imports     Edit Nav.tsx · 5m 59s
+  ● fix-login        Run for i in $(seq 20); do bun test src/auth || exit 1; done · 15m 59s
+
+  done
+  ● dark-mode        Opened PR #41.                                                                4h
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  j/k move   enter open   s ship   f fix   d dismiss   esc back

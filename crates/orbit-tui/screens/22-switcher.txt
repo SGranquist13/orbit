@@ -1,0 +1,36 @@
+ orbit              2 running │  ▓▒░ fix-login · claude sonnet · fix/login-flake                              41k  20%
+                              │
+ needs you                    │
+ ● readme-badge               │        ╭─ Switch workspace ───────────────────────────────────────────────────╮
+ ● review-copy                │        │ > de                                                                 │
+ ● bump-deps                  │        │ ● bump-deps             Needs sync: conflicts in 2 files             │
+ ● api-retry                  │        │ ● ci-node-22            Checks failing: 1 of 4 checks failing        │
+ ● ci-node-22                 │        │ ● dark-mode             Opened PR #41.                               │
+                              │        │ ● readme-badge          Finished: Added the badge under the title …  │
+ running                      │        │                                                                      │
+ ● tidy-imports               │        ╰───────────────────────────────────────────── enter open · esc close ─╯
+ ● fix-login                  │
+                              │
+ done                         │  The test now waits for the cookie instead of racing it. Running the auth tests 20
+ ● dark-mode                  │  times to be sure.
+                              │
+                              │  ▓ run   for i in $(seq 20); do bun test src/auth || exit 1; done
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message fix-login (sends after this turn)…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   esc stop   / skills   tab focus   ctrl+s ship   alt+3 review

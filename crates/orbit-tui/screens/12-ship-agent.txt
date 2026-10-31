@@ -1,0 +1,36 @@
+ orbit              3 running │  ▓▒░ readme-badge · claude haiku · docs/readme-badge                          25k  12%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  ∗ 5 tool calls · 3 edits
+ ● api-retry                  │
+ ● ci-node-22                 │  Added the badge under the title and a Check section. There was no CI workflow yet, so
+                              │  I added ci.yml:
+ running                      │
+ ● readme-badge               │    ╭─ Ship · readme-badge → main ─────────────────────────────────────────────────╮
+ ● tidy-imports               │    │                                                                              │
+ ● fix-login                  │    │ ✓   Checks              bun run check                                        │
+                              │    │ ✓   Squash save points  3 save points → 1 commit                             │
+ done                         │    │ ▓▒░ Ship (agent)        run gh pr create --draft --title "Docs: CI badge an… │
+ ● dark-mode                  │    │ ·   Pull request                                                             │
+                              │    │                                                                              │
+                              │    ╰────────────────────────────────────────────────────────────────── esc close ─╯
+                              │
+                              │  $ run   git status --short
+                              │  $ run   git push -u origin docs/readme-badge
+                              │  ▓ run   gh pr create --draft --title "Docs: CI badge and the check command"
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge (sends after this turn)…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   esc stop   / skills   tab focus   ctrl+s ship   alt+3 review

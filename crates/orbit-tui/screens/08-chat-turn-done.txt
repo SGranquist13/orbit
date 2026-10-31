@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              33k  16%
+                              │
+ needs you                    │
+ ● review-copy                │  ∗ 5 tool calls · 3 edits
+ ● bump-deps                  │
+ ● api-retry                  │  Added the badge under the title and a Check section. There was no CI workflow yet, so
+ ● ci-node-22                 │  I added ci.yml:
+                              │
+ running                      │    - run: bun install --frozen-lockfile                                          yaml
+ ● tidy-imports               │    - run: bun run check
+ ● fix-login                  │
+                              │  Ready to ship.
+ done                         │
+ ● readme-badge               │  ● done · 38s · 12k tokens
+ ● dark-mode                  │
+                              │▎ tighten the badge alt text
+                              │
+                              │  On it: tighten the badge alt text. I'll find where that lives first.
+                              │
+                              │  ∗ grep  tighten
+                              │  → read  tighten.ts
+                              │  ✎ edit  tighten.ts  +3 −2
+                              │  $ run   bun run check
+                              │
+                              │  Done. The change is in src/tighten.ts and bun run check passes.
+                              │
+                              │  • Kept the public API the same
+                              │  • Committed a save point on docs/readme-badge
+                              │
+                              │  Want me to ship it?
+                              │
+                              │  ● done · 9s · 7.4k tokens
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   / skills   tab focus   ctrl+s ship   alt+3 review

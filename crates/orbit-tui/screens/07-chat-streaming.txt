@@ -1,0 +1,36 @@
+ orbit              3 running │  ▓▒░ readme-badge · claude haiku · docs/readme-badge                          25k  12%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  ∗ 5 tool calls · 3 edits
+ ● api-retry                  │
+ ● ci-node-22                 │  Added the badge under the title and a Check section. There was no CI workflow yet, so
+                              │  I added ci.yml:
+ running                      │
+ ● readme-badge               │    - run: bun install --frozen-lockfile                                          yaml
+ ● tidy-imports               │    - run: bun run check
+ ● fix-login                  │
+                              │  Ready to ship.
+ done                         │
+ ● dark-mode                  │  ● done · 38s · 12k tokens
+                              │
+                              │▎ tighten the badge alt text
+                              │
+                              │  On it: tighten the badge alt text. I'll find where that lives first.
+                              │
+                              │  ▓ grep  tighten
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge (sends after this turn)…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   esc stop   / skills   tab focus   ctrl+s ship   alt+3 review

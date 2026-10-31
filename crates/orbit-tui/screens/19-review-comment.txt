@@ -1,0 +1,36 @@
+  Review · fix-login · vs main · 3 files  +21 −1 · 2 commits
+
+  M login.test.ts             +2  │ @@ -1,11 +1,14 @@
+  M session.ts             +4 −1  │    1  import { store } from "../lib/store";
+  M cookie.ts                +15  │    2 +import { cookie } from "./cookie";
+                                  │    3
+  commits                         │    4  export type Session = { user: string; expires: number };
+  a1f3c9e wip: wait for the ses…  │    5
+  7be20d4 wip: add cookie.wait …  │    6  export async function session(): Promise<Session | null> {
+                                  │    6 -  return store.get("session");
+                                  │    7 +  const c = await cookie.wait("session", 2000);
+                                  │      ✎ Use the existing waitFor helper here instead of a new API.
+                                  │    8 +  return c ?? store.get("session");
+                                  │    9  }
+                                  │   10
+                                  │   11  export function clearSession() {
+                                  │   12    store.delete("session");
+                                  │   13 +  cookie.clear("session");
+                                  │   14  }
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+  j/k line   ]/[ file   c comment   v scope   a accept   tab files                              1 comment · enter send

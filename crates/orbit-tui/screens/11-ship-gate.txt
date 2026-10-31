@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  → read  README.md
+ ● api-retry                  │  ∗ grep  .github/workflows/*.yml
+ ● ci-node-22                 │  ✎ write ci.yml  +13
+                              │  ✎ edit  README.md  +3 −1
+ running                      │
+ ● tidy-imports               │    ╭─ Ship · readme-badge → main ─────────────────────────────────────────────────╮
+ ● fix-login                  │    │                                                                              │
+                              │    │ ▓▒░ Checks              running checks…                                      │
+ done                         │    │ ·   Squash save points                                                       │
+ ● readme-badge               │    │ ·   Ship (agent)                                                             │
+ ● dark-mode                  │    │ ·   Pull request                                                             │
+                              │    │                                                                              │
+                              │    ╰────────────────────────────────────────────────────────────────── esc close ─╯
+                              │
+                              │  ● done · 38s · 12k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   / skills   tab focus   ctrl+s ship   alt+3 review

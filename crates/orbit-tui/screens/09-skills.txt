@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  → read  README.md
+ ● api-retry                  │  ∗ grep  .github/workflows/*.yml
+ ● ci-node-22                 │  ✎ write ci.yml  +13
+                              │  ✎ edit  README.md  +3 −1
+ running                      │  ✎ edit  README.md  +7 −1
+ ● tidy-imports               │
+ ● fix-login                  │  Added the badge under the title and a Check section. There was no CI workflow yet, so
+                              │  I added ci.yml:
+ done                         │
+ ● readme-badge               │    - run: bun install --frozen-lockfile                                          yaml
+ ● dark-mode                  │    - run: bun run check
+                              │
+                              │  Ready to ship.
+                              │
+                              │  ● done · 38s · 12k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │  ╭─ skills · shipkit ───────────────────────────────────────────────────╮
+                              │  │ shipkit:ship                Commit everything, push the branch, and… │
+                              │  │ shipkit:fix-ci              Find failing CI checks on this branch's… │
+                              │  │ shipkit:address-comments    Address unresolved review comments on t… │
+                              │  │ shipkit:preflight           Pre-ship spot check of what this branch… │
+                              │  │ shipkit:rebase              Rebase this branch onto the latest base… │
+                              │  │ shipkit:start-issue         Read the linked GitHub issue, plan, and… │
+                              │  │ shipkit:write-ticket        Turn rough notes into a well-formed Git… │
+                              │  ╰─────────────────────────────────────────── tab complete · enter run ─╯
+                              │▎ /
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  ↑↓ choose   tab complete   enter run   esc close

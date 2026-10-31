@@ -1,0 +1,36 @@
+ orbit              2 running │  bump-deps · claude sonnet · chore/bump-deps                                  22k  11%
+                              │
+ needs you                    │▎ Bump the minor versions of our dependencies and fix anything that breaks.
+ ● readme-badge               │
+ ● review-copy                │
+ ● bump-deps                  │    ╭─ Ship · bump-deps → main ────────────────────────────────────────────────────╮
+ ● api-retry                  │    │                                                                              │
+ ● ci-node-22                 │    │ ✗   Checks              bun run check · failed                               │
+                              │    │ ·   Squash save points                                                       │
+ running                      │    │ ·   Ship (agent)                                                             │
+ ● tidy-imports               │    │ ·   Pull request                                                             │
+ ● fix-login                  │    │                                                                              │
+                              │    │     $ bun run check                                                          │
+ done                         │    │     ✓ lint                                                                   │
+ ● dark-mode                  │    │     ✓ typecheck                                                              │
+                              │    │     ✗ test/github.test.ts > retries 429s                                     │
+                              │    │       TypeError: fetch failed                                                │
+                              │    │         at undici/index.js:112:13                                            │
+                              │    │         at test/setup.ts:4:3                                                 │
+                              │    │                                                                              │
+                              │    │     213 pass, 1 fail                                                         │
+                              │    │                                                                              │
+                              │    │ ✗ Checks failed.                                                             │
+                              │    │                                                                              │
+                              │    ╰────────────────────────────────────────── a ship anyway · f fix · esc close ─╯
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message bump-deps…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   / skills   tab focus   ctrl+s ship   alt+3 review

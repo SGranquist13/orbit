@@ -387,11 +387,15 @@ mod tests {
 
     #[test]
     fn events_parse_and_unknown_is_other() {
-        let e: AgentEvent = serde_json::from_value(json!({"type":"toolResult","id":"t1","output":"ok","isError":true})).unwrap();
+        let e: AgentEvent =
+            serde_json::from_value(json!({"type":"toolResult","id":"t1","output":"ok","isError":true})).unwrap();
         assert_eq!(e, AgentEvent::ToolResult { id: "t1".into(), output: "ok".into(), is_error: true });
         let e: AgentEvent = serde_json::from_value(json!({"type":"rateLimits","agent":"claude","windows":[]})).unwrap();
         assert_eq!(e, AgentEvent::Other);
-        let e: AgentEvent = serde_json::from_value(json!({"type":"turnCompleted","durationMs":1200,"costUsd":null,"isError":false,"error":null})).unwrap();
+        let e: AgentEvent = serde_json::from_value(
+            json!({"type":"turnCompleted","durationMs":1200,"costUsd":null,"isError":false,"error":null}),
+        )
+        .unwrap();
         assert!(matches!(e, AgentEvent::TurnCompleted { duration_ms: Some(1200), interrupted: false, .. }));
         let e: AgentEvent = serde_json::from_value(json!({"type":"turnStarted"})).unwrap();
         assert_eq!(e, AgentEvent::TurnStarted);
@@ -399,14 +403,20 @@ mod tests {
 
     #[test]
     fn workspace_tolerates_extra_and_missing_fields() {
-        let w: Workspace = serde_json::from_value(json!({"id":"w1","name":"fix","status":"running","teammate":null,"disabledPacks":[]})).unwrap();
+        let w: Workspace = serde_json::from_value(
+            json!({"id":"w1","name":"fix","status":"running","teammate":null,"disabledPacks":[]}),
+        )
+        .unwrap();
         assert_eq!(w.status, Status::Running);
         assert_eq!(w.sync_conflicts, Vec::<String>::new());
     }
 
     #[test]
     fn push_frames() {
-        let p = Push::from_frame(&json!({"t":"event","workspaceId":"w","seq":null,"ts":1,"event":{"type":"textDelta","text":"hi"}})).unwrap();
+        let p = Push::from_frame(
+            &json!({"t":"event","workspaceId":"w","seq":null,"ts":1,"event":{"type":"textDelta","text":"hi"}}),
+        )
+        .unwrap();
         assert!(matches!(p, Push::Event(EventPush { seq: None, .. })));
         let p = Push::from_frame(&json!({"t":"workspace-removed","workspaceId":"w"})).unwrap();
         assert_eq!(p, Push::WorkspaceRemoved("w".into()));
@@ -415,7 +425,10 @@ mod tests {
 
     #[test]
     fn scope_shape() {
-        assert_eq!(serde_json::to_value(Scope::Commit { sha: "abc".into() }).unwrap(), json!({"kind":"commit","sha":"abc"}));
+        assert_eq!(
+            serde_json::to_value(Scope::Commit { sha: "abc".into() }).unwrap(),
+            json!({"kind":"commit","sha":"abc"})
+        );
         assert_eq!(serde_json::to_value(Scope::Base).unwrap(), json!({"kind":"base"}));
     }
 }

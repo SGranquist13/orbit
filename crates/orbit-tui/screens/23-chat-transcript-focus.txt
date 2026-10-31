@@ -1,0 +1,36 @@
+ orbit              2 running │  ▓▒░ fix-login · claude sonnet · fix/login-flake                              41k  20%
+                              │
+ needs you                    │▎ make the login test stop flaking
+ ● readme-badge               │
+ ● review-copy                │  I'll look at the test and its fixtures first.
+ ● bump-deps                  │
+ ● api-retry                  │▎ ∗ grep  session\(\)
+ ● ci-node-22                 │▎ → read  login.test.ts
+                              │▎ → read  session.ts
+ running                      │
+ ● tidy-imports               │  The test asserts on session() right after the click, but the server sets the session
+ ● fix-login                  │  cookie after a redirect. On a slow run the assertion wins the race.
+                              │
+ done                         │  ∗ 3 tool calls · 3 edits
+ ● dark-mode                  │
+                              │  The test now waits for the cookie instead of racing it. Running the auth tests 20
+                              │  times to be sure.
+                              │
+                              │  ▓ run   for i in $(seq 20); do bun test src/auth || exit 1; done
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message fix-login (sends after this turn)…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  j/k move   enter expand   g/G first/last   esc back

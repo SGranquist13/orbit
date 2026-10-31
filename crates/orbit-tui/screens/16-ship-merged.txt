@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              26k  13%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  ∗ 5 tool calls · 3 edits
+ ● api-retry                  │
+ ● ci-node-22                 │  Added the badge under the title and a Check section. There was no CI workflow yet, so
+                              │
+ running                      │    ╭─ Ship · readme-badge → main ─────────────────────────────────────────────────╮
+ ● tidy-imports               │    │                                                                              │
+ ● fix-login                  │    │ ✓   Checks              bun run check                                        │
+                              │    │ ✓   Squash save points  3 save points → 1 commit                             │
+ done                         │    │ ✓   Ship (agent)        pushed                                               │
+ ● readme-badge               │    │ ✓   Pull request        #42 Docs: CI badge and the check command             │
+ ● dark-mode                  │    │                                                                              │
+                              │    │ ● Merged #42 into main                                                       │
+                              │    │                                                                              │
+                              │    ╰────────────────────────────────────────────────────────────────── esc close ─╯
+                              │
+                              │  $ run   git push -u origin docs/readme-badge
+                              │  $ run   gh pr create --draft --title "Docs: CI badge and the check command"
+                              │
+                              │  Pushed docs/readme-badge and opened PR #42, Docs: CI badge and the check command. CI
+                              │  is running.
+                              │
+                              │  ● done · 6s · 3.9k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  Merged

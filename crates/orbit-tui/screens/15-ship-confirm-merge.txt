@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              26k  13%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  ∗ 5 tool calls · 3 edits
+ ● api-retry                  │
+ ● ci-node-22                 │
+                              │    ╭─ Ship · readme-badge → main ─────────────────────────────────────────────────╮
+ running                      │    │                                                                              │
+ ● tidy-imports               │    │ ✓   Checks              bun run check                                        │
+ ● fix-login                  │    │ ✓   Squash save points  3 save points → 1 commit                             │
+                              │    │ ✓   Ship (agent)        pushed                                               │
+ done                         │    │ ✓   Pull request        #42 Docs: CI badge and the check command             │
+ ● readme-badge               │    │                                                                              │
+ ● dark-mode                  │    │ pull request #42 · open · approved                                           │
+                              │    │ ✓ 3 passed   ✗ 0 failed   · 0 pending                                        │
+                              │    │                     ╭──────────────────────────────────╮                     │
+                              │    │ Ready to merge.     │ Merge #42 into main?             │                     │
+                              │    │                     ╰─────────────────── y yes · n no ─╯                     │
+                              │    ╰───────────────────────────── m merge · f fix CI · c comments · o open · esc ─╯
+                              │
+                              │
+                              │  Pushed docs/readme-badge and opened PR #42, Docs: CI badge and the check command. CI
+                              │  is running.
+                              │
+                              │  ● done · 6s · 3.9k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ alt+2 inbox · ctrl+k switch  │  enter send   / skills   tab focus   ctrl+s ship   alt+3 review
