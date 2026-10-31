@@ -47,3 +47,4 @@ VERIFICATION.md
 # Launch video project (kept locally, not published)
 video/
 docs/launch-video/
+crates/target/
