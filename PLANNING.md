@@ -52,6 +52,9 @@ One button (header, palette) opens the workspace's worktree in VS Code, Cursor, 
 ### Plan limits (in progress)
 Show the Claude and Codex plan windows (5-hour, weekly) with used share and reset time in Settings > Usage, and a quiet warning near the limit, from the rate-limit information both CLIs already report.
 
+### Terminal UI
+Some people live in the terminal. `orbit` is a terminal interface to the running app, in the spirit of opencode, Claude Code and Codex: chat with a workspace, switch the fleet, see the inbox, ship. Rust (ratatui), talking to the app over the mobile bridge in a local loopback mode. The same binary runs in an in-app "Terminal UI" pane. Plan, milestones and design: [docs/tui.md](docs/tui.md).
+
 ### Next up
 - **MCP servers for both agents:** add a server once, Claude and Codex both get it; per-workspace toggles like skill packs.
 - **Comment on the diff:** comments on lines in the Code view diff and Ship panel go to the agent as one message.
