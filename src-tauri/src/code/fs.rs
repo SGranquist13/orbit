@@ -186,6 +186,81 @@ pub fn code_file_at(root: String, rel: String, rev: String) -> Result<Option<Str
     };
     Ok(crate::git::run_raw(&top, &["show", &format!("{revision}:{rel}")]).ok())
 }
+/// One side of a file for a client that diffs itself (`fileAt` on the local bridge).
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileAt {
+    pub text: Option<String>,
+    pub binary: bool,
+    pub too_large: bool,
+}
+
+pub const FILE_AT_MAX: u64 = 2 * 1024 * 1024;
+
+impl FileAt {
+    const MISSING: FileAt = FileAt { text: None, binary: false, too_large: false };
+
+    fn from_bytes(bytes: Vec<u8>) -> FileAt {
+        if bytes.len() as u64 > FILE_AT_MAX {
+            return FileAt { text: None, binary: false, too_large: true };
+        }
+        if bytes.iter().take(8192).any(|b| *b == 0) {
+            return FileAt { text: None, binary: true, too_large: false };
+        }
+        match String::from_utf8(bytes) {
+            Ok(s) => FileAt { text: Some(s), binary: false, too_large: false },
+            Err(_) => FileAt { text: None, binary: true, too_large: false },
+        }
+    }
+}
+
+/// True for an abbreviated or full hex object id (`^[0-9a-f]{7,40}$`).
+pub fn is_sha(s: &str) -> bool {
+    (7..=40).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The file as the working tree has it now; a missing file is `text: None`.
+pub fn file_at_worktree(root: &str, rel: &str) -> Result<FileAt> {
+    let path = resolve_inside(Path::new(root), rel)?;
+    match fs::metadata(&path) {
+        Ok(meta) if meta.is_file() => {
+            if meta.len() > FILE_AT_MAX {
+                return Ok(FileAt { text: None, binary: false, too_large: true });
+            }
+            Ok(FileAt::from_bytes(fs::read(path).map_err(error)?))
+        }
+        Ok(_) => Ok(FileAt::MISSING),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(FileAt::MISSING),
+        Err(e) => Err(error(e)),
+    }
+}
+
+/// The file at commit `sha` (`git cat-file blob <sha>:<rel>`); a path missing there is `text: None`.
+pub fn file_at_sha(root: &str, rel: &str, sha: &str) -> Result<FileAt> {
+    if !is_sha(sha) {
+        return Err("invalid sha".into());
+    }
+    let base = resolve_inside(Path::new(root), "")?;
+    let file = resolve_inside(&base, rel)?;
+    let top = crate::git::run(&base, &["rev-parse", "--show-toplevel"]).map_err(|_| "not a git repository".to_string())?;
+    let top = dunce::canonicalize(top.trim()).map_err(error)?;
+    let rel = file.strip_prefix(&top).map_err(error)?.to_string_lossy().replace('\\', "/");
+    if rel.is_empty() {
+        return Err("path is a directory".into());
+    }
+    let spec = format!("{sha}:{rel}");
+    // `-t` fails for a missing path (or unknown sha); only blobs have contents to show.
+    match crate::git::run(&top, &["cat-file", "-t", &spec]) {
+        Ok(kind) if kind.trim() == "blob" => {}
+        _ => return Ok(FileAt::MISSING),
+    }
+    let size: u64 = crate::git::run(&top, &["cat-file", "-s", &spec]).map_err(error)?.trim().parse().map_err(error)?;
+    if size > FILE_AT_MAX {
+        return Ok(FileAt { text: None, binary: false, too_large: true });
+    }
+    Ok(FileAt::from_bytes(crate::git::run_bytes(&top, &["cat-file", "blob", &spec]).map_err(error)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +354,45 @@ mod tests {
         assert_eq!(code_file_at(sub.clone(), "a".into(), "HEAD".into()).unwrap().as_deref(), Some("head\n"));
         assert_eq!(code_file_at(sub.clone(), "a".into(), "base".into()).unwrap().as_deref(), Some("base\n\n"));
         assert!(code_file_at(sub, "missing".into(), "HEAD".into()).unwrap().is_none());
+    }
+
+    #[test]
+    fn file_at_sha_and_worktree() {
+        let t = tempfile::tempdir().unwrap();
+        let r = root(&t);
+        let git = |args: &[&str]| crate::git::run(t.path(), args).unwrap();
+        git(&["init", "-q", "-b", "main"]);
+        fs::create_dir(t.path().join("sub")).unwrap();
+        fs::write(t.path().join("sub/a.txt"), "one\n").unwrap();
+        fs::write(t.path().join("bin"), [b'x', 0, b'y']).unwrap();
+        let f = fs::File::create(t.path().join("big")).unwrap();
+        f.set_len(FILE_AT_MAX + 1).unwrap();
+        drop(f);
+        git(&["add", "."]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-qm", "base"]);
+        let sha = git(&["rev-parse", "HEAD"]);
+        fs::write(t.path().join("sub/a.txt"), "two\n").unwrap();
+
+        let at = |rel: &str, sha: &str| file_at_sha(&r, rel, sha);
+        assert_eq!(at("sub/a.txt", &sha).unwrap().text.as_deref(), Some("one\n"));
+        assert_eq!(at("sub/a.txt", &sha[..7]).unwrap().text.as_deref(), Some("one\n"));
+        assert_eq!(at("missing", &sha).unwrap(), FileAt { text: None, binary: false, too_large: false });
+        assert_eq!(at("sub", &sha).unwrap().text, None);
+        assert_eq!(at("bin", &sha).unwrap(), FileAt { text: None, binary: true, too_large: false });
+        assert_eq!(at("big", &sha).unwrap(), FileAt { text: None, binary: false, too_large: true });
+        // An unknown (well-formed) sha reads as missing.
+        assert_eq!(at("sub/a.txt", "deadbeefdeadbeef").unwrap().text, None);
+        for bad in ["HEAD", "abc", "ABCDEF12", "deadbeef:x", "--output=x", &"a".repeat(41), "main~1"] {
+            assert_eq!(at("sub/a.txt", bad).unwrap_err(), "invalid sha", "{bad}");
+        }
+        for bad in ["../x", "sub/../../x", "/etc/passwd"] {
+            assert!(at(bad, &sha).is_err(), "{bad}");
+        }
+
+        assert_eq!(file_at_worktree(&r, "sub/a.txt").unwrap().text.as_deref(), Some("two\n"));
+        assert_eq!(file_at_worktree(&r, "gone").unwrap(), FileAt { text: None, binary: false, too_large: false });
+        assert!(file_at_worktree(&r, "bin").unwrap().binary);
+        assert!(file_at_worktree(&r, "big").unwrap().too_large);
+        assert!(file_at_worktree(&r, "../x").is_err());
     }
 }

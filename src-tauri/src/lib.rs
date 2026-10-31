@@ -21,6 +21,7 @@ mod editor;
 mod setup;
 mod simplify;
 mod review;
+mod review_message;
 mod pr_review;
 mod skills;
 mod chief;
@@ -1575,7 +1576,11 @@ pub fn run() {
             // Phone bridge: listens only while Settings > Mobile allows it.
             let handle = app.handle().clone();
             let remote_state = state.clone();
-            tauri::async_runtime::spawn(async move { remote::apply(&handle, &remote_state).await });
+            // Local clients (orb): always on, loopback only, token in <home>/local.json.
+            tauri::async_runtime::spawn(async move {
+                remote::start_local(&handle, &remote_state).await;
+                remote::apply(&handle, &remote_state).await
+            });
             // Keeps idle workspaces close to base (Settings > Git).
             trunk::start(app.handle().clone(), state.clone());
             routines::start(app.handle().clone(), state);
@@ -1755,7 +1760,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) { code::pty::close_all(); setup::close_all(); }
+            if matches!(event, tauri::RunEvent::Exit) { code::pty::close_all(); setup::close_all(); remote::stop_local(); }
         });
 }
 
