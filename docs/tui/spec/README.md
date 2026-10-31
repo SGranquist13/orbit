@@ -1,6 +1,6 @@
 # Orbit TUI spec
 
-The build spec for `orbit`, the terminal UI. [`../../tui.md`](../../tui.md) is the overview; [`../mockup.html`](../mockup.html) is the visual reference. Where this spec and the mockup disagree, **this spec wins**.
+The build spec for `orb`, the terminal UI. [`../../tui.md`](../../tui.md) is the overview; [`../mockup.html`](../mockup.html) is the visual reference. Where this spec and the mockup disagree, **this spec wins**.
 
 | File | What it fixes |
 |---|---|
@@ -31,4 +31,4 @@ These apply to every task. A task brief can add to them, never relax them.
 
 ## Status
 
-Spec version 1 (2026-10-31). Decisions still waiting on the maintainer are listed at the end of [keys.md](keys.md) and [behaviour.md](behaviour.md) under "Open"; tasks that depend on one say so.
+Spec version 1 (2026-10-31). All open decisions are settled; they are recorded under "Decided" at the end of [keys.md](keys.md) and [behaviour.md](behaviour.md).

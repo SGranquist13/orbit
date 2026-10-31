@@ -6,7 +6,7 @@ One brief per task. Each is sized for one agent session and lands as one PR into
 |---|---|---|---|---|
 | [T0.1](T0.1-proto-crate.md) Cargo workspace + `orbit-proto` types | T0 | Linux | — | Sonnet / Codex |
 | [T0.2](T0.2-local-listener.md) Local listener, async backend, pushes | T0 | **[app]** | T0.1 | Sonnet + maintainer verify |
-| [T0.3](T0.3-client-and-ls.md) Client, `orbit ls` / `orbit send` | T0 | Linux | T0.1 (T0.2 for live check) | Sonnet / Codex |
+| [T0.3](T0.3-client-and-ls.md) Client, `orb ls` / `orb send` | T0 | Linux | T0.1 (T0.2 for live check) | Sonnet / Codex |
 | [T1.1](T1.1-tui-skeleton.md) App loop, theme, glyphs, snapshot harness | T1 | Linux | T0.3 | Sonnet |
 | [T1.2](T1.2-transcript.md) Transcript fold + markdown + block rendering | T1 | Linux | T1.1 | Sonnet / Codex |
 | [T1.3](T1.3-chat.md) Chat screen: header, input, footer, send/stop | T1 | Linux | T1.2 | Sonnet |

@@ -142,8 +142,7 @@ Every action above, named as in the desktop where one exists (ids from `src/lib/
 ```
 Unknown keys are kept on write. Command-line flags override it for the session.
 
-## Open
-
-- **K1.** Are Alt+1/2/3 acceptable as primary screen keys, with Ctrl+X as the universal fallback? (Recommended yes.)
-- **K2.** Ctrl+S for Ship: fine in raw mode, but some users expect "save". Keep? (Recommended keep.)
-- **K3.** Pinned chips: separate TUI list (above) or read the desktop's pinned skills? The desktop keeps them in localStorage, so sharing would need a new setting. (Recommended separate for v1.)
+## Decided (2026-10-31)
+- **K1.** Alt+1/2/3 are the screen keys, with the Ctrl+X prefix as the universal fallback.
+- **K2.** Ctrl+S ships.
+- **K3.** Pinned chips are a TUI-only list in `tui.json` for v1 (the desktop keeps its pins in localStorage).

@@ -85,25 +85,25 @@ Ctrl+S (or `s` in Inbox):
 The overlay is a view of state kept per workspace; closing it doesn't stop anything, and reopening shows the current step.
 
 ## 6. Connection and errors
-- Startup: `read_local_config` → connect → `hello` + `snapshot` in parallel → open the workspace named on the command line (`orbit <name-or-id-prefix>`), else the start screen (§7).
-- App not running: print to stderr `Orbit isn't running. Start the desktop app, then run orbit again.` and exit 1 (before entering the alternate screen).
+- Startup: `read_local_config` → connect → `hello` + `snapshot` in parallel → open the workspace named on the command line (`orb <name-or-id-prefix>`), else the start screen (§7).
+- App not running: print to stderr `Orbit isn't running. Start the desktop app, then run orb again.` and exit 1 (before entering the alternate screen).
 - Disconnect while running: header shows `● reconnecting…` in `warn`; input stays editable but Enter shows "Not connected" in the footer; on reconnect refetch as protocol.md §5 says.
 - RPC errors: footer transient error. Never crash on a bad payload: unknown event types are ignored (serde `#[serde(other)]` variant), unknown fields are ignored.
 - Logging: `ORBIT_TUI_LOG=<file>` writes `tracing` logs there; nothing is ever printed to the terminal while the UI is up.
 
 ## 7. Command line
 ```
-orbit                      start screen (§ below)
-orbit <workspace>          open a workspace (exact name, else unique prefix of name or id)
-orbit ls [--json]          list workspaces: group, status, name, repo, reason; plain text, no TUI
-orbit send <ws> <text>     send a message and exit
-orbit --version | --help
+orb                      start screen (§ below)
+orb <workspace>          open a workspace (exact name, else unique prefix of name or id)
+orb ls [--json]          list workspaces: group, status, name, repo, reason; plain text, no TUI
+orb send <ws> <text>     send a message and exit
+orb --version | --help
 flags: --theme, --color, --ascii, --no-motion, --quiet, --rail left|right|off, --paint-bg
 ```
 **Start screen:** if any workspace needs you → Inbox; else Chat on the most recently active workspace; else the New workspace dialog.
-`orbit ls` output columns: `<dot> <name>  <status>  <repo>  <reason label>`; `--json` prints `{ workspaces: [{ id, name, repo, status, group, reason }] }`.
+`orb ls` output columns: `<dot> <name>  <status>  <repo>  <reason label>`; `--json` prints `{ workspaces: [{ id, name, repo, status, group, reason }] }`.
 
-## Open
-- **B1.** Start screen rule above (Inbox when something needs you). OK?
-- **B2.** Skill list: all enabled packs, shipkit first (as specified). OK?
-- **B3. Binary name (blocks T0.3).** The desktop app's Cargo package and binary are already called `orbit` (`src-tauri/Cargo.toml`), so a TUI binary named `orbit` collides in the shared Cargo workspace (same `target/` output) and would sit next to the app's own exe. Options: (a) `orb` (recommended: short, no clash); (b) rename the app's binary (touches the installer and auto-start); (c) keep the TUI in a separate Cargo workspace. This spec writes `orbit` throughout; read it as the chosen name.
+## Decided (2026-10-31)
+- **B1.** Start screen: Inbox when something needs you, else Chat on the most recent workspace, else New workspace.
+- **B2.** Skills popup lists all enabled packs, shipkit first.
+- **B3.** The binary is **`orb`** (Cargo package `orbit-tui`). The desktop app's package and binary are already `orbit`, so `orbit` would collide in the shared workspace. T5 still checks `orb` for clashes on PATH before the installer adds it.
