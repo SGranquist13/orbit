@@ -1,92 +1,117 @@
-# Orbit TUI: plan
+# Orbit TUI: implementation plan
 
-A terminal interface for Orbit: simple, clean, and recognisably Orbit. The same binary also runs inside the desktop app as a "Terminal UI" pane. Status: **shaping** (see PLANNING.md).
+`orbit` is a terminal interface to Orbit: simple, clean, and recognisably Orbit. It is a client of the running desktop app, so the workspaces, events and settings are the ones the desktop and the phone see. The same binary runs inside the desktop app as a "Terminal UI" pane.
 
-## Goals
+Status: **design agreed, ready to build.** The look is set by the animated mockup in [`docs/tui/mockup.html`](tui/mockup.html) (open it in a browser; the screen buttons and Replay drive it). The mockup is the reference for layout and feel, not a pixel spec, and it has known small rendering bugs.
 
-- **Simple and clean first.** Few screens, few keys, lots of whitespace. A feature makes it in only when it earns its place; when in doubt, leave it to the desktop app.
-- **Its own identity.** It looks like Orbit, not like another agent CLI: the same greyscale Void/Paper themes, colour only for meaning, dither for motion, the Orbit mark.
-- **Fast to drive from the keyboard:** everything is reachable from the input line (`/` skills, `@` files, Ctrl+P palette).
-- **One Orbit:** the TUI is a client of the running app. Workspaces, events and settings are the same ones the desktop and phone see.
-- **One implementation, two ways in:** in a terminal (`orbit`) and in an app pane (a PTY running `orbit`).
+## Principles
 
-Out of scope for v1: the Code view's editor, the Review view, voice, editing settings (the TUI shows a link instead).
+- **Clean first.** Few screens, few keys, generous whitespace. A feature makes it in only when it earns its place; anything else stays in the desktop app.
+- **Orbit's own look.** Void/Paper greyscale, colour only for meaning (`run`, `ok`, `bad`, `warn`, `info`, `merged`), dither for motion, no box-drawing clutter.
+- **Keyboard first.** Every action is on a key or in the Ctrl+P palette; the footer always shows the keys that matter right now.
+- **One Orbit.** No agent logic in the TUI. It renders state and calls the app.
+
+## Screens
+
+| Screen | Key | Layout | Purpose |
+|---|---|---|---|
+| **Chat** | Alt+1 | rail + main | Talk to one workspace: header, transcript, input. |
+| **Inbox** | Alt+2 | full screen | Every session grouped needs you / running / done, with its reason and the one key that resolves it. |
+| **Review** | Alt+3 | full screen | Files and save-point commits on the left, diff on the right, line comments sent to the agent. |
+| **Skills** | `/` | popup over Chat | Skill autocomplete (shipkit first, then installed packs) and pinned chips. |
+| **Ship** | Ctrl+S | overlay over Chat | Checks → squash → push → PR, then live PR checks and merge. |
+| **Palette** | Ctrl+P | overlay | Every action, using the command ids in `src/lib/keybindings.ts`. |
+| **New workspace** | `n` | dialog | Repo, task, agent/model, profile. |
+
+**Fleet rail.** On Chat (and its overlays) a 30-column rail lists the workspaces grouped needs you / running / done, with a status dot each. Left by default, `railSide: left | right` in TUI settings, hidden under ~100 columns. Tab focuses it; j/k + Enter switch. The Inbox has no rail, because it shows the same list at full size.
+
+### Look
+
+- **Header:** workspace name (bold), agent and model, branch; tokens and context % right-aligned (`AgentEvent::Usage`).
+- **Your messages and the input:** a raised (`raised`) block with a thin left bar. Agent prose sits flush on `bg`.
+- **Tool calls:** one dim line each with a glyph (`∗` search, `→` read, `✎` edit with `+n −m`, `$` command). Once the turn moves on they fold to one summary line; Enter expands.
+- **Working:** the dither sweep `▓▒░` in `run` colour beside a short status ("running tests · 12s"). No other animation, and none at all with `ORBIT_REDUCED_MOTION=1`.
+- **Overlays and popups:** the only places with borders (`line-strong`), on `panel`.
+- **Footer:** at most about six dim key hints for the current screen.
+- **Colour:** truecolor from the Void/Paper tokens (theme follows `settings.theme`, overridable with `--theme`); 256-colour fallback; an ANSI-16 theme for basic terminals; `NO_COLOR` respected.
+
+### Keys (v1)
+
+Global: Alt+1/2/3 screens, Ctrl+P palette, Ctrl+N or `n` (outside the input) new workspace, Ctrl+C twice quits.
+Chat: Enter send, Shift+Enter newline, Esc stop the agent (or close a popup), Tab rail focus, `/` skills, `@` files, Ctrl+S ship, Ctrl+K workspace switcher.
+Inbox: j/k, Enter open, `s` ship, `f` fix CI, `c` address comments, `x` archive, `d` dismiss, Esc back.
+Review: j/k line, `]`/`[` file, `c` comment, `a` accept file, `v` scope (vs base · since last turn · one commit), Enter send comments, Esc back.
+Ship: `m` merge, `f` fix CI, `c` address comments, `o` open on GitHub, Esc close.
 
 ## Architecture
 
 ```
-orbit (TUI, ratatui + crossterm)          desktop app (Tauri)
-  └─ orbit-proto (types, client) ──ws──▶   remote/server.rs (Hub, Backend)
-                                           └─ remote/mod.rs OrbitBackend → send / db / …
+crates/orbit-tui  (bin: orbit)  ratatui + crossterm
+  └─ crates/orbit-proto  wire types, framing, client
+        │  WebSocket on 127.0.0.1, local token
+        ▼
+src-tauri  remote/server.rs (Hub, Backend)  →  remote/mod.rs OrbitBackend  →  send / db / git / trunk / pr_review
 ```
 
-- **Rust workspace.** Turn the repo into a Cargo workspace with three members: `src-tauri`, `crates/orbit-proto` (wire types, framing, `crypto_box` handshake, an async client) and `crates/orbit-tui` (builds to the `orbit` binary). `src-tauri` depends on `orbit-proto`, so the server and the clients can't drift apart.
-- **Transport: the existing bridge, plus a local mode.** The server also listens on `127.0.0.1`, and a local client authenticates with a token from `~/.orbit/local-token` (created by the app, user-only permissions, rotated on demand). There's no QR pairing and no `crypto_box` needed on loopback. The phone path is unchanged.
-- **More RPC methods.** Today the bridge has `snapshot`, `events`, `send`, `interrupt` and `markSeen`. Add these, each a thin wrapper over existing commands: `createWorkspace`, `archive`, `listSkills`, `runSkill`, `prepareShip`, `prStatus`, `diff` (from `git::changes`), `listFiles`, `setModel`, `compact`, `newSession`. The contract goes into `ide_mobile/docs/protocol.md` first (version bump), then `npm run interop`.
-- **State:** an Elm-style loop with `App` (model), `update(msg)` (a pure function, unit-tested) and `view(frame)`. Bridge events, keys and ticks all become `Msg`s. Transcript folding ports `src/lib/transcript.ts` (consecutive tool calls → one group) as a pure function with tests shared against the same fixtures.
+### Workspace and crates
+- Add a root `Cargo.toml` workspace with members `src-tauri`, `crates/orbit-proto`, `crates/orbit-tui`. Shared `target/`. `scripts/cargo.cmd` keeps working from the root.
+- **`orbit-proto`:** the request/response/event types now inlined in `remote/server.rs` and `ide_mobile/docs/protocol.md`, plus a tokio client (`connect`, `rpc`, event stream, reconnect with backoff). `src-tauri` depends on it, so server and clients share one definition.
+- **`orbit-tui`:** the binary. Modules: `app` (model + `update`), `msg`, `view/` (one file per screen + `rail`, `header`, `footer`, `markdown`, `diff`), `theme`, `keys`, `transcript` (fold events into blocks, a port of `src/lib/transcript.ts`), `attention` (port of `src/lib/attention.ts`), `client` (bridge task feeding `Msg`s).
 
-## Design language
+### Local mode on the bridge
+- Today the bridge runs only when Settings > Mobile is on, binds `0.0.0.0`, and every client goes through pairing and `crypto_box`. Add a **local listener** that always runs: `127.0.0.1` on an OS-assigned port, written with a random token to `~/.orbit/local.json` (`{port, token, pid}`, user-only permissions, rewritten on each launch). It shares the `Hub` and `Backend` with the phone server.
+- Local clients send `{"type":"hello","token":…}` and skip pairing and encryption (loopback only). The token check is constant-time; the phone path is unchanged.
+- `orbit` reads `local.json`; if the app isn't running it says so and prints how to start it. (Starting the app for you is a later option.)
 
-Orbit's desktop conventions carried into the terminal. Rule of thumb: if a line doesn't help you read the conversation or act on it, it doesn't render.
+### RPC surface
+`Backend::rpc` is synchronous today; make it async (`async_trait` or a boxed future) since most new methods are. Existing: `snapshot`, `events`, `send`, `interrupt`, `markSeen`. New, each a thin wrapper over existing code:
 
-```
- Fix flaky login test                                     orbit · fix-login     41.2k  18%
- ▏ make the login test stop flaking                                                        
-                                                                                           
-   I'll look at the test and its fixtures first.                                           
-                                                                                           
-   ∗ Grep "login" (12 matches)                                                             
-   → Read src/auth/login.test.ts                                                           
-   ✎ Edit src/auth/login.test.ts  +4 −2                                                    
-                                                                                           
-   The test raced the session cookie; it now waits for it.                                 
-                                                                                           
-   ● Done · 38s · claude sonnet                                                            
- ▏ █                                                                                       
- ▏ Build  Claude Sonnet · fix-login                                                        
-  esc interrupt                                     ctrl+k workspaces  tab profile  ctrl+p  
-```
+| Method | Wraps |
+|---|---|
+| `createWorkspace` | `create_workspace_inner` |
+| `archive`, `dismiss` | `archive_inner`, `db.dismiss` |
+| `listSkills`, `runSkill` | `skills::list_skills`, `run_skill_with` |
+| `switchProfile`, `listProfiles` | `switch_profile`, `skills::list_profiles` |
+| `compact`, `newSession` | `compact_session`, `new_session` |
+| `listFiles` | `code::fs` list files (for `@`) |
+| `review` | `pr_review::local_review` (files + merge base), scope `base` / `turn` / `commit:<sha>` |
+| `fileAt` | `code_file_at` / `code_read_file` (old and new sides) |
+| `prepareShip`, `prStatus`, `merge` | `trunk::prepare_ship_inner`, `gh.rs` |
+| `settings` | read-only `get_settings` (theme, keybindings) |
 
-- **Blocks, not boxes.** Your messages and the input sit on a slightly raised background (`panel`) with a thin left bar, which plays the role of Orbit's chat bubble. Agent text sits flush on the base background. Borders appear only on overlays (palette, pickers).
-- **Tool lines are quiet:** dim text, one glyph per kind (`∗` search, `→` read, `✎` edit with `+n −m`, `$` command, `⋯` running). A group collapses to one line ("5 tool calls") once the turn moves on. Enter on a group expands it.
-- **Colour tokens** map from `src/index.css`: `run` (working spinner/bar), `ok`, `bad`, `warn`, `info`, `merged`, with `accent` = bright foreground. The rest is greys. Both themes are supported: Void (dark) by default, Paper (light), and a "terminal" theme that uses only the 16 ANSI colours. True colour is detected, with a 256-colour fallback.
-- **Header:** the workspace title on the left; branch, tokens and context % on the right (from `AgentEvent::Usage`, the same numbers as `ContextMeter`).
-- **Footer:** at most four key hints, which change with context.
-- **Motion:** a dither sweep (`░▒▓`) in `run` colour on the active line while the agent works, echoing the desktop's running sweep. No other animation.
-- **Start screen:** a small 1-bit Orbit mark (half-block characters, rendered from `src/assets/orbit.png`), the version, and recent workspaces. Nothing else.
-- **Markdown:** headings, lists, inline code and fenced code highlighted with `syntect` (a theme built from the tokens). Diffs use `ok`/`bad` foregrounds, never full backgrounds.
+Events: the hub already broadcasts agent events and workspace updates; add `workspace-archived` and `teammate-changed` passthroughs only when a screen needs them.
 
-## Screens
+The contract change goes into `ide_mobile/docs/protocol.md` first (bump the protocol version, additive only), then both sides, then `npm run interop` in `ide_mobile`.
 
-1. **Chat** (the default): the transcript, input and footer for one workspace.
-2. **Workspaces** (Ctrl+K, or a left rail when the terminal is ≥ 120 columns): repo-grouped list with status dots, the attention reason from `attention.ts` (ported), and fuzzy filtering. Enter switches; `n` opens a new workspace.
-3. **New workspace:** repo picker, task prompt, agent/model and profile. Enter starts it.
-4. **Palette** (Ctrl+P): every other action (ship, diff, inbox, archive…), using the same command ids as `src/lib/keybindings.ts`. Actions that need more than a line (Ship status, a diff) open as a single overlay over the chat and close with Esc.
-
-That's the whole app: one main screen, one list, one dialog, one palette. The inbox is the top of the workspace list (needs-you first), not a separate screen.
+### Inside the TUI
+- Elm loop: `Msg` from keys, bridge events, a 120 ms tick (only while something animates) and resize. `update(&mut App, Msg) -> Vec<Cmd>` is pure; `Cmd`s (rpc calls) run on the tokio side and come back as `Msg`s.
+- Render only on change. Transcript blocks are cached per workspace and rebuilt incrementally as events arrive (`sinceSeq`).
+- Markdown with `pulldown-cmark`; code and diffs highlighted with `syntect` using a theme built from the tokens. The line diff is computed in Rust (`similar`) from the two file versions.
+- Input: `tui-textarea`, with history per workspace.
 
 ## Milestones
 
-Each milestone ships on its own and gets a line in `CHANGELOG.md` (as "Preview:" until it's proven in a real-app run).
+Each milestone is a branch from `next`, merged back after its checks pass, with a "Preview:" line in `CHANGELOG.md`.
 
-- **T0 Foundations.** Cargo workspace; `orbit-proto` extracted with `src-tauri` using it (no behaviour change, the e2e stays green); local loopback mode with a token file; `orbit --version` and `orbit ls` (plain-text list, also handy for scripts). *Done when:* `orbit ls` prints the running app's workspaces.
-- **T1 Chat.** Full-screen chat for one workspace (`orbit` opens the most recent one, `orbit <name>` picks one): live transcript, input with multi-line editing (`tui-textarea`), send, Esc to interrupt, header usage, markdown and code highlighting, tool groups. *Done when:* you can hold a whole conversation from the terminal while the desktop app mirrors it.
-- **T2 Fleet.** Workspace list (needs-you first) and rail, new workspace, status dots, notifications (terminal bell / OSC 9 when a turn finishes in another workspace).
-- **T3 Skills and actions.** `/` skill autocomplete, `@` file mentions, profile switching (Tab), the palette, and the Diff and Ship overlays.
-- **T4 In-app pane.** A "Terminal UI" nav item and palette entry in the desktop app, rendered as a full-pane xterm.js running the bundled `orbit` (`ORBIT_LOCAL_TOKEN` passed in the environment). The installer ships `orbit.exe` and can optionally add it to PATH.
-- **T5 Headless (later).** Extract `orbit-core` so that `orbit --headless` can run agents without the desktop app (SSH, Linux, servers). Needs its own plan.
+- **T0 Foundations.** Cargo workspace; `orbit-proto` extracted and used by `src-tauri` (no behaviour change: `cargo test`, `npm run interop` and the e2e mobile-free steps stay green); local listener + `local.json`; async `Backend::rpc`; `orbit ls` prints workspaces as plain text. *Done when* `orbit ls` lists the running app's workspaces.
+- **T1 Chat.** Theme module and tokens; header, transcript (prose, tool lines and groups, markdown, code), input, send, Esc to stop, usage in the header, dither sweep; `orbit [workspace]` opens one. *Done when* a whole conversation can be held from the terminal while the desktop mirrors it.
+- **T2 Fleet.** Rail (left/right, auto-hide), Ctrl+K switcher, Inbox screen with its keys, new workspace dialog, terminal bell / OSC 9 when a session needs you.
+- **T3 Skills and Ship.** `/` popup and pinned chips, `@` files, Tab profile switch, palette, Ship overlay with live PR checks and merge.
+- **T4 Review.** Review screen: file list, commits, diff, scopes, line comments sent as one message, accept file.
+- **T5 In the app.** "Terminal UI" nav item and palette entry: a full-pane xterm.js PTY running the bundled `orbit`, token passed as `ORBIT_LOCAL_TOKEN`. Installer ships `orbit.exe` and offers to add it to PATH.
+- **Later.** Headless mode (`orbit-core` extracted so agents run without the desktop app), GitHub PR review from the Review screen, teammates.
 
 ## Testing
 
-- **Unit:** `update()` transitions, transcript folding (against `src-tauri/tests/fixtures/*.jsonl`), the attention port and key dispatch.
-- **Snapshots:** `insta` + ratatui `TestBackend` render every screen at 80×24 and 140×40, in dark and ANSI-16. These are cheap and catch layout regressions.
-- **Interop:** `orbit-proto`'s client runs against the real bridge server in `cargo test` (the same style as `interop_server`).
-- **e2e:** a `tui` step in `scripts/e2e.mjs` drives `orbit` through a PTY against the real app (answering ConPTY's `ESC[6n` with `ESC[1;1R`): it sends a one-line haiku prompt and checks that the reply shows up in both the TUI screen and the desktop transcript.
-- **Showcase:** VHS tapes in `docs/tui/` render GIFs for the README and releases.
+- **Unit:** `update` transitions, transcript folding (against `src-tauri/tests/fixtures/*.jsonl`), attention port, key dispatch, diff building.
+- **Snapshots:** `insta` + ratatui `TestBackend`: every screen at 80×24 and 140×40, Void and ANSI-16, rail left and right.
+- **Protocol:** `orbit-proto` client against the real bridge server in `cargo test`, local token accepted and rejected.
+- **e2e:** a `tui` step in `scripts/e2e.mjs` runs `orbit` in a PTY (answering `ESC[6n` with `ESC[1;1R`) against the real app: one haiku one-liner, checking the reply appears in the TUI screen and in the desktop transcript. T4 adds a review-comment step.
+- **Showcase:** VHS tapes in `docs/tui/` render GIFs for the README and release notes.
 
-## Open questions
+## Decisions still open
 
-- Loopback WebSocket or a named pipe / Unix socket for local mode? (WebSocket keeps one server; a pipe avoids port conflicts.)
-- Is the binary name `orbit` free enough on PATH (an npm package or other tools)? The agent-identity trap in CLAUDE.md suggests checking.
-- Should `orbit` start the desktop app when it isn't running, or just say so? (v1: say so, with the command to start it.)
-- Mouse support: click to focus and scroll, yes; drag-select conflicts with terminal copy, so leave it off by default.
+- **Name on PATH:** `orbit` may collide with other tools; check before T5 (fallback `orbit-tui`, or `orb`).
+- **Local socket vs loopback WebSocket:** v1 uses loopback WebSocket (one server); revisit if port or firewall issues show up on Windows.
+- **Start screen:** Chat on the most recent workspace, or the Inbox when something needs you (leaning Inbox-when-needed).
+- **Skill list:** shipkit only by default or all packs (leaning all, shipkit first).

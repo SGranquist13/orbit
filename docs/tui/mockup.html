@@ -1,0 +1,291 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orbit TUI Looks</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: one live terminal mock (fleet rail + main pane) driven by tabs, with notes beside each screen. Tokens = Orbit's Void (dark) / Paper (light). */
+:root{
+  --bg:#050506;--panel:#0b0b0d;--raised:#121215;--hover:#19191d;--line:#1f1f24;--line-strong:#34343b;
+  --fg:#ececef;--dim:#a2a2aa;--mute:#63636c;--run:#f2b53a;--ok:#3fd88a;--bad:#ff5468;--info:#72a2ff;--merged:#b28cff;
+  --page:#0e0e10;--ui:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Consolas,monospace;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){
+  --bg:#f3f3f1;--panel:#eaeae7;--raised:#fbfbfa;--hover:#e0e0dc;--line:#d4d4cf;--line-strong:#111113;
+  --fg:#111113;--dim:#46464c;--mute:#84848a;--run:#b57900;--ok:#0b8a4a;--bad:#d4183c;--info:#2a55e8;--merged:#7440e6;--page:#fbfbfa;color-scheme:light}}
+:root[data-theme="light"]{
+  --bg:#f3f3f1;--panel:#eaeae7;--raised:#fbfbfa;--hover:#e0e0dc;--line:#d4d4cf;--line-strong:#111113;
+  --fg:#111113;--dim:#46464c;--mute:#84848a;--run:#b57900;--ok:#0b8a4a;--bad:#d4183c;--info:#2a55e8;--merged:#7440e6;--page:#fbfbfa;color-scheme:light}
+body{background:var(--page);color:var(--fg);font:15px/1.6 var(--ui);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+main{max-width:1100px;margin:0 auto;display:grid;gap:28px}
+h1{font-weight:600;font-size:28px;margin:0;text-wrap:balance}
+p{margin:0;max-width:70ch;color:var(--dim)}
+.tag{font-weight:500;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.lede{display:grid;gap:10px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar .sp{flex:1}
+button{font:500 13px var(--ui);color:var(--dim);background:var(--panel);border:1.5px solid var(--line);border-radius:4px;padding:5px 12px;cursor:pointer}
+button[aria-pressed="true"]{color:var(--fg);border-color:var(--line-strong);box-shadow:2px 2px 0 var(--line)}
+button:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+kbd{font:500 12px var(--ui);color:var(--mute);margin-left:6px}
+.term{background:var(--bg);border:1.5px solid var(--line-strong);border-radius:6px;overflow-x:auto;box-shadow:4px 4px 0 var(--line)}
+#scr{font:13px/1.6 var(--mono);white-space:pre;padding:12px 0;min-width:940px;position:relative}
+.row{display:flex}
+.c{padding:0 14px;min-height:1.6em;flex:none}
+.rail{width:30ch;border-color:var(--line);border-style:solid;border-width:0}
+.rail.left{border-right-width:1.5px}.rail.right{border-left-width:1.5px}
+.main{flex:1;min-width:0}
+.m{color:var(--mute)}.d{color:var(--dim)}.b{font-weight:700}.f{color:var(--fg)}
+.run{color:var(--run)}.ok{color:var(--ok)}.bad{color:var(--bad)}.info{color:var(--info)}.mg{color:var(--merged)}
+.you{background:var(--raised);box-shadow:inset 2px 0 0 var(--line-strong)}
+.inp{background:var(--raised);box-shadow:inset 2px 0 0 var(--fg)}
+.sel{background:var(--hover)}
+.pop{background:var(--panel);box-shadow:inset 1.5px 0 0 var(--line-strong),inset -1.5px 0 0 var(--line-strong)}
+.pop.top{box-shadow:inset 1.5px 0 0 var(--line-strong),inset -1.5px 0 0 var(--line-strong),inset 0 1.5px 0 var(--line-strong)}
+.pop.bot{box-shadow:inset 1.5px 0 0 var(--line-strong),inset -1.5px 0 0 var(--line-strong),inset 0 -1.5px 0 var(--line-strong)}
+.pop.hl{background:var(--hover)}
+.cur{background:var(--fg);color:var(--bg)}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 28px;font-size:14px;color:var(--dim)}
+.notes b{color:var(--fg);font-weight:500}
+</style>
+
+<main>
+<section class="lede">
+  <div class="tag">Orbit · terminal UI · direction B, refined</div>
+  <h1>Fleet rail, Inbox, Skills and Ship</h1>
+  <p>One clean layout: the fleet rail on the side (left or right, your choice), the conversation in the main pane, and everything else as views or overlays in the same frame. Switch screens below; each one animates. Keys shown are the proposed bindings.</p>
+</section>
+
+<div class="bar" role="toolbar" aria-label="Screens">
+  <button data-s="chat" aria-pressed="true">Chat<kbd>alt+1</kbd></button>
+  <button data-s="inbox" aria-pressed="false">Inbox<kbd>alt+2</kbd></button>
+  <button data-s="skills" aria-pressed="false">Skills<kbd>/</kbd></button>
+  <button data-s="review" aria-pressed="false">Review<kbd>alt+3</kbd></button>
+  <button data-s="ship" aria-pressed="false">Ship<kbd>ctrl+s</kbd></button>
+  <span class="sp"></span>
+  <button id="side" aria-pressed="false">Rail on right</button>
+  <button id="replay">Replay</button>
+</div>
+
+<div class="term"><div id="scr" aria-live="polite"></div></div>
+<div class="notes" id="notes"></div>
+</main>
+
+<script>
+(function(){
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+var scr=document.getElementById('scr'),notes=document.getElementById('notes');
+var state={s:'chat',right:false,t:0,sweep:0,blink:true};
+var H=24; // terminal rows
+
+// line helpers: a line is [cls, [[seg-cls,text],...]]
+function L(cls){var segs=[].slice.call(arguments,1);return [cls||'',segs]}
+var S=function(c,t){return [c,t]};
+function pad(t,n){return t.length>=n?t:t+' '.repeat(n-t.length)}
+var sweepFrames=['▓▒░','▒▓▒','░▒▓','▒░▒'];
+function sweep(){return S('run',sweepFrames[state.sweep%4])}
+function dot(k){return S(k,'●')}
+
+// ---------- fleet rail ----------
+var fleet=[
+  {g:'needs you'},
+  {n:'review-copy',k:'run',r:'asked a question'},
+  {n:'ci-node-22',k:'bad',r:'checks failed'},
+  {g:'running'},
+  {n:'fix-login',k:'run',r:'running tests',cur:true},
+  {n:'tidy-imports',k:'run',r:'editing 4 files'},
+  {g:'done'},
+  {n:'readme-badge',k:'ok',r:'ready to ship'},
+  {n:'dark-mode',k:'mg',r:'merged'}
+];
+function rail(focus){
+  var out=[L('',S('f b','orbit'),S('m','  4 running')),L('')];
+  fleet.forEach(function(w){
+    if(w.g){out.push(L('',S('m',w.g)));return}
+    var sel=focus?focus===w.n:w.cur;
+    out.push(L(sel?'sel':'',dot(w.k),S('',' '),S(sel?'f b':(w.k==='ok'||w.k==='mg'?'d':'f'),w.n)));
+  });
+  out.push(L(''));
+  out.push(L('',S('m','n new  ·  alt+2 inbox')));
+  return out;
+}
+
+// ---------- screens ----------
+function chatBody(){
+  var t=state.t,b=[];
+  b.push(L('',S('f b','fix-login'),S('m','  ·  claude sonnet  ·  fix/login'),S('m','            41.2k  18%')));
+  b.push(L(''));
+  b.push(L('you',S('f',' make the login test stop flaking')));
+  b.push(L(''));
+  var prose1="I'll look at the test and its fixtures first.";
+  if(t>=1)b.push(L('',S('f',prose1.slice(0,Math.min(prose1.length,(t-1)*12+12)))));
+  if(t>=5){b.push(L(''));b.push(L('',S('m','∗ grep  "login"  12 matches')))}
+  if(t>=6)b.push(L('',S('m','→ read  src/auth/login.test.ts')));
+  if(t>=7)b.push(L('',S('m','✎ edit  src/auth/login.test.ts  '),S('ok','+4'),S('',' '),S('bad','−2')));
+  var prose2='The test raced the session cookie. It now waits for cookie.set.';
+  if(t>=8){b.push(L(''));b.push(L('',S('f',prose2.slice(0,Math.min(prose2.length,(t-8)*14+14)))))}
+  if(t>=13){b.push(L(''));b.push(L('',sweep(),S('m',' running tests  ·  '+(t-12)+'s')))}
+  return b;
+}
+function inputLine(text,hint){
+  return [L('inp',S('f',' '+(text||'')),S(state.blink?'cur':'',' ')),L('',S('m',hint))];
+}
+function screenChat(){return {main:chatBody(),foot:inputLine('','esc stop   tab rail   / skills   ctrl+p actions')}}
+
+function screenInbox(){
+  var t=state.t,b=[];
+  b.push(L('',S('f b','Inbox'),S('m','  ·  2 need you  ·  2 running  ·  2 done')));
+  b.push(L(''));
+  var rows=[
+    ['needs you'],
+    ['run','review-copy','Asked: “Keep the old headline as a subtitle?”','enter reply'],
+    ['bad','ci-node-22','Checks failed: test (node 22)','f fix CI'],
+    ['running'],
+    ['run','fix-login','Running tests · 12s','enter open'],
+    ['run','tidy-imports','Editing 4 files','enter open'],
+    ['done'],
+    ['ok','readme-badge','Ready to ship · 2 files · +18 −3','s ship'],
+    ['mg','dark-mode','Merged #41 · worktree cleaned up','x archive']
+  ];
+  var sel=1+(Math.floor(t/3)%4); // cycle selection through rows 1,2,4,5 visually
+  var map=[1,2,4,5,7],si=map[Math.floor(t/3)%map.length];
+  rows.forEach(function(r,i){
+    if(r.length===1){b.push(L(i?'':'',S('m',r[0])));return}
+    var s=i===si;
+    b.push(L(s?'sel':'',dot(r[0]),S('',' '),S(s?'f b':'f',pad(r[1],14)),S(s?'f':'d',pad(r[2],60)),S('m',s?r[3]:'')));
+  });
+  b.push(L(''));
+  return {main:b,foot:[L('',S('m','j/k move   enter open   s ship   f fix CI   x archive   d dismiss   esc back'))],full:true};
+}
+
+function screenSkills(){
+  var t=state.t,typed='/'+'ship'.slice(0,Math.max(0,t-1));
+  var all=[
+    ['shipkit:ship','Commit, push and open a PR'],
+    ['shipkit:fix-ci','Read the failing checks and fix them'],
+    ['shipkit:address-comments','Work through review comments'],
+    ['shipkit:preflight','Check what this change could break'],
+    ['shipkit:rebase','Rebase onto the latest base'],
+    ['shipkit:write-ticket','Turn notes into a GitHub issue'],
+    ['shipkit:start-issue','Start work from an issue']
+  ];
+  var q=typed.slice(1),list=all.filter(function(s){return s[0].replace('shipkit:','').indexOf(q)===0||q===''});
+  if(!list.length)list=all.slice(0,1);
+  var b=chatBody().slice(0,8);
+  while(b.length<H-12-list.length)b.push(L(''));
+  b.push(L('pop top',S('m',' skills  ·  shipkit')));
+  list.forEach(function(s,i){b.push(L('pop'+(i===0?' hl':''),S(i===0?'f b':'f',' '+pad(s[0],28)),S('m',s[1])))});
+  b.push(L('pop bot',S('m',' tab complete  ·  enter run  ·  ctrl+k pin as chip')));
+  return {main:b,foot:inputLine(typed,'pinned  '+'[ship] [fix-ci] [preflight]')};
+}
+
+function screenShip(){
+  var t=state.t,b=[];
+  b.push(L('',S('f b','Ship'),S('m','  ·  readme-badge  →  main')));
+  b.push(L(''));
+  var steps=[['Checks','bun run check'],['Squash save points','3 wip commits → 1'],['Push','origin/readme-badge'],['Open pull request','#42  Add build badge to README']];
+  steps.forEach(function(s,i){
+    var st=t>i*3+3?'ok':(t>i*3?'run':'m');
+    var mark=st==='ok'?S('ok','✓'):st==='run'?sweep():S('m','·');
+    b.push(L('',st==='run'?mark:S('',' '),st==='run'?S('',''):mark,S('','  '),S(st==='m'?'m':'f',pad(s[0],22)),S('m',s[1])));
+  });
+  b.push(L(''));
+  if(t>12){
+    b.push(L('',S('m','pull request #42')));
+    var c=[['check',t>15?'ok':'run'],['lint',t>14?'ok':'run'],['CodeRabbit',t>17?'ok':'run']];
+    c.forEach(function(x){b.push(L('',x[1]==='ok'?S('ok','✓'):S('run','●'),S('d','  '+pad(x[0],20)),S('m',x[1]==='ok'?'passed':'running')))});
+    b.push(L(''));
+    if(t>17)b.push(L('',S('ok','Ready to merge.'),S('m','  m merge   o open on GitHub   c address comments')));
+  }
+  return {main:b,foot:[L('',S('m','esc close   m merge   f fix CI   c address comments'))]};
+}
+
+function screenReview(){
+  var t=state.t,b=[];
+  var scope=['vs main','since last turn','commit a1f3c9e'][Math.floor(t/40)%1];
+  b.push(L('',S('f b','Review'),S('m','  ·  fix-login  ·  '),S('f',scope),S('m','  ·  3 files  '),S('ok','+31'),S('m',' '),S('bad','−9'),S('m','  ·  2 commits')));
+  b.push(L(''));
+  var files=[['M','src/auth/login.test.ts','+4 −2',true],['M','src/auth/session.ts','+19 −7',false],['A','src/auth/cookie.ts','+8',false]];
+  var fsel=t<18?0:1;
+  var fl=files.map(function(f,i){var s=i===fsel;return [s?'sel':'',[[f[0]==='A'?'ok':'run',f[0]],['',' '],[s?'f b':'d',pad(f[1].replace('src/auth/',''),18)],['m',' '+f[2]]]]});
+  var diff;
+  if(fsel===0){
+    diff=[
+      [['m','@@ -12,9 +12,11 @@ describe("login")']],
+      [['m',' 12  '],['d','  it("signs in", async () => {']],
+      [['m',' 13  '],['d','    await page.fill("#email", user.email);']],
+      [['m',' 14  '],['bad','-   await page.click("#submit");']],
+      [['m',' 15  '],['bad','-   expect(await session()).toBeTruthy();']],
+      [['m',' 14  '],['ok','+   await page.click("#submit");']],
+      [['m',' 15  '],['ok','+   await cookie.set("session");']],
+      [['m',' 16  '],['ok','+   expect(await session()).toBeTruthy();']],
+      [['m',' 17  '],['d','  });']]
+    ];
+  }else{
+    diff=[
+      [['m','@@ -40,6 +40,14 @@ export async function session()']],
+      [['m',' 40  '],['d','export async function session() {']],
+      [['m',' 41  '],['bad','- return store.get("session");']],
+      [['m',' 41  '],['ok','+ const c = await cookie.wait("session", 2000);']],
+      [['m',' 42  '],['ok','+ return c ?? store.get("session");']],
+      [['m',' 43  '],['d','}']]
+    ];
+  }
+  var cursor=fsel===0?Math.min(7,1+Math.floor(t/2)):3;
+  var comment='Use the existing waitFor helper here instead of a new API.';
+  var rows=[];
+  diff.forEach(function(d,i){
+    rows.push([i===cursor?'sel':'',d]);
+    if(fsel===0&&i===6&&t>=8){
+      var shown=comment.slice(0,Math.min(comment.length,(t-8)*8));
+      rows.push(['you',[['m','      ✎ '],['f',shown],[t<16&&state.blink?'cur':'',t<16?' ':'']]]);
+      if(t>=16)rows.push(['',[['m','      draft · 1 comment · enter send to agent']]]);
+    }
+  });
+  var n=Math.max(fl.length+3,rows.length);
+  for(var i=0;i<n;i++){
+    var left=i<fl.length?fl[i]:(i===fl.length+1?['',[['m','commits']]]:(i===fl.length+2?['',[['m','a1f3c9e wip: wait…']]]:(i===fl.length+3?['',[['m','7be20d4 wip: test…']]]:['',[]])));
+    var r=rows[i]||['',[]];
+    var lt=left[1].map(function(x){return x[1]}).join(''),padn=30-lt.length;
+    b.push([r[0],left[1].concat([['',' '.repeat(Math.max(1,padn))],['m','│ ']]).concat(r[1])]);
+  }
+  b.push(L(''));
+  if(t>=20)b.push(L('',S('ok','✓'),S('m',' 1 comment sent to fix-login  ·  the agent is on it')));
+  return {main:b,foot:[L('',S('m','j/k line   ]/[ file   c comment   v scope: base · last turn · commit   a accept file   enter send'))],full:true};
+}
+var screens={chat:screenChat,inbox:screenInbox,skills:screenSkills,review:screenReview,ship:screenShip};
+var maxT={chat:20,inbox:30,skills:6,review:22,ship:22};
+var notesFor={
+  chat:['<b>Rail:</b> the fleet at a glance while you work in a session. Needs-you sorts to the top; tab focuses it, j/k + enter switches. For triage, open the Inbox.','<b>Main pane:</b> header, your message as a raised block, streamed text, dim one-line tool calls, the dither sweep while it works.'],
+  inbox:['<b>Inbox takes the whole screen</b> (alt+2). The rail hides here, so nothing is shown twice: every session, its reason, and the one key that resolves it.','<b>Enter jumps into the session</b> and the rail comes back; esc returns to where you were.'],
+  skills:['<b>/ opens skills</b> in place, above the input. Shipkit first, then your installed packs. Type to filter, tab to complete.','<b>Pinned chips</b> under the input mirror the desktop app’s pinned skills: one key away for ship, fix CI, preflight.'],
+  review:['<b>Review</b> (alt+3) is full screen: files and save-point commits on the left, the diff on the right. v switches what you compare: vs base, since the last turn, or one commit.','<b>Comment on any line</b> with c. Comments collect as a draft and go to the agent as one message; a accepts a file so it drops out of the list. Same model as the desktop Review view.'],
+  ship:['<b>Ship</b> is an overlay on the session, not a new screen: checks, squash, push, PR, then live CI.','<b>Next action is always on a key:</b> merge when green, f to send failures to the agent, c to address review comments.']
+};
+
+function seg(s){return '<span class="'+s[0]+'">'+s[1].replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>'}
+function line(l,w){return '<div class="c '+(w||'')+' '+l[0]+'">'+(l[1].map(seg).join('')||' ')+'</div>'}
+function render(){
+  var sc=screens[state.s](),r=rail(sc.focus),m=sc.main.slice(),f=sc.foot;
+  while(m.length<H-f.length)m.push(L(''));
+  m=m.slice(0,H-f.length).concat(f);
+  while(r.length<H)r.push(L(''));
+  var rows='';
+  for(var i=0;i<H;i++){
+    var ml=line(m[i],'main');
+    if(sc.full){rows+='<div class="row">'+ml+'</div>';continue}
+    var rl=line(r[i],'rail '+(state.right?'right':'left'));
+    rows+='<div class="row">'+(state.right?ml+rl:rl+ml)+'</div>';
+  }
+  scr.innerHTML=rows;
+  notes.innerHTML=notesFor[state.s].map(function(n){return '<div>'+n+'</div>'}).join('');
+}
+function setScreen(s){state.s=s;state.t=reduce?maxT[s]:0;document.querySelectorAll('[data-s]').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.s===s)});render()}
+document.querySelectorAll('[data-s]').forEach(function(b){b.addEventListener('click',function(){setScreen(b.dataset.s)})});
+document.getElementById('side').addEventListener('click',function(){state.right=!state.right;this.setAttribute('aria-pressed',state.right);render()});
+document.getElementById('replay').addEventListener('click',function(){state.t=reduce?maxT[state.s]:0;render()});
+// Start fully drawn, then animate on interaction.
+state.t=maxT.chat;render();
+if(!reduce){
+  setInterval(function(){state.sweep++;state.blink=!state.blink&&true;if(state.t<maxT[state.s])state.t++;else if(state.s==='inbox')state.t=(state.t+1)%60;render()},480);
+}
+})();
+</script>
