@@ -2,7 +2,7 @@
 
 `orbit` is a terminal interface to Orbit: simple, clean, and recognisably Orbit. It is a client of the running desktop app, so the workspaces, events and settings are the ones the desktop and the phone see. The same binary runs inside the desktop app as a "Terminal UI" pane.
 
-Status: **design agreed, ready to build.** The look is set by the animated mockup in [`docs/tui/mockup.html`](tui/mockup.html) (open it in a browser; the screen buttons and Replay drive it). The mockup is the reference for layout and feel, not a pixel spec, and it has known small rendering bugs.
+Status: **design agreed; build spec in [`tui/spec/`](tui/spec/README.md)** (protocol, visual, keys, behaviour, task briefs). The look is set by the animated mockup in [`docs/tui/mockup.html`](tui/mockup.html) (open it in a browser; the screen buttons and Replay drive it). The mockup is the reference for layout and feel, not a pixel spec, and it has known small rendering bugs.
 
 ## Principles
 
