@@ -1,11 +1,13 @@
-//! Transport + handshake for the phone bridge (see ide_mobile/docs/protocol.md). Knows nothing about
-//! Orbit: the RPC dispatch and device persistence sit behind [`Backend`], so tests run a real server
-//! with a fake backend on a random port.
+//! Transport + handshake for the phone bridge (see ide_mobile/docs/protocol.md) and the local
+//! listener for terminal clients (docs/tui/spec/protocol.md: token auth, plaintext frames). Knows
+//! nothing about Orbit: the RPC dispatch and device persistence sit behind [`Backend`], so tests run
+//! a real server with a fake backend on a random port.
 
 use super::crypto::{b64, b64u, parse_pk, random_bytes, Keypair, Sealed};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -16,7 +18,7 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const DEFAULT_PORT: u16 = 47821;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_EVERY: Duration = Duration::from_secs(20);
@@ -75,7 +77,7 @@ impl Hub {
         self.messages.receiver_count() > 0
     }
 
-    /// Sends a plaintext protocol message (`event` / `workspace`) to every connected phone.
+    /// Sends a plaintext protocol message (`event` / `workspace`) to every connected phone and local client.
     pub fn publish(&self, msg: Value) {
         let _ = self.messages.send(Arc::new(msg));
     }
@@ -129,6 +131,15 @@ pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// Which handshakes a listener accepts.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mode {
+    /// The phone bridge: `pair` / `auth`, boxed frames.
+    Phone,
+    /// The loopback listener for local clients: also `local` with this token, then plaintext frames.
+    Local { token: String },
+}
+
 #[derive(Clone)]
 pub struct ServerConfig {
     pub keypair: Keypair,
@@ -136,10 +147,10 @@ pub struct ServerConfig {
     pub version: String,
     pub bind: IpAddr,
     pub port: u16,
+    pub mode: Mode,
 }
 
 pub struct RunningServer {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub addr: SocketAddr,
     shutdown: watch::Sender<bool>,
 }
@@ -205,6 +216,46 @@ struct Authed {
     peer: [u8; 32],
 }
 
+/// Who completed the handshake.
+enum Session {
+    Device(Authed),
+    Local,
+}
+
+/// How frames after `ready` travel: sealed boxes for phones, plain JSON for local clients.
+enum Transport {
+    Sealed { peer: [u8; 32] },
+    Plain,
+}
+
+impl Transport {
+    fn frame<'a>(&self, kp: &Keypair, msg: &'a Value) -> Cow<'a, Value> {
+        match self {
+            Transport::Sealed { peer } => Cow::Owned(box_frame(&kp.seal_json(peer, msg))),
+            Transport::Plain => Cow::Borrowed(msg),
+        }
+    }
+
+    fn open(&self, kp: &Keypair, text: &str) -> Option<Value> {
+        match self {
+            Transport::Sealed { peer } => open_box_frame(kp, peer, text),
+            Transport::Plain => serde_json::from_str::<Value>(text).ok().filter(Value::is_object),
+        }
+    }
+
+    fn invalid_frame(&self) -> &'static str {
+        match self {
+            Transport::Sealed { .. } => "expected a valid box frame",
+            Transport::Plain => "expected a JSON object",
+        }
+    }
+}
+
+/// Constant-time equality (the length is not secret: tokens have a fixed size).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 async fn handle_connection(
     stream: TcpStream,
     cfg: Arc<ServerConfig>,
@@ -224,7 +275,7 @@ async fn handle_connection(
     )
     .await?;
 
-    let authed = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut ws, &cfg, &*backend, &hub, &challenge)).await {
+    let session = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut ws, &cfg, &*backend, &hub, &challenge)).await {
         Ok(Ok(a)) => a,
         Ok(Err((code, message))) => {
             send_error(&mut ws, code, &message).await;
@@ -235,9 +286,18 @@ async fn handle_connection(
             return Err(());
         }
     };
-    let Authed { device, peer } = authed;
-    let ready = cfg.keypair.seal_json(&peer, &json!({ "deviceId": device.id, "orbit": { "name": cfg.name, "version": cfg.version } }));
-    send_json(&mut ws, &json!({ "t": "ready", "box": ready })).await?;
+    let (transport, device_id) = match session {
+        Session::Device(Authed { device, peer }) => {
+            let ready = cfg.keypair.seal_json(&peer, &json!({ "deviceId": device.id, "orbit": { "name": cfg.name, "version": cfg.version } }));
+            send_json(&mut ws, &json!({ "t": "ready", "box": ready })).await?;
+            (Transport::Sealed { peer }, Some(device.id))
+        }
+        Session::Local => {
+            let ready = json!({ "t": "ready", "orbit": { "name": cfg.name, "version": cfg.version }, "protocol": PROTOCOL_VERSION });
+            send_json(&mut ws, &ready).await?;
+            (Transport::Plain, None)
+        }
+    };
 
     let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + PING_EVERY, PING_EVERY);
     loop {
@@ -248,7 +308,7 @@ async fn handle_connection(
             }
             id = revoked.recv() => {
                 match id {
-                    Ok(id) if id == device.id => break,
+                    Ok(id) if device_id.as_deref() == Some(id.as_str()) => break,
                     Err(broadcast::error::RecvError::Closed) => break,
                     _ => {}
                 }
@@ -256,8 +316,7 @@ async fn handle_connection(
             msg = messages.recv() => {
                 match msg {
                     Ok(m) => {
-                        let sealed = cfg.keypair.seal_json(&peer, &m);
-                        if send_json(&mut ws, &box_frame(&sealed)).await.is_err() { break }
+                        if send_json(&mut ws, &transport.frame(&cfg.keypair, &m)).await.is_err() { break }
                     }
                     // Fell behind: the phone notices the seq gap and refetches.
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -268,13 +327,12 @@ async fn handle_connection(
                 let Some(Ok(frame)) = frame else { break };
                 match frame {
                     Message::Text(t) => {
-                        let Some(req) = open_box_frame(&cfg.keypair, &peer, t.as_str()) else {
-                            send_error(&mut ws, "protocol", "expected a valid box frame").await;
+                        let Some(req) = transport.open(&cfg.keypair, t.as_str()) else {
+                            send_error(&mut ws, "protocol", transport.invalid_frame()).await;
                             break;
                         };
-                        if let Some(reply) = run_rpc(&req, &device.id, backend.clone(), hub.clone()).await {
-                            let sealed = cfg.keypair.seal_json(&peer, &reply);
-                            if send_json(&mut ws, &box_frame(&sealed)).await.is_err() { break }
+                        if let Some(reply) = run_rpc(&req, device_id.as_deref(), backend.clone(), hub.clone()).await {
+                            if send_json(&mut ws, &transport.frame(&cfg.keypair, &reply)).await.is_err() { break }
                         }
                     }
                     Message::Close(_) => break,
@@ -303,18 +361,22 @@ fn open_box_frame(kp: &Keypair, peer: &[u8; 32], text: &str) -> Option<Value> {
     kp.open_json(peer, &sealed).ok()
 }
 
-async fn run_rpc(req: &Value, device_id: &str, backend: Arc<dyn Backend>, hub: Arc<Hub>) -> Option<Value> {
+/// `device_id` is None for local clients (they have no push token to register).
+async fn run_rpc(req: &Value, device_id: Option<&str>, backend: Arc<dyn Backend>, hub: Arc<Hub>) -> Option<Value> {
     if req.get("t").and_then(Value::as_str) != Some("rpc") {
         return None;
     }
     let id = req.get("id").cloned().unwrap_or(Value::Null);
     let method = req.get("method").and_then(Value::as_str).unwrap_or("").to_string();
     let params = req.get("params").cloned().unwrap_or_else(|| json!({}));
-    let device_id = device_id.to_string();
+    let device_id = device_id.map(str::to_string);
     // Backend calls take std mutexes and may spawn agents; keep them off the socket task.
     let result = tokio::task::spawn_blocking(move || {
         if method == "registerPush" {
-            register_push(&*backend, &hub, &device_id, &params)
+            match device_id {
+                Some(device_id) => register_push(&*backend, &hub, &device_id, &params),
+                None => Err("registerPush is only available to paired phones".into()),
+            }
         } else {
             backend.rpc(&method, params)
         }
@@ -359,12 +421,23 @@ async fn next_text(ws: &mut Ws) -> Result<String, HandshakeError> {
     }
 }
 
-async fn handshake(ws: &mut Ws, cfg: &ServerConfig, backend: &dyn Backend, hub: &Hub, challenge: &str) -> Result<Authed, HandshakeError> {
+async fn handshake(ws: &mut Ws, cfg: &ServerConfig, backend: &dyn Backend, hub: &Hub, challenge: &str) -> Result<Session, HandshakeError> {
     let text = next_text(ws).await?;
     let msg: Value = serde_json::from_str(&text).map_err(|_| ("protocol", "invalid json".to_string()))?;
     let kind = msg.get("t").and_then(Value::as_str).unwrap_or("");
+    if kind == "local" {
+        let Mode::Local { token } = &cfg.mode else {
+            return Err(("protocol", "local clients must connect to the local listener".into()));
+        };
+        let given = msg.get("token").and_then(Value::as_str).unwrap_or("");
+        if !ct_eq(given.as_bytes(), token.as_bytes()) {
+            return Err(("bad_token", "wrong token (local.json may be from an earlier launch)".into()));
+        }
+        return Ok(Session::Local);
+    }
     if kind != "pair" && kind != "auth" {
-        return Err(("protocol", "expected pair or auth".into()));
+        let expected = if cfg.mode == Mode::Phone { "expected pair or auth" } else { "expected local, pair or auth" };
+        return Err(("protocol", expected.into()));
     }
     let pk_str = msg.get("pk").and_then(Value::as_str).ok_or(("protocol", "missing pk".to_string()))?;
     let peer = parse_pk(pk_str).map_err(|e| ("bad_box", e))?;
@@ -396,7 +469,7 @@ async fn handshake(ws: &mut Ws, cfg: &ServerConfig, backend: &dyn Backend, hub: 
             list.push(device.clone());
             device
         });
-        Ok(Authed { device, peer })
+        Ok(Session::Device(Authed { device, peer }))
     } else {
         let device = hub.mutate_devices(backend, |list| {
             list.iter_mut().find(|d| d.public_key == pk_b64).map(|d| {
@@ -405,7 +478,7 @@ async fn handshake(ws: &mut Ws, cfg: &ServerConfig, backend: &dyn Backend, hub: 
             })
         });
         device
-            .map(|device| Authed { device, peer })
+            .map(|device| Session::Device(Authed { device, peer }))
             .ok_or(("unknown_device", "this phone is not paired (or was revoked)".to_string()))
     }
 }
@@ -444,6 +517,16 @@ mod tests {
     }
 
     async fn rig() -> Rig {
+        rig_with(Mode::Phone).await
+    }
+
+    const TOKEN: &str = "s3cret-token";
+
+    async fn local_rig() -> Rig {
+        rig_with(Mode::Local { token: TOKEN.into() }).await
+    }
+
+    async fn rig_with(mode: Mode) -> Rig {
         let orbit = Keypair::generate();
         let backend = Arc::new(Fake::default());
         let hub = Arc::new(Hub::new());
@@ -453,6 +536,7 @@ mod tests {
             version: "9.9.9".into(),
             bind: "127.0.0.1".parse().unwrap(),
             port: 0,
+            mode,
         };
         let server = start(cfg, backend.clone(), hub.clone()).await.unwrap();
         Rig { server, backend, hub, orbit }
@@ -478,7 +562,7 @@ mod tests {
     async fn hello(ws: &mut Client) -> (Value, [u8; 32]) {
         let h = recv_json(ws).await;
         assert_eq!(h["t"], "hello");
-        assert_eq!(h["v"], 1);
+        assert_eq!(h["v"], 2);
         assert_eq!(h["name"], "test-box");
         let pk = parse_pk(h["pk"].as_str().unwrap()).unwrap();
         (h, pk)
@@ -607,7 +691,7 @@ mod tests {
     async fn rejects_unknown_device_bad_challenge_bad_box_and_protocol() {
         let r = rig().await;
 
-        let e = attempt(&r, &Keypair::generate(), |d, o, c| auth_msg(d, o, c)).await;
+        let e = attempt(&r, &Keypair::generate(), auth_msg).await;
         assert_err(&e, "unknown_device");
 
         // Replayed challenge: a valid auth for a paired device, but sealed for another connection's challenge.
@@ -684,6 +768,103 @@ mod tests {
         }
     }
 
+    /// Connects to a local listener and completes the token handshake.
+    async fn local_ready(r: &Rig) -> Client {
+        let mut ws = connect(r, "/v1").await.unwrap();
+        hello(&mut ws).await;
+        send(&mut ws, json!({ "t": "local", "token": TOKEN, "client": "orbit-tui/test" })).await;
+        let ready = recv_json(&mut ws).await;
+        assert_eq!(ready, json!({ "t": "ready", "orbit": { "name": "test-box", "version": "9.9.9" }, "protocol": 2 }));
+        ws
+    }
+
+    async fn assert_closes(ws: &mut Client) {
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), ws.next()).await.expect("socket should close") {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn local_handshake_plain_rpc_and_pushes() {
+        let r = local_rig().await;
+        let mut ws = local_ready(&r).await;
+        send(&mut ws, json!({ "t": "rpc", "id": 1, "method": "snapshot", "params": {} })).await;
+        send(&mut ws, json!({ "t": "rpc", "id": 2, "method": "nope" })).await;
+        send(&mut ws, json!({ "t": "rpc", "id": 3, "method": "echo", "params": { "a": [1, 2] } })).await;
+        send(&mut ws, json!({ "t": "rpc", "id": 4, "method": "registerPush", "params": { "token": "x" } })).await;
+        let mut got: HashMap<u64, Value> = HashMap::new();
+        for _ in 0..4 {
+            let m = recv_json(&mut ws).await;
+            assert_eq!(m["t"], "rpc-result", "{m}");
+            got.insert(m["id"].as_u64().unwrap(), m);
+        }
+        assert_eq!(got[&1]["ok"], true);
+        assert!(got[&1]["result"]["workspaces"].is_array());
+        assert_eq!(got[&2], json!({ "t": "rpc-result", "id": 2, "ok": false, "error": "unknown method" }));
+        assert_eq!(got[&3]["result"], json!({ "a": [1, 2] }));
+        assert_eq!(got[&4]["ok"], false);
+        assert!(r.backend.devices().is_empty());
+
+        // Pushes arrive unboxed, exactly as published.
+        let ev = json!({ "t": "event", "workspaceId": "w1", "seq": null, "ts": 1, "event": { "type": "textDelta", "text": "hi" } });
+        r.hub.publish(ev.clone());
+        assert_eq!(recv_json(&mut ws).await, ev);
+        let wsp = json!({ "t": "workspace", "workspace": { "id": "w1" } });
+        r.hub.publish(wsp.clone());
+        assert_eq!(recv_json(&mut ws).await, wsp);
+
+        // Revoking any device id leaves local clients alone.
+        r.hub.revoke("");
+        send(&mut ws, json!({ "t": "rpc", "id": 5, "method": "echo", "params": 1 })).await;
+        assert_eq!(recv_json(&mut ws).await["result"], 1);
+
+        // A non-JSON frame after ready is a protocol error.
+        ws.send(Message::text("not json")).await.unwrap();
+        assert_err(&recv_json(&mut ws).await, "protocol");
+        assert_closes(&mut ws).await;
+    }
+
+    #[tokio::test]
+    async fn local_bad_token_is_refused() {
+        let r = local_rig().await;
+        for token in [json!("wrong"), json!(""), json!(null), json!(format!("{TOKEN}x"))] {
+            let mut ws = connect(&r, "/v1").await.unwrap();
+            hello(&mut ws).await;
+            send(&mut ws, json!({ "t": "local", "token": token, "client": "t" })).await;
+            assert_err(&recv_json(&mut ws).await, "bad_token");
+            assert_closes(&mut ws).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn local_handshake_on_phone_listener_is_a_protocol_error() {
+        let r = rig().await;
+        let mut ws = connect(&r, "/v1").await.unwrap();
+        hello(&mut ws).await;
+        send(&mut ws, json!({ "t": "local", "token": TOKEN, "client": "t" })).await;
+        assert_err(&recv_json(&mut ws).await, "protocol");
+    }
+
+    #[tokio::test]
+    async fn phone_pairing_still_works_on_the_local_listener() {
+        let r = local_rig().await;
+        let (_dev, mut ws, _) = paired(&r).await;
+        // ...and that connection stays sealed: plaintext is refused.
+        send(&mut ws, json!({ "t": "rpc", "id": 1, "method": "snapshot" })).await;
+        assert_err(&recv_json(&mut ws).await, "protocol");
+    }
+
+    #[test]
+    fn constant_time_eq() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"ab"));
+        assert!(ct_eq(b"", b""));
+    }
+
     /// Cross-implementation check against the phone app's real client code (ide_mobile).
     /// Run: `cargo test interop_server -- --ignored --nocapture`, then within 120 s:
     /// `npm run smoke -- "<printed uri>"` in ide_mobile.
@@ -751,7 +932,7 @@ mod tests {
         let backend = Arc::new(Scripted { hub: hub.clone(), devices: Mutex::default(), events });
         let orbit = Keypair::generate();
         let cfg = ServerConfig { keypair: orbit.clone(), name: "interop box".into(), version: "0.0.0".into(),
-            bind: "127.0.0.1".parse().unwrap(), port: 47999 };
+            bind: "127.0.0.1".parse().unwrap(), port: 47999, mode: Mode::Phone };
         let _server = start(cfg, backend.clone(), hub.clone()).await.unwrap();
         let (code, _) = hub.new_pairing();
         println!("PAIR_URI {}", crate::remote::pairing_uri(&orbit.public(), &code, 47999, &["127.0.0.1".into()], "interop box"));

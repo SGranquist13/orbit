@@ -18,6 +18,15 @@ pub fn exec(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
 }
 
 fn exec_raw(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> {
+    Ok(String::from_utf8_lossy(&exec_bytes(program, cwd, args)?).into_owned())
+}
+
+/// `git` with its stdout as raw bytes (blob contents that may not be UTF-8).
+pub fn run_bytes(cwd: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    exec_bytes("git", cwd, args)
+}
+
+fn exec_bytes(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
     let mut cmd = Command::new(program);
     cmd.args(args).current_dir(cwd);
     #[cfg(windows)]
@@ -38,7 +47,7 @@ fn exec_raw(program: &str, cwd: &Path, args: &[&str]) -> anyhow::Result<String> 
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(out.stdout)
 }
 
 /// "`gh` is not installed or not on PATH (…)": what users see when a tool can't be spawned.
