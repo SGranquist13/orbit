@@ -310,3 +310,94 @@ async fn themes_and_depths() {
         }
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn palette() {
+    let mut h = H::new(120, 36, Side::Left).await;
+    h.open("readme-badge").await;
+    h.ctrl('p').await;
+    h.snap("24-palette");
+    h.typed("ship").await;
+    h.snap("25-palette-search");
+    // Workspaces are searchable too.
+    h.key(KeyCode::Backspace, KeyModifiers::NONE).await;
+    for _ in 0..4 {
+        h.key(KeyCode::Backspace, KeyModifiers::NONE).await;
+    }
+    h.typed("fix-lo").await;
+    let t = h.text();
+    assert!(t.contains("Open fix-login"), "{t}");
+    h.key(KeyCode::Enter, KeyModifiers::NONE).await;
+    assert_eq!(h.app.cur_ws().unwrap().name, "fix-login");
+    // Profiles: a second list; picking one switches (not while a turn runs, so an idle workspace).
+    h.open("readme-badge").await;
+    h.ctrl('p').await;
+    h.typed("profile").await;
+    h.key(KeyCode::Enter, KeyModifiers::NONE).await;
+    h.snap("26-palette-profiles");
+    h.ch('k').await; // typing filters
+    h.key(KeyCode::Backspace, KeyModifiers::NONE).await;
+    h.key(KeyCode::Down, KeyModifiers::NONE).await;
+    h.key(KeyCode::Down, KeyModifiers::NONE).await;
+    h.key(KeyCode::Enter, KeyModifiers::NONE).await;
+    assert_eq!(h.app.cur_ws().unwrap().profile.as_deref(), Some("shipkit:planner"));
+    assert!(h.text().contains("planner"), "the chips row shows the profile");
+    // Theme from the palette.
+    h.ctrl('p').await;
+    h.typed("paper").await;
+    h.key(KeyCode::Enter, KeyModifiers::NONE).await;
+    assert_eq!(h.app.theme.variant, Variant::Paper);
+}
+
+#[tokio::test(start_paused = true)]
+async fn help_overlay() {
+    let mut h = H::new(120, 36, Side::Left).await;
+    h.ch('?').await; // Inbox: not a text field
+    h.snap("27-help-inbox");
+    h.key(KeyCode::Esc, KeyModifiers::NONE).await;
+    assert!(h.app.overlay.is_none());
+    h.open("fix-login").await;
+    h.ch('?').await; // chat input: `?` types
+    assert_eq!(h.app.input, "?");
+}
+
+#[tokio::test(start_paused = true)]
+async fn new_workspace() {
+    let mut h = H::new(120, 36, Side::Left).await;
+    h.open("readme-badge").await;
+    h.ctrl('n').await;
+    h.snap("28-new-workspace-empty");
+    h.typed("Add a dark mode toggle to the settings page").await;
+    h.key(KeyCode::Tab, KeyModifiers::NONE).await; // → Agent
+    h.key(KeyCode::Right, KeyModifiers::NONE).await; // codex
+    h.key(KeyCode::Tab, KeyModifiers::NONE).await; // → Model
+    h.key(KeyCode::Right, KeyModifiers::NONE).await; // gpt-6-luna
+    h.snap("29-new-workspace-filled");
+    h.key(KeyCode::Tab, KeyModifiers::NONE).await; // → Profile
+    h.key(KeyCode::Enter, KeyModifiers::NONE).await; // create
+    let w = h.app.cur_ws().unwrap().clone();
+    assert_eq!(w.name, "add-a-dark-mode-toggle");
+    assert_eq!(w.agent, "codex");
+    assert_eq!(w.model.as_deref(), Some("gpt-6-luna"));
+    h.wait(20_000).await;
+    h.snap("30-new-workspace-first-turn");
+    assert!(h.text().contains("Add a dark mode toggle to the settings page"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn archive_with_uncommitted_changes() {
+    let mut h = H::new(120, 36, Side::Left).await;
+    h.alt('2').await;
+    let at = h.app.fleet().iter().position(|r| h.app.ws(&r.id).unwrap().name == "review-copy").unwrap();
+    for _ in 0..at {
+        h.ch('j').await;
+    }
+    h.ch('x').await;
+    h.snap("31-archive-confirm");
+    h.ch('y').await;
+    h.snap("32-archive-force");
+    assert!(h.text().contains("uncommitted changes"));
+    h.ch('y').await;
+    assert!(h.app.ws("w-copy").is_none());
+    assert!(h.text().contains("Archived review-copy"));
+}

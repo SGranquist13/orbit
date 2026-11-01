@@ -33,4 +33,4 @@
 
 
 
-  j/k move   enter open   s ship   f fix   d dismiss   esc back
+  j/k move   enter open   s ship   f fix   ctrl+p actions   ? keys

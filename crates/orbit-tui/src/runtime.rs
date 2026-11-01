@@ -131,6 +131,11 @@ pub async fn run(backend: Arc<dyn Backend>, mut app: App) -> io::Result<()> {
                     Cmd::Quit => return Ok::<(), io::Error>(()),
                     Cmd::Redraw => term.clear()?,
                     Cmd::Open(url) => open_url(url),
+                    Cmd::Save(patch) => {
+                        if !app.cfg.demo {
+                            crate::cli::save_settings(patch);
+                        }
+                    }
                     Cmd::Rpc { .. } => {}
                 }
             }

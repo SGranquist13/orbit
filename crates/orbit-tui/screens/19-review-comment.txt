@@ -33,4 +33,4 @@
                                   │
                                   │
                                   │
-  j/k line   ]/[ file   c comment   v scope   a accept   tab files                              1 comment · enter send
+  j/k line   ]/[ file   c comment   v scope   a accept   ? keys                                 1 comment · enter send

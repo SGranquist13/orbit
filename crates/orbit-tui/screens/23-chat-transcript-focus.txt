@@ -33,4 +33,4 @@
                               │
                               │▎ Message fix-login (sends after this turn)…
                               │▎ [ship] [fix-ci] [preflight]                                                   builder
- alt+2 inbox · ctrl+k switch  │  j/k move   enter expand   g/G first/last   esc back
+ ctrl+k switch · ctrl+n new   │  j/k move   enter expand   g/G first/last   esc back

@@ -348,3 +348,19 @@ mod doctor_tests {
         assert!(report.contains("✓ fileAt"), "{report}");
     }
 }
+
+/// Merges `patch` into `~/.orbit/tui.json`, keeping keys it doesn't know (keys.md §6).
+pub fn save_settings(patch: &Value) {
+    let Some(home) = orbit_proto::client::orbit_home() else { return };
+    let path = home.join("tui.json");
+    let mut cur = load_settings();
+    if let (Some(cur), Some(p)) = (cur.as_object_mut(), patch.as_object()) {
+        for (k, v) in p {
+            cur.insert(k.clone(), v.clone());
+        }
+    }
+    let _ = std::fs::create_dir_all(&home);
+    if let Ok(s) = serde_json::to_string_pretty(&cur) {
+        let _ = std::fs::write(path, s + "\n");
+    }
+}

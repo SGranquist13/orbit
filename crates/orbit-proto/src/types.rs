@@ -351,9 +351,40 @@ impl Default for HelloSettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+pub struct AgentModels {
+    /// First = default.
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Agents {
+    pub claude: AgentModels,
+    pub codex: AgentModels,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Hello {
     pub settings: HelloSettings,
     pub version: String,
+    /// Older apps don't send it: empty lists.
+    pub agents: Agents,
+}
+
+/// A workspace role (`skills::Profile`): `<plugin>:<name>`; `null` on a workspace = Builder.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Profile {
+    pub id: String,
+    pub pack: String,
+    pub name: String,
+    pub description: String,
+    pub model: Option<String>,
+    pub agent: Option<String>,
+    pub readonly: bool,
+    pub skills: Vec<String>,
+    pub path: String,
 }
 
 /// A frame the server pushes without being asked.

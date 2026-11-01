@@ -8,8 +8,8 @@ use crate::theme::Theme;
 use crate::transcript::{self, Block};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use orbit_proto::{
-    AgentEvent, CheckResult, FileAt, HelloSettings, MergeOutcome, PrStatus, PrepareShip, Push, Repo, Review,
-    ReviewComment, Scope, Skill, Snapshot, Status, StoredEvent, Summary, Workspace,
+    AgentEvent, Agents, CheckResult, FileAt, HelloSettings, MergeOutcome, PrStatus, PrepareShip, Profile, Push, Repo,
+    Review, ReviewComment, Scope, Skill, Snapshot, Status, StoredEvent, Summary, Workspace,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -70,6 +70,13 @@ pub enum FileSide {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tag {
     Hello,
+    Profiles,
+    Create,
+    Archive {
+        ws: String,
+        force: bool,
+    },
+    Profile(String),
     Snapshot,
     Skills,
     Events {
@@ -101,8 +108,14 @@ pub enum Tag {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
-    Rpc { tag: Tag, method: &'static str, params: Value },
+    Rpc {
+        tag: Tag,
+        method: &'static str,
+        params: Value,
+    },
     Open(String),
+    /// Merge into `~/.orbit/tui.json`.
+    Save(Value),
     Redraw,
     Quit,
 }
@@ -186,6 +199,7 @@ pub struct ShipState {
 pub enum ConfirmAction {
     Merge { ws: String, number: i64 },
     SendReview(String),
+    Archive { ws: String, force: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +207,9 @@ pub enum Overlay {
     Ship,
     Switcher { query: String, sel: usize },
     Confirm { prompt: String, action: ConfirmAction },
+    Palette { query: String, sel: usize, mode: crate::actions::PaletteMode },
+    Help,
+    NewWorkspace(crate::actions::NewWs),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,6 +284,8 @@ pub struct App {
     pub settings: HelloSettings,
     pub prs: HashMap<String, PrStatus>,
     pub skills: Vec<Skill>,
+    pub profiles: Vec<Profile>,
+    pub agents: Agents,
     pub data: HashMap<String, WsData>,
     pub recent: Vec<String>,
 
@@ -324,6 +343,8 @@ impl App {
             settings: HelloSettings::default(),
             prs: HashMap::new(),
             skills: vec![],
+            profiles: vec![],
+            agents: Agents::default(),
             data: HashMap::new(),
             recent: vec![],
             current: None,
@@ -364,6 +385,7 @@ impl App {
             rpc(Tag::Hello, "hello", json!({})),
             rpc(Tag::Snapshot, "snapshot", json!({})),
             rpc(Tag::Skills, "listSkills", json!({})),
+            rpc(Tag::Profiles, "listProfiles", json!({})),
         ]
     }
 
@@ -744,10 +766,7 @@ fn push(app: &mut App, p: Push) -> Vec<Cmd> {
             }
             schedule_snapshot(app);
         }
-        Push::WorkspaceRemoved(id) => {
-            app.workspaces.retain(|w| w.id != id);
-            app.data.remove(&id);
-        }
+        Push::WorkspaceRemoved(id) => remove_ws(app, &id),
         Push::Summary(s) => {
             app.summaries.insert(s.workspace_id.clone(), s);
         }
@@ -766,6 +785,27 @@ fn push(app: &mut App, p: Push) -> Vec<Cmd> {
         }
     }
     out
+}
+
+/// Archived (here or elsewhere): drop it; if it was on screen, go to the Inbox.
+fn remove_ws(app: &mut App, id: &str) {
+    app.workspaces.retain(|w| w.id != id);
+    app.data.remove(id);
+    app.summaries.remove(id);
+    app.recent.retain(|r| r != id);
+    if app.current.as_deref() == Some(id) {
+        app.current = None;
+        app.input.clear();
+        app.cursor = 0;
+        app.review = None;
+        if matches!(app.overlay, Some(Overlay::Ship)) {
+            app.overlay = None;
+        }
+        app.screen = Screen::Inbox;
+    }
+    let n = app.fleet().len();
+    app.inbox_sel = app.inbox_sel.min(n.saturating_sub(1));
+    app.rail_sel = app.rail_sel.min(n.saturating_sub(1));
 }
 
 fn apply_event(app: &mut App, ws: &str, e: StoredEvent) {
@@ -823,6 +863,16 @@ fn reply(app: &mut App, tag: Tag, res: Result<Value, String>) -> Vec<Cmd> {
                         r.loading = false;
                     }
                 }
+                // Older apps don't have it: no profiles, no picker.
+                Tag::Profiles => return out,
+                Tag::Create => {
+                    if let Some(Overlay::NewWorkspace(d)) = app.overlay.as_mut() {
+                        d.busy = false;
+                    }
+                }
+                Tag::Archive { ws, force: false } if crate::actions::archive_prompt_after_error(app, ws, &e) => {
+                    return out;
+                }
                 _ => {}
             }
             app.error(e);
@@ -831,8 +881,36 @@ fn reply(app: &mut App, tag: Tag, res: Result<Value, String>) -> Vec<Cmd> {
     };
     match tag {
         Tag::Hello => {
-            if let Some(s) = res.get("settings").and_then(|s| from(s.clone()).ok()) {
-                app.settings = s;
+            if let Ok(h) = from::<orbit_proto::Hello>(res) {
+                app.settings = h.settings;
+                app.agents = h.agents;
+            }
+        }
+        Tag::Profiles => app.profiles = from(res).unwrap_or_default(),
+        Tag::Create => {
+            if let Ok(w) = from::<Workspace>(res) {
+                app.overlay = None;
+                let id = w.id.clone();
+                let name = w.name.clone();
+                match app.workspaces.iter_mut().find(|x| x.id == w.id) {
+                    Some(x) => *x = w,
+                    None => app.workspaces.push(w),
+                }
+                out.extend(open_ws(app, &id));
+                app.flash(format!("Created {name}"));
+                schedule_snapshot(app);
+            }
+        }
+        Tag::Archive { ws, .. } => {
+            let name = app.ws(&ws).map(|w| w.name.clone()).unwrap_or_default();
+            remove_ws(app, &ws);
+            app.flash(format!("Archived {name}"));
+        }
+        Tag::Profile(_) => {
+            if let Ok(w) = from::<Workspace>(res) {
+                if let Some(x) = app.workspaces.iter_mut().find(|x| x.id == w.id) {
+                    *x = w;
+                }
             }
         }
         Tag::Snapshot => {
@@ -1104,6 +1182,15 @@ fn key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
     }
     // Overlays.
     match app.overlay.clone() {
+        Some(Overlay::Palette { query, sel, mode }) => return crate::actions::palette_key(app, k, query, sel, mode),
+        Some(Overlay::NewWorkspace(d)) => return crate::actions::new_workspace_key(app, k, d),
+        Some(Overlay::Help) => {
+            if matches!(k.code, KeyCode::Esc | KeyCode::Enter | KeyCode::F(1) | KeyCode::Char('?') | KeyCode::Char('q'))
+            {
+                app.overlay = None;
+            }
+            return vec![];
+        }
         Some(Overlay::Confirm { action, .. }) => return confirm_key(app, k, action),
         Some(Overlay::Switcher { query, sel }) => return switcher_key(app, k, query, sel),
         Some(Overlay::Ship) => return ship_key(app, k),
@@ -1111,6 +1198,21 @@ fn key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
     }
     if ctrl(&k, 'k') {
         app.overlay = Some(Overlay::Switcher { query: String::new(), sel: 0 });
+        return vec![];
+    }
+    if ctrl(&k, 'p') {
+        app.overlay =
+            Some(Overlay::Palette { query: String::new(), sel: 0, mode: crate::actions::PaletteMode::Commands });
+        return vec![];
+    }
+    if ctrl(&k, 'n') {
+        return crate::actions::run(app, crate::actions::Action::NewWorkspace);
+    }
+    // `?` opens help wherever it isn't text (the input and comment boxes type it).
+    let typing = (app.screen == Screen::Chat && app.focus == Focus::Input)
+        || (app.screen == Screen::Review && app.review.as_ref().is_some_and(|r| r.commenting.is_some()));
+    if k.code == KeyCode::F(1) || (k.code == KeyCode::Char('?') && !typing) {
+        app.overlay = Some(Overlay::Help);
         return vec![];
     }
     if ctrl(&k, 'b') {
@@ -1127,7 +1229,7 @@ fn key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
     }
 }
 
-fn go_chat(app: &mut App) -> Vec<Cmd> {
+pub(crate) fn go_chat(app: &mut App) -> Vec<Cmd> {
     app.overlay = None;
     match app.current.clone() {
         Some(id) => open_ws(app, &id),
@@ -1138,7 +1240,7 @@ fn go_chat(app: &mut App) -> Vec<Cmd> {
     }
 }
 
-fn go_inbox(app: &mut App) -> Vec<Cmd> {
+pub(crate) fn go_inbox(app: &mut App) -> Vec<Cmd> {
     app.overlay = None;
     if app.screen != Screen::Inbox {
         app.prev_screen = app.screen;
@@ -1154,7 +1256,7 @@ fn go_inbox(app: &mut App) -> Vec<Cmd> {
     vec![]
 }
 
-fn go_review(app: &mut App) -> Vec<Cmd> {
+pub(crate) fn go_review(app: &mut App) -> Vec<Cmd> {
     app.overlay = None;
     let Some(id) = app.current.clone() else {
         app.error("Open a workspace first");
@@ -1172,7 +1274,7 @@ fn go_review(app: &mut App) -> Vec<Cmd> {
     vec![rpc(Tag::Review(id.clone()), "review", json!({ "workspaceId": id, "scope": Scope::Base }))]
 }
 
-fn start_ship(app: &mut App) -> Vec<Cmd> {
+pub(crate) fn start_ship(app: &mut App) -> Vec<Cmd> {
     let Some(id) = app.current.clone() else {
         app.error("Open a workspace first");
         return vec![];
@@ -1202,7 +1304,7 @@ fn ship_gate(app: &mut App, id: &str, skip: bool) -> Vec<Cmd> {
     vec![rpc(Tag::Ship(id.into()), "ship", json!({ "workspaceId": id, "skipChecks": skip }))]
 }
 
-fn run_skill(app: &mut App, id: &str, skill: &str, args: &str) -> Vec<Cmd> {
+pub(crate) fn run_skill(app: &mut App, id: &str, skill: &str, args: &str) -> Vec<Cmd> {
     app.flash(format!("Running /{skill}"));
     vec![rpc(Tag::Fire, "runSkill", json!({ "workspaceId": id, "skillId": skill, "args": args }))]
 }
@@ -1242,6 +1344,9 @@ fn confirm_key(app: &mut App, k: KeyEvent, action: ConfirmAction) -> Vec<Cmd> {
                 s.phase = ShipPhase::Merging;
             }
             vec![rpc(Tag::Merge(ws.clone()), "merge", json!({ "workspaceId": ws, "number": number }))]
+        }
+        ConfirmAction::Archive { ws, force } => {
+            vec![rpc(Tag::Archive { ws: ws.clone(), force }, "archive", json!({ "workspaceId": ws, "force": force }))]
         }
         ConfirmAction::SendReview(ws) => {
             let comments = app.drafts.get(&ws).cloned().unwrap_or_default();
@@ -1385,6 +1490,9 @@ fn chat_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
         }
         return vec![];
     }
+    if ctrl(&k, 'o') {
+        return crate::actions::run(app, crate::actions::Action::CycleProfile);
+    }
     if ctrl(&k, 's') {
         return start_ship(app);
     }
@@ -1429,6 +1537,12 @@ fn rail_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
             if let Some(r) = app.fleet().get(app.rail_sel) {
                 let id = r.id.clone();
                 return open_ws(app, &id);
+            }
+        }
+        KeyCode::Char('x') => {
+            if let Some(r) = app.fleet().get(app.rail_sel) {
+                let id = r.id.clone();
+                return crate::actions::run(app, crate::actions::Action::Archive(id));
             }
         }
         KeyCode::Char('d') => {
@@ -1696,6 +1810,7 @@ fn inbox_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
             app.error("No open pull request");
         }
         KeyCode::Char('d') => return vec![rpc(Tag::Dismiss(id.clone()), "dismiss", json!({ "workspaceId": id }))],
+        KeyCode::Char('x') => return crate::actions::run(app, crate::actions::Action::Archive(id)),
         KeyCode::Char(c @ '1'..='3') if !k.modifiers.contains(KeyModifiers::ALT) => {
             let sug = app.suggestions(&row);
             let Some(s) = sug.get((c as u8 - b'1') as usize).cloned() else { return vec![] };
@@ -1716,6 +1831,22 @@ fn inbox_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
 }
 
 // ---- review
+
+/// Enter in Review: confirm, then send all draft comments to the agent.
+pub(crate) fn review_send(app: &mut App) -> Vec<Cmd> {
+    let Some(ws) = app.review.as_ref().map(|r| r.ws.clone()) else { return vec![] };
+    let n = app.drafts.get(&ws).map(|d| d.len()).unwrap_or(0);
+    if n == 0 {
+        app.error("No comments to send · c to comment");
+        return vec![];
+    }
+    let name = app.ws(&ws).map(|w| w.name.clone()).unwrap_or_default();
+    app.overlay = Some(Overlay::Confirm {
+        prompt: format!("Send {n} comment{} to {name}?", if n == 1 { "" } else { "s" }),
+        action: ConfirmAction::SendReview(ws),
+    });
+    vec![]
+}
 
 fn review_select(app: &mut App) -> Vec<Cmd> {
     let Some(r) = app.review.as_mut() else { return vec![] };
@@ -1786,7 +1917,7 @@ fn review_scope(app: &mut App, scope: Scope) -> Vec<Cmd> {
     vec![rpc(Tag::Review(ws.clone()), "review", json!({ "workspaceId": ws, "scope": scope }))]
 }
 
-fn review_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
+pub(crate) fn review_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
     let Some(r) = app.review.as_mut() else {
         app.screen = Screen::Chat;
         return vec![];
@@ -1930,18 +2061,7 @@ fn review_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
                 }
                 return vec![];
             }
-            let ws = r.ws.clone();
-            let n = app.drafts.get(&ws).map(|d| d.len()).unwrap_or(0);
-            if n == 0 {
-                app.error("No comments to send · c to comment");
-                return vec![];
-            }
-            let name = app.ws(&ws).map(|w| w.name.clone()).unwrap_or_default();
-            app.overlay = Some(Overlay::Confirm {
-                prompt: format!("Send {n} comment{} to {name}?", if n == 1 { "" } else { "s" }),
-                action: ConfirmAction::SendReview(ws),
-            });
-            return vec![];
+            return review_send(app);
         }
         _ => {}
     }

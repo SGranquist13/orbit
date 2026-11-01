@@ -22,11 +22,57 @@ fn main_rect(area: Rect, app: &App) -> Rect {
     }
 }
 
-pub fn cursor(area: Rect, app: &App) -> Option<(u16, u16)> {
-    if app.screen != crate::app::Screen::Chat {
-        return None;
+/// Where overlays centre: the main pane in Chat (the rail stays readable), else the whole screen.
+fn box_area(full: Rect, app: &App) -> Rect {
+    if app.screen == crate::app::Screen::Chat {
+        Rect { height: full.height, ..main_rect(full, app) }
+    } else {
+        full
     }
-    chat::cursor_pos(app, main_rect(area, app))
+}
+
+/// Palette and switcher: centred, `min(W − 8, 72)` wide, top at row 3.
+fn list_rect(area: Rect, rows: usize) -> Rect {
+    let w = (area.width.saturating_sub(8)).min(72);
+    let h = (rows as u16 + 4).min(area.height.saturating_sub(4));
+    Rect { x: area.x + (area.width - w) / 2, y: area.y + 3, width: w, height: h }
+}
+
+fn new_ws_rect(area: Rect) -> Rect {
+    let w = (area.width.saturating_sub(8)).min(72);
+    let h = 13u16.min(area.height.saturating_sub(2));
+    Rect { x: area.x + (area.width - w) / 2, y: area.y + area.height.saturating_sub(h) / 3, width: w, height: h }
+}
+
+const NEW_LABEL_W: u16 = 10;
+const TASK_ROWS: usize = 3;
+
+/// The task text's wrapped lines (last `TASK_ROWS` shown) and its width.
+fn task_lines(r: Rect, task: &str) -> (Vec<String>, usize) {
+    let tw = r.width.saturating_sub(4 + NEW_LABEL_W + 2) as usize;
+    let lines = crate::text::wrap(task, tw.max(1));
+    let start = lines.len().saturating_sub(TASK_ROWS);
+    (lines[start..].to_vec(), tw)
+}
+
+pub fn cursor(full: Rect, app: &App) -> Option<(u16, u16)> {
+    let area = box_area(full, app);
+    match &app.overlay {
+        Some(Overlay::Palette { query, .. }) | Some(Overlay::Switcher { query, .. }) => {
+            let r = list_rect(area, 1);
+            Some((r.x + 4 + width(query) as u16, r.y + 1))
+        }
+        Some(Overlay::NewWorkspace(d)) if d.field == 1 && !d.busy => {
+            let r = new_ws_rect(area);
+            let (lines, _) = task_lines(r, &d.task);
+            let row = lines.len().saturating_sub(1);
+            let col = lines.last().map(|l| width(l)).unwrap_or(0);
+            Some((r.x + 3 + NEW_LABEL_W + col as u16, r.y + 3 + row as u16))
+        }
+        Some(_) => None,
+        None if app.screen == crate::app::Screen::Chat => chat::cursor_pos(app, main_rect(full, app)),
+        None => None,
+    }
 }
 
 /// A bordered box on `panel` with a title in the top border and an optional hint in the bottom one.
@@ -76,21 +122,18 @@ pub fn render(buf: &mut Buffer, full: Rect, app: &App) {
     if app.skill_query().is_some() && app.overlay.is_none() {
         skills(buf, full, app);
     }
-    // Boxes centre on the main pane, so the rail stays readable beside them.
-    let area = if app.screen == crate::app::Screen::Chat {
-        Rect { height: full.height, ..main_rect(full, app) }
-    } else {
-        full
-    };
+    let area = box_area(full, app);
     match &app.overlay {
         None => {}
+        Some(Overlay::Palette { query, sel, mode }) => palette(buf, area, app, query, *sel, *mode),
+        Some(Overlay::Help) => help(buf, area, app),
+        Some(Overlay::NewWorkspace(d)) => new_workspace(buf, area, app, d),
         Some(Overlay::Ship) => ship(buf, area, app),
         Some(Overlay::Switcher { query, sel }) => {
-            let w = (area.width.saturating_sub(8)).min(72);
             let items = app.switcher_matches(query);
             let shown = items.len().min(12);
-            let h = shown as u16 + 4;
-            let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + 3, width: w, height: h.min(area.height - 4) };
+            let r = list_rect(area, shown);
+            let w = r.width;
             halo(buf, r, area, true);
             frame(buf, r, t, &[Span::styled("Switch workspace", t.fg())], "enter open · esc close");
             let iw = (w - 4) as usize;
@@ -120,13 +163,20 @@ pub fn render(buf: &mut Buffer, full: Rect, app: &App) {
             if over_ship {
                 ship(buf, area, app);
             }
-            let w = (width(prompt) as u16 + 8).clamp(36, area.width.saturating_sub(8));
-            let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + area.height / 2 - 2, width: w, height: 3 };
+            // Long prompts wrap at 64 columns rather than run off the box.
+            let max = 64usize.min(area.width.saturating_sub(12) as usize);
+            let lines = crate::text::wrap(prompt, max);
+            let tw = lines.iter().map(|l| width(l)).max().unwrap_or(0);
+            let w = (tw as u16 + 4).max(36).min(area.width.saturating_sub(4));
+            let h = lines.len() as u16 + 2;
+            let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + area.height / 2 - 2, width: w, height: h };
             if !over_ship {
                 halo(buf, r, area, true);
             }
             frame(buf, r, t, &[], "y yes · n no");
-            put(buf, r.x + 2, r.y + 1, (w - 4) as usize, &[Span::styled(prompt.clone(), t.fg())]);
+            for (i, l) in lines.iter().enumerate() {
+                put(buf, r.x + 2, r.y + 1 + i as u16, (w - 4) as usize, &[Span::styled(l.clone(), t.fg())]);
+            }
         }
     }
 }
@@ -345,5 +395,175 @@ fn ship(buf: &mut Buffer, area: Rect, app: &App) {
         let spans: Vec<Span> =
             row.iter().map(|s| Span::styled(s.content.clone(), s.style.patch(t.panel_bg()))).collect();
         split_row(buf, r.x + 2, r.y + 1 + i as u16, iw, &spans, &[]);
+    }
+}
+
+fn palette(buf: &mut Buffer, area: Rect, app: &App, query: &str, sel: usize, mode: crate::actions::PaletteMode) {
+    use crate::actions::PaletteMode;
+    let t = &app.theme;
+    let items = crate::actions::items(app, mode, query);
+    let max = 12usize.min(area.height.saturating_sub(8) as usize).max(3);
+    let shown = items.len().clamp(1, max);
+    let r = list_rect(area, shown);
+    let (title, hint) = match mode {
+        PaletteMode::Commands => ("Actions", "↑↓ choose · enter run · esc close"),
+        PaletteMode::Profiles => ("Profile", "enter switch · esc back"),
+    };
+    halo(buf, r, area, true);
+    frame(buf, r, t, &[Span::styled(title, t.fg())], hint);
+    let iw = r.width.saturating_sub(4) as usize;
+    let ph = if query.is_empty() && mode == PaletteMode::Commands {
+        "type to search actions, skills and workspaces"
+    } else {
+        ""
+    };
+    put(
+        buf,
+        r.x + 2,
+        r.y + 1,
+        iw,
+        &[Span::styled("> ", t.mute()), Span::styled(query.to_string(), t.fg()), Span::styled(ph, t.mute())],
+    );
+    let skip = (sel + 1).saturating_sub(shown);
+    // Descriptions line up in one column after the longest visible label.
+    let label_w = items
+        .iter()
+        .skip(skip)
+        .take(shown)
+        .filter(|it| !it.detail.is_empty())
+        .map(|it| width(&it.label))
+        .max()
+        .unwrap_or(0)
+        .min(iw / 2);
+    for (i, it) in items.iter().enumerate().skip(skip).take(shown) {
+        let y = r.y + 2 + (i - skip) as u16;
+        let is_sel = i == sel;
+        if is_sel {
+            fill(buf, Rect { x: r.x + 1, y, width: r.width - 2, height: 1 }, t.sel());
+        }
+        let right: Vec<Span> = if it.current {
+            vec![Span::styled(glyphs::PASS, t.hue(t.ok))]
+        } else if it.key.is_empty() {
+            vec![]
+        } else {
+            vec![Span::styled(it.key, t.dim())]
+        };
+        let rw: usize = right.iter().map(|s| width(&s.content)).sum();
+        let room = iw.saturating_sub(rw + if rw > 0 { 2 } else { 0 });
+        let label = truncate(&it.label, room);
+        let lw = if it.detail.is_empty() { width(&label) } else { width(&label).max(label_w) };
+        let mut left = vec![Span::styled(pad(&label, lw), if is_sel { t.bold() } else { t.fg() })];
+        let left_room = room.saturating_sub(lw + 2);
+        if !it.detail.is_empty() && left_room > 6 {
+            left.push(Span::styled(format!("  {}", truncate(&it.detail, left_room)), t.mute()));
+        }
+        split_row(buf, r.x + 2, y, iw, &left, &right);
+    }
+    if items.is_empty() {
+        buf.set_string(r.x + 2, r.y + 2, "Nothing matches", t.mute().patch(t.panel_bg()));
+    }
+}
+
+fn help(buf: &mut Buffer, area: Rect, app: &App) {
+    let t = &app.theme;
+    let sections = crate::actions::help(app);
+    let rows: usize = sections.iter().map(|(_, v)| v.len() + 2).sum::<usize>() + 1;
+    let w = (area.width.saturating_sub(8)).min(76);
+    let h = (rows as u16 + 2).min(area.height.saturating_sub(2));
+    let r =
+        Rect { x: area.x + (area.width - w) / 2, y: area.y + area.height.saturating_sub(h) / 2, width: w, height: h };
+    halo(buf, r, area, true);
+    frame(buf, r, t, &[Span::styled("Keys", t.fg())], "esc close · ctrl+p every action");
+    let iw = r.width.saturating_sub(4) as usize;
+    let key_w = 26usize.min(iw / 2);
+    let mut y = r.y + 1;
+    let bottom = r.y + r.height - 1;
+    for (title, keys) in sections {
+        if y + 1 >= bottom {
+            break;
+        }
+        y += 1;
+        buf.set_string(r.x + 2, y, title, t.mute().patch(t.panel_bg()));
+        y += 1;
+        for (k, label) in keys {
+            if y >= bottom {
+                break;
+            }
+            put(buf, r.x + 2, y, iw, &[Span::styled(pad(k, key_w), t.dim()), Span::styled(label, t.fg())]);
+            y += 1;
+        }
+    }
+}
+
+fn new_workspace(buf: &mut Buffer, area: Rect, app: &App, d: &crate::actions::NewWs) {
+    use crate::actions::{models, profile_labels, AGENTS, FIELDS};
+    let t = &app.theme;
+    let r = new_ws_rect(area);
+    let hint = if d.busy {
+        "creating…"
+    } else if d.field == 1 {
+        "tab next · alt+enter new line · ctrl+s create"
+    } else if d.field == FIELDS.len() - 1 {
+        "←→ change · enter create · esc cancel"
+    } else {
+        "←→ change · tab next · ctrl+s create"
+    };
+    halo(buf, r, area, true);
+    frame(buf, r, t, &[Span::styled("New workspace", t.fg())], hint);
+    let bg = t.panel_bg();
+    let lx = r.x + 3;
+    let vx = lx + NEW_LABEL_W;
+    let vw = r.width.saturating_sub(4 + NEW_LABEL_W) as usize;
+    let label = |buf: &mut Buffer, y: u16, i: usize| {
+        let focused = d.field == i && !d.busy;
+        if focused {
+            buf.set_string(r.x + 1, y, glyphs::BAR, t.fg().patch(bg));
+        }
+        buf.set_string(lx, y, FIELDS[i], if focused { t.fg() } else { t.mute() }.patch(bg));
+    };
+    let picker = |buf: &mut Buffer, y: u16, i: usize, value: &str| {
+        label(buf, y, i);
+        let focused = d.field == i && !d.busy;
+        let spans = if focused {
+            vec![Span::styled("‹ ", t.mute()), Span::styled(value.to_string(), t.fg()), Span::styled(" ›", t.mute())]
+        } else {
+            vec![Span::styled(value.to_string(), t.fg())]
+        };
+        put(buf, vx, y, vw, &spans);
+    };
+    let repo = app.repos.get(d.repo).map(|r| r.name.clone()).unwrap_or_default();
+    picker(buf, r.y + 2, 0, &repo);
+    // Task: three raised rows.
+    label(buf, r.y + 3, 1);
+    let (lines, tw) = task_lines(r, &d.task);
+    // The raised area starts one cell early so the text lines up with the other values.
+    fill(buf, Rect { x: vx - 1, y: r.y + 3, width: tw as u16 + 2, height: TASK_ROWS as u16 }, t.raised_bg());
+    if d.task.is_empty() {
+        put(buf, vx, r.y + 3, tw, &[Span::styled("What should the agent do?", t.mute().patch(t.raised_bg()))]);
+    }
+    for (i, l) in lines.iter().enumerate() {
+        put(buf, vx, r.y + 3 + i as u16, tw, &[Span::styled(l.clone(), t.fg().patch(t.raised_bg()))]);
+    }
+    // Agent: both choices, the chosen one bright.
+    let ay = r.y + 7;
+    label(buf, ay, 2);
+    let mut spans = Vec::new();
+    for (i, a) in AGENTS.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let chosen = i == d.agent;
+        spans.push(Span::styled(if chosen { glyphs::DOT } else { "○" }, if chosen { t.fg() } else { t.mute() }));
+        spans.push(Span::styled(format!(" {a}"), if chosen { t.fg() } else { t.mute() }));
+    }
+    put(buf, vx, ay, vw, &spans);
+    let ms = models(app, d.agent);
+    picker(buf, ay + 1, 3, ms.get(d.model).map(String::as_str).unwrap_or("default"));
+    let ps = profile_labels(app);
+    picker(buf, ay + 2, 4, ps.get(d.profile).map(|p| p.1.as_str()).unwrap_or("Builder"));
+    let name = crate::actions::slug(&crate::actions::name_from_task(&d.task));
+    if !name.is_empty() {
+        buf.set_string(lx, ay + 3, "Name", t.mute().patch(bg));
+        put(buf, vx, ay + 3, vw, &[Span::styled(name, t.mute())]);
     }
 }

@@ -21,4 +21,4 @@
 
 ▎ Message review-copy…
 ▎ [ship] [fix-ci] [preflight]                                          builder
-  enter send   / skills   tab focus   ctrl+s ship   alt+3 review
+  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

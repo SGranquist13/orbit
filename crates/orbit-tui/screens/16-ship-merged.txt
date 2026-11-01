@@ -33,4 +33,4 @@
                               │
                               │▎ Message readme-badge…
                               │▎ [ship] [fix-ci] [preflight]                                                   builder
- alt+2 inbox · ctrl+k switch  │  Merged
+ ctrl+k switch · ctrl+n new   │  Merged

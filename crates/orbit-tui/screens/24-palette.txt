@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │
+ ● review-copy                │        ╭─ Actions ────────────────────────────────────────────────────────────╮
+ ● bump-deps                  │        │ > type to search actions, skills and workspaces                      │
+ ● api-retry                  │        │ New workspace…                                                ctrl+n │
+ ● ci-node-22                 │        │ Ship: checks, push, pull request                              ctrl+s │
+                              │        │ Review changes                                                 alt+3 │
+ running                      │        │ Go to Inbox                                                    alt+2 │
+ ● tidy-imports               │        │ Switch workspace…                                             ctrl+k │
+ ● fix-login                  │        │ Switch profile…  Builder                                      ctrl+o │
+                              │        │ Run a skill…                                                       / │
+ done                         │        │ Compact context                                                      │
+ ● readme-badge               │        │ Start a new session                                                  │
+ ● dark-mode                  │        │ Archive readme-badge…                                              x │
+                              │        │ Hide the rail                                                 ctrl+b │
+                              │        │ Move the rail to the right                                           │
+                              │        │                                                                      │
+                              │        ╰────────────────────────────────── ↑↓ choose · enter run · esc close ─╯
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

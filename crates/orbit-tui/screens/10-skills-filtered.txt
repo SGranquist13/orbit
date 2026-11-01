@@ -33,4 +33,4 @@
                               │  ╰─────────────────────────────────────────── tab complete · enter run ─╯
                               │▎ /fix
                               │▎ [ship] [fix-ci] [preflight]                                                   builder
- alt+2 inbox · ctrl+k switch  │  ↑↓ choose   tab complete   enter run   esc close
+ ctrl+k switch · ctrl+n new   │  ↑↓ choose   tab complete   enter run   esc close

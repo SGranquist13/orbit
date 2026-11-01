@@ -1,0 +1,36 @@
+ orbit              2 running │  add-a-dark-mode-toggle · codex gpt-6-luna · orbit/add-a-dark-mode-toggle     33k  16%
+                              │
+ needs you                    │▎ Add a dark mode toggle to the settings page
+ ● review-copy                │
+ ● bump-deps                  │  On it: Add a dark mode toggle to the settings. I'll find where that lives first.
+ ● api-retry                  │
+ ● ci-node-22                 │  ∗ grep  settings
+                              │  → read  settings.ts
+ running                      │  ✎ edit  settings.ts  +3 −2
+ ● tidy-imports               │  $ run   bun run check
+ ● fix-login                  │
+                              │  Done. The change is in src/settings.ts and bun run check passes.
+ done                         │
+ ● add-a-dark-mode-toggle     │  • Kept the public API the same
+ ● readme-badge               │  • Committed a save point on orbit/add-a-dark-mode-toggle
+ ● dark-mode                  │
+                              │  Want me to ship it?
+                              │
+                              │  ● done · 9s · 7.4k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message add-a-dark-mode-toggle…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

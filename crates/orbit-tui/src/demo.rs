@@ -5,8 +5,9 @@
 use crate::backend::Backend;
 use async_trait::async_trait;
 use orbit_proto::{
-    AgentEvent, CheckResult, Commit, EventPush, FileAt, FileChange, Hello, HelloSettings, MergeOutcome, PrChecks,
-    PrStatus, PrepareShip, Push, Repo, Review, Scope, Skill, Snapshot, Status, StoredEvent, Summary, Workspace,
+    AgentEvent, AgentModels, Agents, CheckResult, Commit, EventPush, FileAt, FileChange, Hello, HelloSettings,
+    MergeOutcome, PrChecks, PrStatus, PrepareShip, Profile, Push, Repo, Review, Scope, Skill, Snapshot, Status,
+    StoredEvent, Summary, Workspace,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -612,6 +613,51 @@ fn seed(base: i64) -> State {
     st
 }
 
+pub fn profiles() -> Vec<Profile> {
+    let p = |name: &str, title: &str, desc: &str, readonly: bool| Profile {
+        id: format!("shipkit:{name}"),
+        pack: "shipkit".into(),
+        name: title.into(),
+        description: desc.into(),
+        readonly,
+        path: format!("shipkit/agents/{name}.md"),
+        ..Default::default()
+    };
+    vec![
+        p(
+            "builder",
+            "Builder",
+            "Default generalist. Implements the task end to end with tests and a short summary.",
+            false,
+        ),
+        p(
+            "debugger",
+            "Debugger",
+            "Reproduces the bug, finds the root cause, and makes the smallest correct fix with a regression test.",
+            false,
+        ),
+        p(
+            "planner",
+            "Planner",
+            "Read-only. Explores the code and writes an implementation plan; changes nothing.",
+            true,
+        ),
+        p(
+            "reviewer",
+            "Reviewer",
+            "Read-only adversarial pre-ship review by a second model. Findings ranked by severity.",
+            true,
+        ),
+        p("shipper", "Shipper", "Gets the branch green, reviewed, and merged with minimal new code.", false),
+        p(
+            "ticket-writer",
+            "Ticket writer",
+            "Read-only. Turns rough notes into well-formed GitHub issues, checking the code first.",
+            true,
+        ),
+    ]
+}
+
 pub fn skills() -> Vec<Skill> {
     let s = |name: &str, desc: &str, hint: Option<&str>| Skill {
         id: format!("shipkit:{name}"),
@@ -1011,7 +1057,116 @@ impl DemoBackend {
             "hello" => to(&Hello {
                 settings: HelloSettings { stale_days: 7, stale_behind: 50, save_commits: true },
                 version: "demo".into(),
+                agents: Agents {
+                    claude: AgentModels { models: vec!["sonnet".into(), "opus".into(), "haiku".into()] },
+                    codex: AgentModels {
+                        models: vec!["gpt-6.1-sol".into(), "gpt-6-luna".into(), "gpt-6-astra".into()],
+                    },
+                },
             }),
+            "listProfiles" => to(&profiles()),
+            "createWorkspace" => {
+                let repo = p.get("repoId").and_then(Value::as_str).unwrap_or("").to_string();
+                let task = p.get("task").and_then(Value::as_str).unwrap_or("").trim().to_string();
+                let name = p.get("name").and_then(Value::as_str).unwrap_or("");
+                let agent = p.get("agent").and_then(Value::as_str).unwrap_or("claude").to_string();
+                let model = p.get("model").and_then(Value::as_str).map(str::to_string);
+                let profile = p.get("profile").and_then(Value::as_str).map(str::to_string);
+                let ws = {
+                    let mut st = self.inner.st.lock().unwrap();
+                    if !st.repos.iter().any(|r| r.id == repo) {
+                        return Err("unknown repository".into());
+                    }
+                    // Slugify and dedupe like the app.
+                    let base: String = name
+                        .to_lowercase()
+                        .chars()
+                        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                        .collect::<String>()
+                        .split('-')
+                        .filter(|s| !s.is_empty())
+                        .take(5)
+                        .collect::<Vec<_>>()
+                        .join("-");
+                    let base = if base.is_empty() { "workspace".to_string() } else { base };
+                    let mut slug = base.clone();
+                    let mut n = 2;
+                    while st.workspaces.iter().any(|w| w.name == slug) {
+                        slug = format!("{base}-{n}");
+                        n += 1;
+                    }
+                    let now = self.inner.now();
+                    let mut w = workspace(
+                        &format!("w-{slug}"),
+                        &repo,
+                        &slug,
+                        &format!("orbit/{slug}"),
+                        &agent,
+                        model.as_deref().unwrap_or(if agent == "codex" { "gpt-6.1-sol" } else { "sonnet" }),
+                        Status::Idle,
+                        now,
+                    );
+                    w.profile = profile;
+                    st.workspaces.push(w.clone());
+                    st.events.insert(w.id.clone(), vec![]);
+                    w
+                };
+                self.inner.push(Push::Workspace(ws.clone()));
+                if !task.is_empty() {
+                    let steps = reply_script(&task, &ws.branch);
+                    self.run(ws.id.clone(), steps);
+                }
+                to(&ws)
+            }
+            "archive" => {
+                let ws = self.ws(&wsid)?;
+                let force = p.get("force").and_then(Value::as_bool).unwrap_or(false);
+                // The demo's "dirty" worktrees: anything with unpushed work that isn't merged.
+                let merged = self.inner.st.lock().unwrap().prs.get(&wsid).is_some_and(|p| p.state == "MERGED");
+                if !force && (ws.ahead > 0 || ws.status == Status::Running) && !merged {
+                    return Err("Uncommitted changes: src/auth/session.ts, src/auth/cookie.ts".into());
+                }
+                *self.inner.st.lock().unwrap().generation.entry(wsid.clone()).or_default() += 1;
+                {
+                    let mut st = self.inner.st.lock().unwrap();
+                    st.workspaces.retain(|w| w.id != wsid);
+                    st.events.remove(&wsid);
+                }
+                self.inner.push(Push::WorkspaceRemoved(wsid));
+                Ok(Value::Null)
+            }
+            "switchProfile" => {
+                self.ws(&wsid)?;
+                let profile = p.get("profile").and_then(Value::as_str).map(str::to_string);
+                let w = {
+                    let mut st = self.inner.st.lock().unwrap();
+                    let w = st.ws_mut(&wsid).ok_or("unknown workspace")?;
+                    w.profile = profile;
+                    w.clone()
+                };
+                self.inner.push(Push::Workspace(w.clone()));
+                to(&w)
+            }
+            "compact" => {
+                self.ws(&wsid)?;
+                self.inner.persist(&wsid, usage(1_200, 6_400));
+                Ok(Value::Null)
+            }
+            "newSession" => {
+                self.ws(&wsid)?;
+                self.inner.persist(&wsid, AgentEvent::SessionReset);
+                Ok(Value::Null)
+            }
+            "listFiles" => {
+                self.ws(&wsid)?;
+                to(&[
+                    "README.md",
+                    "src/auth/login.test.ts",
+                    "src/auth/session.ts",
+                    "src/auth/cookie.ts",
+                    "src/pages/Home.tsx",
+                ])
+            }
             "snapshot" => {
                 let st = self.inner.st.lock().unwrap();
                 let summaries = st.workspaces.iter().map(|w| st.summary(&w.id)).collect();

@@ -33,4 +33,4 @@
                                   │
                                   │
                                   │
-  j/k line   ]/[ file   c comment   v scope   a accept   tab files
+  j/k line   ]/[ file   c comment   v scope   a accept   ? keys

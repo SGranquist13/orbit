@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │▎ Add a CI badge to the README and document `bun run check`.
+ ● review-copy                │
+ ● bump-deps                  │  → read  README.md
+ ● api-retry                  │  ∗ grep  .github/workflows/*.yml
+ ● ci-node-22                 │
+                              │        ╭─ New workspace ──────────────────────────────────────────────────────╮
+ running                      │        │                                                                      │
+ ● tidy-imports               │        │  Repo      orbit-web                                                 │
+ ● fix-login                  │        │  Task      Add a dark mode toggle to the settings page               │
+                              │        │                                                                      │
+ done                         │        │                                                                      │
+ ● readme-badge               │        │                                                                      │
+ ● dark-mode                  │        │  Agent     ○ claude   ● codex                                        │
+                              │        │▎ Model     ‹ gpt-6-luna ›                                            │
+                              │        │  Profile   Builder                                                   │
+                              │        │  Name      add-a-dark-mode-toggle-to                                 │
+                              │        │                                                                      │
+                              │        ╰─────────────────────────────── ←→ change · tab next · ctrl+s create ─╯
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

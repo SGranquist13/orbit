@@ -67,7 +67,7 @@ pub fn render(buf: &mut Buffer, area: Rect, app: &App) {
                     Side::Left => Rect { width: RAIL_W, ..footer },
                     Side::Right => Rect { x: footer.x + footer.width - RAIL_W, width: RAIL_W, ..footer },
                 };
-                buf.set_string(r.x + 1, r.y, "alt+2 inbox · ctrl+k switch", t.mute());
+                buf.set_string(r.x + 1, r.y, "ctrl+k switch · ctrl+n new", t.mute());
                 let d = match app.cfg.rail_side {
                     Side::Left => footer.x + RAIL_W,
                     Side::Right => footer.x + footer.width - RAIL_W - 1,
@@ -121,33 +121,28 @@ fn footer_line(buf: &mut Buffer, area: Rect, app: &App) {
                 if running {
                     h.push(("esc", "stop"));
                 }
-                h.extend([("/", "skills"), ("tab", "focus"), ("ctrl+s", "ship"), ("alt+3", "review")]);
+                h.extend([("/", "skills"), ("ctrl+p", "actions"), ("ctrl+s", "ship"), ("tab", "focus")]);
                 h
             }
-            Focus::Rail => vec![("j/k", "move"), ("enter", "open"), ("d", "dismiss"), ("esc", "back")],
+            Focus::Rail => {
+                vec![("j/k", "move"), ("enter", "open"), ("d", "dismiss"), ("x", "archive"), ("esc", "back")]
+            }
             Focus::Transcript => vec![("j/k", "move"), ("enter", "expand"), ("g/G", "first/last"), ("esc", "back")],
         },
         Screen::Inbox => {
-            vec![("j/k", "move"), ("enter", "open"), ("s", "ship"), ("f", "fix"), ("d", "dismiss"), ("esc", "back")]
+            vec![("j/k", "move"), ("enter", "open"), ("s", "ship"), ("f", "fix"), ("ctrl+p", "actions"), ("?", "keys")]
         }
         Screen::Review => {
             let commenting = app.review.as_ref().is_some_and(|r| r.commenting.is_some());
             if commenting {
                 vec![("enter", "save"), ("esc", "cancel")]
             } else {
-                vec![
-                    ("j/k", "line"),
-                    ("]/[", "file"),
-                    ("c", "comment"),
-                    ("v", "scope"),
-                    ("a", "accept"),
-                    ("tab", "files"),
-                ]
+                vec![("j/k", "line"), ("]/[", "file"), ("c", "comment"), ("v", "scope"), ("a", "accept"), ("?", "keys")]
             }
         }
     };
     if app.screen == Screen::Chat && app.current.is_none() {
-        hints = vec![("alt+2", "inbox"), ("ctrl+k", "switch"), ("ctrl+c", "quit")];
+        hints = vec![("ctrl+n", "new workspace"), ("alt+2", "inbox"), ("ctrl+p", "actions"), ("ctrl+c", "quit")];
     }
     let mut spans = hint_spans(t, &hints, w);
     // Review: the draft count sits at the right edge.

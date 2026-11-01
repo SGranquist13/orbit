@@ -1,0 +1,36 @@
+  Inbox · 5 need you · 2 running · 1 done
+
+  needs you
+  ● readme-badge     Finished: Added the badge under the title and a Check section. There was n…   3m   s ship
+                     1 Keep going   2 Summarize what changed
+
+                      ╭─ Keys ───────────────────────────────────────────────────────────────────╮
+                      │                                                                          │
+                      │ inbox                                                                    │
+                      │ j / k                     move                                           │
+                      │ enter, r                  open / reply                                   │
+                      │ 1 2 3                     suggested replies                              │
+                      │ f                         fix (checks, CI, conflicts)                    │
+                      │ s                         ship                                           │
+                      │ c                         address PR comments                            │
+                      │ d                         dismiss                                        │
+                      │ x                         archive                                        │
+                      │ esc                       back                                           │
+                      │                                                                          │
+                      │ everywhere                                                               │
+                      │ ctrl+p                    all actions                                    │
+                      │ ctrl+k                    switch workspace                               │
+                      │ ctrl+n                    new workspace                                  │
+                      │ alt+1 / 2 / 3             chat · inbox · review                          │
+                      │ ctrl+x then 1-3, s, r, q  same, when Alt doesn't work                    │
+                      │ ctrl+b                    show / hide the rail                           │
+                      │ ctrl+c ×2                 quit                                           │
+                      │                                                                          │
+                      ╰──────────────────────────────────────── esc close · ctrl+p every action ─╯
+
+
+
+
+
+
+  j/k move   enter open   s ship   f fix   ctrl+p actions   ? keys

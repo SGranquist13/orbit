@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │
+ ● review-copy                │        ╭─ Actions ────────────────────────────────────────────────────────────╮
+ ● bump-deps                  │        │ > ship                                                               │
+ ● api-retry                  │        │ Ship: checks, push, pull request                              ctrl+s │
+ ● ci-node-22                 │        │ /shipkit:ship       Commit everything, push the branch, and open (o… │
+                              │        │ /shipkit:preflight  Pre-ship spot check of what this branch changes… │
+ running                      │        │                                                                      │
+ ● tidy-imports               │        ╰────────────────────────────────── ↑↓ choose · enter run · esc close ─╯
+ ● fix-login                  │
+                              │  I added ci.yml:
+ done                         │
+ ● readme-badge               │    - run: bun install --frozen-lockfile                                          yaml
+ ● dark-mode                  │    - run: bun run check
+                              │
+                              │  Ready to ship.
+                              │
+                              │  ● done · 38s · 12k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

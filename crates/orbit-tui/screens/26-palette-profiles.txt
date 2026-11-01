@@ -1,0 +1,36 @@
+ orbit              2 running │  readme-badge · claude haiku · docs/readme-badge                              25k  12%
+                              │
+ needs you                    │
+ ● review-copy                │        ╭─ Profile ────────────────────────────────────────────────────────────╮
+ ● bump-deps                  │        │ >                                                                    │
+ ● api-retry                  │        │ Builder        Default generalist. Implements the task end to en…  ✓ │
+ ● ci-node-22                 │        │ Debugger       Reproduces the bug, finds the root cause, and makes … │
+                              │        │ Planner        Read-only. Explores the code and writes an implement… │
+ running                      │        │ Reviewer       Read-only adversarial pre-ship review by a second mo… │
+ ● tidy-imports               │        │ Shipper        Gets the branch green, reviewed, and merged with min… │
+ ● fix-login                  │        │ Ticket writer  Read-only. Turns rough notes into well-formed GitHub… │
+                              │        │                                                                      │
+ done                         │        ╰──────────────────────────────────────────── enter switch · esc back ─╯
+ ● readme-badge               │
+ ● dark-mode                  │    - run: bun run check
+                              │
+                              │  Ready to ship.
+                              │
+                              │  ● done · 38s · 12k tokens
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │
+                              │▎ Message readme-badge…
+                              │▎ [ship] [fix-ci] [preflight]                                                   builder
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus

@@ -1,5 +1,6 @@
 //! `orb`, Orbit's terminal UI. Pure core (`app::update`, `view::render`) plus a thin runtime.
 
+pub mod actions;
 pub mod app;
 pub mod attention;
 pub mod backend;

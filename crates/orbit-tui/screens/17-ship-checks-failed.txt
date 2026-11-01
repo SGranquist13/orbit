@@ -33,4 +33,4 @@
                               │
                               │▎ Message bump-deps…
                               │▎ [ship] [fix-ci] [preflight]                                                   builder
- alt+2 inbox · ctrl+k switch  │  enter send   / skills   tab focus   ctrl+s ship   alt+3 review
+ ctrl+k switch · ctrl+n new   │  enter send   / skills   ctrl+p actions   ctrl+s ship   tab focus
