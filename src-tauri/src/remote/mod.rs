@@ -85,6 +85,14 @@ pub fn publish_workspace(ws: &Workspace) {
     }
 }
 
+/// Tells local clients a workspace was archived (the desktop hears `workspace-archived` or archived it itself).
+pub fn publish_workspace_removed(id: &str) {
+    let hub = &bridge().hub;
+    if hub.has_listeners() {
+        hub.publish(json!({ "t": "workspace-removed", "workspaceId": id }));
+    }
+}
+
 /// Called after a non-interrupted turn ends. Reads settings/devices (db locks) strictly before any I/O.
 pub fn on_turn_completed(state: &AppState, ws: Option<&Workspace>, is_error: bool, error: Option<&str>) {
     let Some(ws) = ws else { return };
@@ -176,6 +184,18 @@ enum Request {
     Review { id: String, scope: review::Scope },
     FileAt { id: String, path: String, file_ref: FileRef },
     SendReview { id: String, comments: Vec<crate::review_message::ReviewComment> },
+    CreateWorkspace { repo_id: String, name: String, agent: String, model: Option<String>, profile: Option<String>, task: Option<String> },
+    Archive { id: String, force: bool },
+    ListProfiles,
+    SwitchProfile { id: String, profile: Option<String> },
+    Compact { id: String },
+    NewSession { id: String },
+    ListFiles { id: String },
+}
+
+/// A non-empty optional string (missing, null or blank → `None`).
+fn opt_nonempty(params: &Value, key: &str) -> Result<Option<String>, String> {
+    Ok(Some(opt_str_param(params, key)?).filter(|s| !s.trim().is_empty()))
 }
 
 fn parse_request(method: &str, params: &Value) -> Result<Request, String> {
@@ -218,8 +238,50 @@ fn parse_request(method: &str, params: &Value) -> Result<Request, String> {
             }
             Request::SendReview { id, comments }
         }
+        "createWorkspace" => {
+            let repo_id = str_param(params, "repoId")?.to_string();
+            let agent = str_param(params, "agent")?.to_string();
+            if !matches!(agent.as_str(), "claude" | "codex") {
+                return Err("agent must be \"claude\" or \"codex\"".into());
+            }
+            let task = opt_nonempty(params, "task")?;
+            let name = opt_str_param(params, "name")?.trim().to_string();
+            if name.is_empty() && task.is_none() {
+                return Err("missing name".into());
+            }
+            Request::CreateWorkspace { repo_id, name, agent, model: opt_nonempty(params, "model")?, profile: opt_nonempty(params, "profile")?, task }
+        }
+        "archive" => Request::Archive { id: id()?, force: opt_bool_param(params, "force")? },
+        "listProfiles" => Request::ListProfiles,
+        "switchProfile" => {
+            let id = id()?;
+            Request::SwitchProfile { id, profile: opt_nonempty(params, "profile")? }
+        }
+        "compact" => Request::Compact { id: id()? },
+        "newSession" => Request::NewSession { id: id()? },
+        "listFiles" => Request::ListFiles { id: id()? },
         _ => return Err("unknown method".into()),
     })
+}
+
+/// A workspace name from the first words of the task, for when the client sends none (the app
+/// slugifies and dedupes it for the branch and folder).
+fn name_from_task(task: &str) -> String {
+    task.split_whitespace().take(6).collect::<Vec<_>>().join(" ")
+}
+
+/// Model ids for `hello.agents`, as the desktop's picker offers them: the configured default first,
+/// then the agent's own default, the rest of its catalog and the extra ids from settings.
+fn model_ids(default: &str, models: &[crate::agent::models::ModelInfo], extra: &[String]) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let preferred = models.iter().filter(|m| m.is_default).chain(models.iter().filter(|m| !m.is_default));
+    for id in std::iter::once(default).chain(preferred.map(|m| m.id.as_str())).chain(extra.iter().map(String::as_str)) {
+        let id = id.trim();
+        if !id.is_empty() && !ids.iter().any(|x| x == id) {
+            ids.push(id.to_string());
+        }
+    }
+    ids
 }
 
 /// Skills of the enabled packs: shipkit first, then by pack, then by name.
@@ -248,8 +310,22 @@ impl OrbitBackend {
         match req {
             Request::Hello => {
                 let s = st.settings();
+                // The model lists never fail: Codex falls back to its built-in list when discovery does.
+                let (claude, codex) = tauri::async_runtime::block_on(async {
+                    use crate::agent::{models::list, AgentKind};
+                    (list(AgentKind::Claude, false).await, list(AgentKind::Codex, false).await)
+                });
                 Ok(json!({
-                    "settings": { "staleDays": s.stale_days, "staleBehind": s.stale_behind, "saveCommits": s.save_commits },
+                    "settings": {
+                        "staleDays": s.stale_days,
+                        "staleBehind": s.stale_behind,
+                        "saveCommits": s.save_commits,
+                        "deleteBranchOnMerge": s.delete_branch_on_merge,
+                    },
+                    "agents": {
+                        "claude": { "models": model_ids(&s.default_model_claude, &claude, &s.extra_models_claude) },
+                        "codex": { "models": model_ids(&s.default_model_codex, &codex, &s.extra_models_codex) },
+                    },
                     "version": env!("CARGO_PKG_VERSION"),
                 }))
             }
@@ -324,6 +400,43 @@ impl OrbitBackend {
                 let text = crate::review_message::review_message(&comments);
                 crate::send(app, st, &id, text.clone(), None, text).map_err(e)?;
                 Ok(Value::Null)
+            }
+            Request::CreateWorkspace { repo_id, name, agent, model, profile, task } => {
+                // Bind first: the guard must be gone before create_workspace_with_prompt locks the db.
+                let repo = st.db().repo(&repo_id);
+                repo.map_err(|_| "unknown repo".to_string())?;
+                let name = if name.is_empty() { name_from_task(task.as_deref().unwrap_or("")) } else { name };
+                let ws = tauri::async_runtime::block_on(crate::create_workspace_with_prompt(app, st, repo_id, name, agent, model, task, None, profile))?;
+                // Re-read so a sent task's status is "running".
+                let latest = st.db().workspace(&ws.id).unwrap_or(ws);
+                to_json(latest)
+            }
+            Request::Archive { id, force } => {
+                self.workspace(&id)?;
+                tauri::async_runtime::block_on(crate::archive_inner(st, &id, true, force))?;
+                Ok(Value::Null)
+            }
+            Request::ListProfiles => {
+                let packs = st.packs().map_err(e)?;
+                to_json(crate::skills::list_profiles(&crate::skills::effective_packs(&packs, &[])))
+            }
+            Request::SwitchProfile { id, profile } => {
+                self.workspace(&id)?;
+                to_json(crate::switch_profile(app, st, &id, profile.as_deref()).map_err(e)?)
+            }
+            Request::Compact { id } => {
+                self.workspace(&id)?;
+                crate::compact_session_inner(app, st, &id)?;
+                Ok(Value::Null)
+            }
+            Request::NewSession { id } => {
+                self.workspace(&id)?;
+                crate::new_session_inner(app, st, &id)?;
+                Ok(Value::Null)
+            }
+            Request::ListFiles { id } => {
+                let ws = self.workspace(&id)?;
+                to_json(crate::code::fs::code_list_files(ws.path)?)
             }
         }
     }
@@ -720,6 +833,76 @@ mod tests {
             c.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
             assert!(p("sendReview", ws(json!({ "comments": [c] }))).unwrap_err().starts_with("invalid comment on a.rs"));
         }
+    }
+
+    #[test]
+    fn parses_workspace_lifecycle_methods() {
+        let p = |m: &str, v: Value| parse_request(m, &v);
+        for m in ["archive", "switchProfile", "compact", "newSession", "listFiles"] {
+            assert_eq!(p(m, json!({})), Err("missing workspaceId".into()), "{m}");
+            assert_eq!(p(m, json!({ "workspaceId": "" })), Err("missing workspaceId".into()), "{m}");
+        }
+        assert_eq!(p("listProfiles", json!({})), Ok(Request::ListProfiles));
+
+        let cw = |extra: Value| {
+            let mut v = json!({ "repoId": "r1", "name": "fix login", "agent": "claude" });
+            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            p("createWorkspace", v)
+        };
+        assert_eq!(
+            cw(json!({})),
+            Ok(Request::CreateWorkspace { repo_id: "r1".into(), name: "fix login".into(), agent: "claude".into(), model: None, profile: None, task: None })
+        );
+        assert_eq!(
+            cw(json!({ "agent": "codex", "model": "gpt-6.1-sol", "profile": "shipkit:reviewer", "task": "Fix the login bug" })),
+            Ok(Request::CreateWorkspace {
+                repo_id: "r1".into(),
+                name: "fix login".into(),
+                agent: "codex".into(),
+                model: Some("gpt-6.1-sol".into()),
+                profile: Some("shipkit:reviewer".into()),
+                task: Some("Fix the login bug".into()),
+            })
+        );
+        // Blank optional strings and null are "not given".
+        assert_eq!(
+            cw(json!({ "model": "", "profile": null, "task": "  " })),
+            Ok(Request::CreateWorkspace { repo_id: "r1".into(), name: "fix login".into(), agent: "claude".into(), model: None, profile: None, task: None })
+        );
+        assert_eq!(p("createWorkspace", json!({ "name": "x", "agent": "claude" })), Err("missing repoId".into()));
+        assert_eq!(cw(json!({ "agent": null })), Err("missing agent".into()));
+        assert_eq!(cw(json!({ "agent": "gemini" })), Err("agent must be \"claude\" or \"codex\"".into()));
+        assert_eq!(cw(json!({ "model": 3 })), Err("model must be a string".into()));
+        assert_eq!(cw(json!({ "task": true })), Err("task must be a string".into()));
+        // A name is required only when there is no task to take it from.
+        assert_eq!(cw(json!({ "name": " " })), Err("missing name".into()));
+        assert!(matches!(cw(json!({ "name": null, "task": "do it" })), Ok(Request::CreateWorkspace { ref name, .. }) if name.is_empty()));
+
+        assert_eq!(p("archive", json!({ "workspaceId": "w1" })), Ok(Request::Archive { id: "w1".into(), force: false }));
+        assert_eq!(p("archive", json!({ "workspaceId": "w1", "force": true })), Ok(Request::Archive { id: "w1".into(), force: true }));
+        assert_eq!(p("archive", json!({ "workspaceId": "w1", "force": "yes" })), Err("force must be a boolean".into()));
+
+        assert_eq!(
+            p("switchProfile", json!({ "workspaceId": "w1", "profile": "shipkit:planner" })),
+            Ok(Request::SwitchProfile { id: "w1".into(), profile: Some("shipkit:planner".into()) })
+        );
+        assert_eq!(p("switchProfile", json!({ "workspaceId": "w1", "profile": null })), Ok(Request::SwitchProfile { id: "w1".into(), profile: None }));
+        assert_eq!(p("switchProfile", json!({ "workspaceId": "w1" })), Ok(Request::SwitchProfile { id: "w1".into(), profile: None }));
+        assert_eq!(p("switchProfile", json!({ "workspaceId": "w1", "profile": 1 })), Err("profile must be a string".into()));
+
+        assert_eq!(p("compact", json!({ "workspaceId": "w1" })), Ok(Request::Compact { id: "w1".into() }));
+        assert_eq!(p("newSession", json!({ "workspaceId": "w1" })), Ok(Request::NewSession { id: "w1".into() }));
+        assert_eq!(p("listFiles", json!({ "workspaceId": "w1" })), Ok(Request::ListFiles { id: "w1".into() }));
+    }
+
+    #[test]
+    fn task_name_and_model_ids() {
+        assert_eq!(name_from_task("  Fix the\nlogin bug on the settings page please "), "Fix the login bug on the");
+        let m = |id: &str, is_default: bool| crate::agent::models::ModelInfo { id: id.into(), label: id.into(), is_default, efforts: vec![] };
+        let catalog = [m("a", false), m("b", true), m("c", false)];
+        assert_eq!(model_ids("", &catalog, &[]), ["b", "a", "c"]);
+        assert_eq!(model_ids("c", &catalog, &["x".into(), "a".into(), " ".into()]), ["c", "b", "a", "x"]);
+        assert_eq!(model_ids("", &[m("opus", false), m("sonnet", false)], &[]), ["opus", "sonnet"]);
     }
 
     #[test]

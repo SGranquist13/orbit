@@ -13,7 +13,7 @@ use crate::checks::{CheckKind, CheckResult};
 use crate::code::fs::{file_at_sha, file_at_worktree};
 use crate::db::{Repo, StoredEvent, Summary, Workspace};
 use crate::gh::{Checks, PrStatus};
-use crate::skills::{Skill, SkillKind};
+use crate::skills::{Profile, Skill, SkillKind};
 use crate::trunk::{MergeOutcome, PrepareShip};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -109,12 +109,20 @@ fn ok<T: serde::Serialize>(v: T) -> Result<Value, String> {
 impl Backend for Interop {
     fn rpc(&self, method: &str, params: Value) -> Result<Value, String> {
         let ws = params.get("workspaceId").and_then(Value::as_str).unwrap_or("");
-        if method != "hello" && method != "snapshot" && method != "listSkills" && ws != "w1" {
+        let global = ["hello", "snapshot", "listSkills", "createWorkspace", "listProfiles"];
+        if !global.contains(&method) && ws != "w1" {
             return Err("unknown workspace".into());
         }
         match method {
             "hello" => {
-                Ok(json!({ "settings": { "staleDays": 7, "staleBehind": 50, "saveCommits": true }, "version": env!("CARGO_PKG_VERSION") }))
+                Ok(json!({
+                    "settings": { "staleDays": 7, "staleBehind": 50, "saveCommits": true, "deleteBranchOnMerge": true },
+                    "agents": {
+                        "claude": { "models": ["opus", "sonnet", "haiku"] },
+                        "codex": { "models": ["gpt-6.1-sol", "gpt-6-luna"] },
+                    },
+                    "version": env!("CARGO_PKG_VERSION"),
+                }))
             }
             "snapshot" => ok(json!({
                 "repos": [Repo { id: "r1".into(), name: "repo".into(), path: "/r".into(), base_branch: "main".into() }],
@@ -160,6 +168,50 @@ impl Backend for Interop {
                 notes: None,
             }),
             "merge" => ok(MergeOutcome { archived: true }),
+            "createWorkspace" => {
+                let s = |k: &str| params.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(str::to_string);
+                if s("repoId").as_deref() != Some("r1") {
+                    return Err("unknown repo".into());
+                }
+                let name = s("name").or_else(|| s("task").map(|t| t.split_whitespace().take(6).collect::<Vec<_>>().join(" "))).ok_or("missing name")?;
+                let slug = crate::git::slugify(&name);
+                ok(Workspace {
+                    id: "w2".into(),
+                    name,
+                    branch: format!("orbit/{slug}-a1b2"),
+                    path: format!("/worktrees/repo/{slug}-a1b2"),
+                    agent: s("agent").ok_or("missing agent")?,
+                    model: s("model"),
+                    profile: s("profile"),
+                    status: if s("task").is_some() { "running" } else { "idle" }.into(),
+                    ..self.workspace()
+                })
+            }
+            "archive" => {
+                if params.get("force").and_then(Value::as_bool) == Some(true) {
+                    self.hub.publish(json!({ "t": "workspace-removed", "workspaceId": ws }));
+                    return Ok(Value::Null);
+                }
+                Err(crate::dirty_error(&["c.txt".into()]))
+            }
+            "listProfiles" => ok(vec![Profile {
+                id: "shipkit:reviewer".into(),
+                pack: "shipkit".into(),
+                name: "Reviewer".into(),
+                description: "Reviews the branch and reports findings without editing.".into(),
+                model: Some("opus".into()),
+                agent: Some("claude".into()),
+                readonly: true,
+                skills: vec!["shipkit:review".into()],
+                instructions: "Review the changes on this branch.".into(),
+                path: "/packs/shipkit/agents/reviewer.md".into(),
+            }]),
+            "switchProfile" => {
+                let profile = params.get("profile").and_then(Value::as_str).filter(|p| !p.is_empty()).map(str::to_string);
+                ok(Workspace { profile, ..self.workspace() })
+            }
+            "compact" | "newSession" => Ok(Value::Null),
+            "listFiles" => ok(vec!["a.txt", "b.txt", "c.txt"]),
             "review" => {
                 let scope = Scope::parse(params.get("scope"))?;
                 ok(review::review(&self.root, "main", &scope, &self.turns, true)?)

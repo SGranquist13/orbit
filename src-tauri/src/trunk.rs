@@ -503,7 +503,11 @@ async fn archive_merged(state: &AppState, ws: &Workspace, repo: &crate::db::Repo
     if !removed {
         return false;
     }
-    state.db().archive_workspace(&ws.id).is_ok()
+    let archived = state.db().archive_workspace(&ws.id).is_ok();
+    if archived {
+        crate::remote::publish_workspace_removed(&ws.id);
+    }
+    archived
 }
 
 // ---- commands ----

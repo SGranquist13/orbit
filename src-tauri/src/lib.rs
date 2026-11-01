@@ -547,13 +547,30 @@ async fn create_workspace(
     issue_number: Option<i64>,
     profile: Option<String>,
 ) -> CmdResult<Workspace> {
-    let ws = create_workspace_inner(&app, &state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None, start_ref: None, attempt_group: None, branch_suffix: None, branch: None, existing_branch: false }).await?;
+    create_workspace_with_prompt(&app, &state, repo_id, name, agent, model, prompt, issue_number, profile).await
+}
+
+/// The New workspace dialog's path (also used by `orb`): worktree, then the first message when
+/// there is one, with the prompt-derived name replaced by a model-written one in the background.
+#[allow(clippy::too_many_arguments)] // mirrors the command's fields
+pub(crate) async fn create_workspace_with_prompt(
+    app: &AppHandle,
+    state: &AppState,
+    repo_id: String,
+    name: String,
+    agent: String,
+    model: Option<String>,
+    prompt: Option<String>,
+    issue_number: Option<i64>,
+    profile: Option<String>,
+) -> CmdResult<Workspace> {
+    let ws = create_workspace_inner(app, state, NewWorkspaceArgs { repo_id, name, agent, model, issue_number, profile, routine_id: None, branch_prefix: None, teammate: None, start_ref: None, attempt_group: None, branch_suffix: None, branch: None, existing_branch: false }).await?;
     if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
         // Issues already have titles, and a typed name is kept: only the auto-derived one is replaced.
         if issue_number.is_none() && is_derived_name(&ws.name, &p) {
-            tauri::async_runtime::spawn(name_workspace(app.clone(), state.inner().clone(), ws.id.clone(), ws.name.clone(), p.clone()));
+            tauri::async_runtime::spawn(name_workspace(app.clone(), state.clone(), ws.id.clone(), ws.name.clone(), p.clone()));
         }
-        send(&app, &state, &ws.id, p.clone(), None, p).map_err(err)?;
+        send(app, state, &ws.id, p.clone(), None, p).map_err(err)?;
     }
     Ok(ws)
 }
@@ -1095,24 +1112,28 @@ fn interrupt(state: State<AppState>, id: String) {
 /// Frees context by summarising the conversation (Claude: `/compact`; Codex: `thread/compact/start`).
 #[tauri::command]
 async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String) -> CmdResult<()> {
-    let ws = state.db().workspace(&id).map_err(err)?;
+    compact_session_inner(&app, &state, &id)
+}
+
+pub(crate) fn compact_session_inner(app: &AppHandle, state: &AppState, id: &str) -> CmdResult<()> {
+    let ws = state.db().workspace(id).map_err(err)?;
     if ws.status == "running" {
         return Err("Wait for the current turn to finish before compacting".into());
     }
     if ws.agent_session_id.is_none() {
         return Err("Nothing to compact yet".into());
     }
-    on_agent_event(&app, &state, &id, AgentEvent::UserMessage { text: "/compact".into(), skill: None, images: vec![], files: vec![] });
-    let handle = ensure_session(&app, &state, &ws).map_err(err)?;
+    on_agent_event(app, state, id, AgentEvent::UserMessage { text: "/compact".into(), skill: None, images: vec![], files: vec![] });
+    let handle = ensure_session(app, state, &ws).map_err(err)?;
     if !handle.send(Command::Compact) {
-        state.sessions_lock().remove(&id);
-        ensure_session(&app, &state, &ws).map_err(err)?.send(Command::Compact);
+        state.sessions_lock().remove(id);
+        ensure_session(app, state, &ws).map_err(err)?.send(Command::Compact);
     }
     // Claude runs `/compact` as a turn (status follows its events); Codex's compaction has no
     // turn/started, so only mark Claude as running.
     if ws.agent == "claude" {
-        let ws = state.db().set_status(&id, "running").map_err(err)?;
-        emit_workspace(&app, &ws);
+        let ws = state.db().set_status(id, "running").map_err(err)?;
+        emit_workspace(app, &ws);
     }
     Ok(())
 }
@@ -1120,18 +1141,22 @@ async fn compact_session(app: AppHandle, state: State<'_, AppState>, id: String)
 /// Drops the agent session so the next message starts from a clean context in the same worktree.
 #[tauri::command]
 fn new_session(app: AppHandle, state: State<AppState>, id: String) -> CmdResult<()> {
-    let taken = state.sessions_lock().remove(&id);
+    new_session_inner(&app, &state, &id)
+}
+
+pub(crate) fn new_session_inner(app: &AppHandle, state: &AppState, id: &str) -> CmdResult<()> {
+    let taken = state.sessions_lock().remove(id);
     if let Some(h) = taken {
         h.send(Command::Shutdown);
     }
     let ws = {
         let db = state.db();
-        db.clear_agent_session(&id).map_err(err)?;
-        db.set_status(&id, "idle").map_err(err)?
+        db.clear_agent_session(id).map_err(err)?;
+        db.set_status(id, "idle").map_err(err)?
     };
-    state.notices_lock().remove(&id);
-    on_agent_event(&app, &state, &id, AgentEvent::SessionReset);
-    emit_workspace(&app, &ws);
+    state.notices_lock().remove(id);
+    on_agent_event(app, state, id, AgentEvent::SessionReset);
+    emit_workspace(app, &ws);
     Ok(())
 }
 
@@ -1260,7 +1285,9 @@ pub(crate) async fn archive_inner(state: &AppState, id: &str, remove_worktree: b
             .map_err(err)?
             .map_err(err)?;
     }
-    state.db().archive_workspace(&id).map_err(err)
+    state.db().archive_workspace(&id).map_err(err)?;
+    remote::publish_workspace_removed(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1449,6 +1476,7 @@ async fn cleanup_merged_worktrees(state: State<'_, AppState>, dry_run: bool) -> 
             continue;
         }
         state.db().archive_workspace(&ws.id).map_err(err)?;
+        remote::publish_workspace_removed(&ws.id);
         done.push(c);
     }
     Ok(done)
