@@ -91,9 +91,33 @@ async fn against_the_real_bridge() {
     let err = b.rpc("events", json!({ "workspaceId": "nope" })).await.unwrap_err();
     assert_eq!(err, "unknown workspace");
 
-    // A streamed turn, through the TUI's own update loop.
+    // Palette / New workspace / archive / profiles.
+    assert!(!hello.agents.claude.models.is_empty(), "hello.agents: {:?}", hello.agents);
+    let profiles: Vec<Profile> = call(&b, "listProfiles", json!({})).await;
+    assert!(profiles.iter().any(|p| p.readonly && !p.name.is_empty()));
+    let created: Workspace = call(
+        &b,
+        "createWorkspace",
+        json!({ "repoId": "r1", "name": "Try the palette", "agent": "claude", "model": null, "profile": null, "task": "" }),
+    )
+    .await;
+    assert!(!created.id.is_empty() && !created.branch.is_empty());
+    let switched: Workspace =
+        call(&b, "switchProfile", json!({ "workspaceId": "w1", "profile": profiles[0].id.clone() })).await;
+    assert_eq!(switched.profile.as_deref(), Some(profiles[0].id.as_str()));
+    let _: Value = call(&b, "compact", w.clone()).await;
+    let _: Value = call(&b, "newSession", w.clone()).await;
+    let files: Vec<String> = call(&b, "listFiles", w.clone()).await;
+    assert!(files.contains(&"a.txt".to_string()));
+    // Archive: the first try reports uncommitted changes the way the TUI expects, then force.
+    let err = b.rpc("archive", json!({ "workspaceId": "w1", "force": false })).await.unwrap_err();
+    assert!(err.starts_with("Uncommitted changes"), "{err}");
     let mut app = App::new(Config::default(), Theme::new(Variant::Void, Depth::TrueColor), 0);
     update(&mut app, Msg::Rpc(Tag::Snapshot, Ok(serde_json::to_value(&snap).unwrap())));
+    update(&mut app, Msg::Rpc(Tag::Archive { ws: "w1".into(), force: false }, Err(err)));
+    assert!(matches!(app.overlay, Some(orbit_tui::app::Overlay::Confirm { .. })), "force confirm");
+
+    // A streamed turn, through the TUI's own update loop.
     let cmds = orbit_tui::app::open_ws(&mut app, "w1");
     assert!(!cmds.is_empty());
     update(
@@ -128,4 +152,21 @@ async fn against_the_real_bridge() {
     // `orb ls` over the same connection.
     let out = orbit_tui::cli::ls(&b, false, 1_700_000_200_000).await.unwrap();
     assert!(out.contains("interop"), "{out}");
+
+    // Forced archive: `null`, and a workspace-removed push the TUI applies.
+    let _: Value = call(&b, "archive", json!({ "workspaceId": "w1", "force": true })).await;
+    let removed = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(p) = pushes.recv().await {
+            if let Push::WorkspaceRemoved(id) = &p {
+                let id = id.clone();
+                update(&mut app, Msg::Push(p));
+                return id;
+            }
+        }
+        String::new()
+    })
+    .await
+    .expect("workspace-removed push");
+    assert_eq!(removed, "w1");
+    assert!(app.ws("w1").is_none());
 }
