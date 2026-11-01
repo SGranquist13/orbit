@@ -37,7 +37,7 @@ async fn against_the_real_bridge() {
     let events: Vec<StoredEvent> = call(&b, "events", w.clone()).await;
     assert_eq!(events.len(), 12);
     let others: Vec<_> = events.iter().filter(|e| e.event == AgentEvent::Other).collect();
-    assert_eq!(others.len(), 1, "only sessionStarted is unused by the TUI… {others:?}");
+    assert!(others.is_empty(), "event kinds orb doesn't know: {others:?}");
     let blocks = fold(&events);
     assert!(matches!(
         blocks.iter().find(|b| matches!(b, Block::TurnEnd { .. })),

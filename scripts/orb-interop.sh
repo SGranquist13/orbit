@@ -19,7 +19,7 @@ server=$!
 # The first build of src-tauri can take a while.
 for _ in $(seq 1 1800); do [[ -s "$out" ]] && break; sleep 1; done
 [[ -s "$out" ]] || { echo "server did not start"; kill $server 2>/dev/null; exit 1; }
-read -r port token < "$out"
+read -r port token < "$out" || true  # the file has no trailing newline
 status=0
 ( cd "$root/crates" && ORBIT_LOCAL_PORT="$port" ORBIT_LOCAL_TOKEN="$token" cargo test -p orbit-tui --test interop -- --ignored --nocapture ) || status=$?
 kill $server 2>/dev/null || true
