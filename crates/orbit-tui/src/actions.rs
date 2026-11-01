@@ -230,9 +230,9 @@ fn rank(items: Vec<Item>, query: &str) -> Vec<Item> {
                 1
             } else if l.contains(&q) {
                 2
-            } else if it.detail.to_lowercase().contains(&q) {
+            } else if !matches!(it.action, Action::Open(_)) && it.detail.to_lowercase().contains(&q) {
                 4
-            } else if app::subsequence(&l, &q).is_some() {
+            } else if !matches!(it.action, Action::Open(_)) && app::subsequence(&l, &q).is_some() {
                 3
             } else {
                 return None;
@@ -516,7 +516,8 @@ fn open_new_workspace(app: &mut App) {
         app.workspaces.iter().max_by_key(|w| app.summaries.get(&w.id).map(|s| s.last_activity_ts).unwrap_or(0)).cloned()
     });
     let repo = cur.as_ref().and_then(|w| app.repos.iter().position(|r| r.id == w.repo_id)).unwrap_or(0);
-    let agent = cur.as_ref().map(|w| usize::from(w.agent == "codex")).unwrap_or(0);
+    // The open workspace's agent, else Claude.
+    let agent = app.cur_ws().map(|w| usize::from(w.agent == "codex")).unwrap_or(0);
     app.screen = if app.screen == Screen::Review { Screen::Chat } else { app.screen };
     app.overlay = Some(Overlay::NewWorkspace(NewWs { repo, agent, field: 1, ..Default::default() }));
 }
