@@ -1453,7 +1453,9 @@ fn ship_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
     }
     if is_char(&k, 'm') {
         match &pr {
-            Some(p) if p.state == "OPEN" && p.mergeable == "MERGEABLE" && p.checks.failed == 0 => {
+            Some(p)
+                if p.state == "OPEN" && p.mergeable == "MERGEABLE" && p.checks.failed == 0 && p.checks.pending == 0 =>
+            {
                 let base = app.cur_ws().map(|w| app.base_branch(w)).unwrap_or_else(|| "main".into());
                 app.ship.entry(id.clone()).or_insert(ShipState {
                     phase: ShipPhase::Pr,
@@ -1468,6 +1470,7 @@ fn ship_key(app: &mut App, k: KeyEvent) -> Vec<Cmd> {
                     action: ConfirmAction::Merge { ws: id, number: p.number },
                 });
             }
+            Some(p) if p.checks.pending > 0 => app.error("Checks are still running"),
             Some(_) => app.error("The pull request can't be merged yet"),
             None => {}
         }

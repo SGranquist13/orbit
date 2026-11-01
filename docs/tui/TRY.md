@@ -99,3 +99,7 @@ Use a throwaway workspace for the ones that change things.
 ## Not in this MVP
 
 `@` file picker, copy (`Ctrl+Y`), `$EDITOR` (`Ctrl+E`), notifications, mouse clicks, ASCII glyphs, 256-colour tier, range comments (`V`), editing or deleting comments, markdown tables, `orb send`, auto-detecting a light terminal (use `--theme paper`). See `docs/tui/spec/mvp.md`.
+
+## Screenshots
+
+Captured from the real binary (`orb --demo`) in a terminal emulator: `docs/tui/screenshots/`.

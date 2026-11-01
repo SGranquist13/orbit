@@ -17,7 +17,7 @@
                               │    │                                                                              │
                               │    │ Waiting for checks…                                                          │
                               │    │                                                                              │
-                              │    ╰───────────────────────────── m merge · f fix CI · c comments · o open · esc ─╯
+                              │    ╰─────────────────────────── f fix CI · c comments · o open · r refresh · esc ─╯
                               │
                               │
                               │  Pushed docs/readme-badge and opened PR #42, Docs: CI badge and the check command. CI

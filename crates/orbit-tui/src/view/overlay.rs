@@ -393,7 +393,7 @@ fn ship(buf: &mut Buffer, area: Rect, app: &App) {
             rows.push(vec![Span::styled(format!("  {} {}", glyphs::ERR, truncate(name, iw - 4)), t.hue(t.bad))]);
         }
         rows.push(vec![]);
-        let mergeable = p.state == "OPEN" && p.mergeable == "MERGEABLE" && c.failed == 0;
+        let mergeable = p.state == "OPEN" && p.mergeable == "MERGEABLE" && c.failed == 0 && c.pending == 0;
         if phase == ShipPhase::Merging {
             rows.push(vec![Span::styled(sweep.to_string(), t.hue(t.run)), Span::styled(" Merging…", t.fg())]);
         } else if mergeable && c.pending == 0 {
