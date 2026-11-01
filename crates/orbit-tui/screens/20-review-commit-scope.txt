@@ -1,7 +1,7 @@
   Review · fix-login · commit 7be20d4 · 2 files  +19 −1 · 2 commits
 
   M session.ts             +4 −1  │ @@ -1,11 +1,14 @@
-  M cookie.ts                +15  │    1  import { store } from "../lib/store";
+  A cookie.ts                +15  │    1  import { store } from "../lib/store";
                                   │    2 +import { cookie } from "./cookie";
   commits                         │    3
   a1f3c9e wip: wait for the ses…  │    4  export type Session = { user: string; expires: number };

@@ -2,7 +2,7 @@
 
   M login.test.ts             +2  │ @@ -1,11 +1,14 @@
   M session.ts             +4 −1  │    1  import { store } from "../lib/store";
-  M cookie.ts                +15  │    2 +import { cookie } from "./cookie";
+  A cookie.ts                +15  │    2 +import { cookie } from "./cookie";
                                   │    3
   commits                         │    4  export type Session = { user: string; expires: number };
   a1f3c9e wip: wait for the ses…  │    5

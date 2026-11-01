@@ -117,7 +117,8 @@ impl H {
             std::fs::write(&path, &got).unwrap();
             return;
         }
-        let want = std::fs::read_to_string(&path).unwrap_or_default();
+        // Git on Windows may check the files out with CRLF.
+        let want = std::fs::read_to_string(&path).unwrap_or_default().replace("\r\n", "\n");
         assert!(want == got, "screen {name} changed (ORB_UPDATE_SCREENS=1 to accept):\n{got}");
     }
 }

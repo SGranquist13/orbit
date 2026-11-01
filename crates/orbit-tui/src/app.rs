@@ -229,6 +229,8 @@ pub struct ReviewState {
     pub accepted: Vec<String>,
     pub file: Option<String>,
     pub sides: HashMap<String, (Option<FileAt>, Option<FileAt>)>,
+    /// `fileAt` requests already made, so a side is fetched once.
+    pub requested: HashSet<(String, FileSide)>,
     pub rows: Vec<Row>,
     pub cursor: usize,
     pub commenting: Option<String>,
@@ -1016,6 +1018,19 @@ fn reply(app: &mut App, tag: Tag, res: Result<Value, String>) -> Vec<Cmd> {
                         r.data = Some(d);
                         r.focus_list = false;
                         r.sides.clear();
+                        r.requested.clear();
+                        // Files with only additions may be new: their old side tells (A vs M) up front.
+                        let maybe_new: Vec<String> = r
+                            .data
+                            .iter()
+                            .flat_map(|d| d.files.iter())
+                            .filter(|f| f.deletions == 0 && !f.untracked)
+                            .take(20)
+                            .map(|f| f.path.clone())
+                            .collect();
+                        for p in maybe_new {
+                            out.extend(fetch_side(r, &p, FileSide::Old));
+                        }
                         r.list_sel = 0;
                         r.rows.clear();
                         r.file = None;
@@ -1859,21 +1874,27 @@ fn review_select(app: &mut App) -> Vec<Cmd> {
     r.cursor = 0;
     r.commenting = None;
     rebuild_rows(r);
-    if r.sides.contains_key(&path) {
-        return vec![];
-    }
-    let Some(d) = &r.data else { return vec![] };
-    let ws = r.ws.clone();
     let mut out = vec![];
-    for (side, rf) in [(FileSide::Old, d.old_ref.clone()), (FileSide::New, d.new_ref.clone())] {
-        out.push(rpc(
-            Tag::FileAt { ws: ws.clone(), path: path.clone(), side },
-            "fileAt",
-            json!({ "workspaceId": ws, "path": path, "ref": rf }),
-        ));
+    for side in [FileSide::Old, FileSide::New] {
+        out.extend(fetch_side(r, &path, side));
     }
-    r.sides.insert(path, (None, None));
     out
+}
+
+/// One `fileAt` for a file's side, unless it was already asked for.
+fn fetch_side(r: &mut ReviewState, path: &str, side: FileSide) -> Option<Cmd> {
+    let d = r.data.as_ref()?;
+    if !r.requested.insert((path.to_string(), side)) {
+        return None;
+    }
+    let rf = if side == FileSide::Old { d.old_ref.clone() } else { d.new_ref.clone() };
+    let ws = r.ws.clone();
+    r.sides.entry(path.to_string()).or_default();
+    Some(rpc(
+        Tag::FileAt { ws: ws.clone(), path: path.into(), side },
+        "fileAt",
+        json!({ "workspaceId": ws, "path": path, "ref": rf }),
+    ))
 }
 
 fn rebuild_rows(r: &mut ReviewState) {

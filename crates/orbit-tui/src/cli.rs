@@ -227,7 +227,16 @@ pub async fn doctor(b: &dyn Backend) -> (String, bool) {
     }
     let snap = match typed::<Snapshot>(b, "snapshot", json!({})).await {
         Ok(s) => {
-            line(true, "snapshot", format!("{} workspaces in {} repos", s.workspaces.len(), s.repos.len()));
+            let n = |k: usize, one: &str, many: &str| format!("{k} {}", if k == 1 { one } else { many });
+            line(
+                true,
+                "snapshot",
+                format!(
+                    "{} in {}",
+                    n(s.workspaces.len(), "workspace", "workspaces"),
+                    n(s.repos.len(), "repo", "repos")
+                ),
+            );
             s
         }
         Err(e) => {

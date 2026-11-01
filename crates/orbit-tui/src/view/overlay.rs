@@ -47,6 +47,22 @@ fn new_ws_rect(area: Rect) -> Rect {
 const NEW_LABEL_W: u16 = 10;
 const TASK_ROWS: usize = 3;
 
+/// A long query shows its end, so what you type stays in view.
+fn query_tail(q: &str, max: usize) -> String {
+    if width(q) <= max {
+        return q.to_string();
+    }
+    let chars: Vec<char> = q.chars().collect();
+    let mut out = String::new();
+    for c in chars.iter().rev() {
+        if width(&out) + 2 > max {
+            break;
+        }
+        out.insert(0, *c);
+    }
+    format!("…{out}")
+}
+
 /// The task text's wrapped lines (last `TASK_ROWS` shown) and its width.
 fn task_lines(r: Rect, task: &str) -> (Vec<String>, usize) {
     let tw = r.width.saturating_sub(4 + NEW_LABEL_W + 2) as usize;
@@ -56,11 +72,20 @@ fn task_lines(r: Rect, task: &str) -> (Vec<String>, usize) {
 }
 
 pub fn cursor(full: Rect, app: &App) -> Option<(u16, u16)> {
+    if full.width < crate::app::MIN_W || full.height < crate::app::MIN_H {
+        return None;
+    }
+    let (x, y) = cursor_inner(full, app)?;
+    Some((x.min(full.x + full.width - 1), y.min(full.y + full.height - 1)))
+}
+
+fn cursor_inner(full: Rect, app: &App) -> Option<(u16, u16)> {
     let area = box_area(full, app);
     match &app.overlay {
         Some(Overlay::Palette { query, .. }) | Some(Overlay::Switcher { query, .. }) => {
             let r = list_rect(area, 1);
-            Some((r.x + 4 + width(query) as u16, r.y + 1))
+            let shown = query_tail(query, r.width.saturating_sub(7) as usize);
+            Some((r.x + 4 + width(&shown) as u16, r.y + 1))
         }
         Some(Overlay::NewWorkspace(d)) if d.field == 1 && !d.busy => {
             let r = new_ws_rect(area);
@@ -137,7 +162,13 @@ pub fn render(buf: &mut Buffer, full: Rect, app: &App) {
             halo(buf, r, area, true);
             frame(buf, r, t, &[Span::styled("Switch workspace", t.fg())], "enter open · esc close");
             let iw = (w - 4) as usize;
-            put(buf, r.x + 2, r.y + 1, iw, &[Span::styled("> ", t.mute()), Span::styled(query.clone(), t.fg())]);
+            put(
+                buf,
+                r.x + 2,
+                r.y + 1,
+                iw,
+                &[Span::styled("> ", t.mute()), Span::styled(query_tail(query, iw.saturating_sub(3)), t.fg())],
+            );
             let skip = (*sel + 1).saturating_sub(shown);
             for (i, row) in items.iter().enumerate().skip(skip).take(shown) {
                 let y = r.y + 2 + (i - skip) as u16;
@@ -422,7 +453,11 @@ fn palette(buf: &mut Buffer, area: Rect, app: &App, query: &str, sel: usize, mod
         r.x + 2,
         r.y + 1,
         iw,
-        &[Span::styled("> ", t.mute()), Span::styled(query.to_string(), t.fg()), Span::styled(ph, t.mute())],
+        &[
+            Span::styled("> ", t.mute()),
+            Span::styled(query_tail(query, iw.saturating_sub(3)), t.fg()),
+            Span::styled(ph, t.mute()),
+        ],
     );
     let skip = (sel + 1).saturating_sub(shown);
     // Descriptions line up in one column after the longest visible label.

@@ -93,9 +93,9 @@ async fn doctor_live() -> ExitCode {
         Ok(c) => {
             let from_env = std::env::var("ORBIT_LOCAL_PORT").is_ok();
             let src = if from_env { "ORBIT_LOCAL_PORT / ORBIT_LOCAL_TOKEN".to_string() } else { shown.clone() };
-            let app = c.version.clone().unwrap_or_else(|| "?".into());
+            let app = c.version.clone().map(|v| format!(", app {v}")).unwrap_or_default();
             let pid = c.pid.map(|p| format!(", pid {p}")).unwrap_or_default();
-            line(true, "local.json", &format!("{src} (port {}, app {app}{pid})", c.port));
+            line(true, "local.json", &format!("{src} (port {}{app}{pid})", c.port));
             c
         }
         Err(ConfigError::Missing(_)) => {

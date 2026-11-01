@@ -201,9 +201,12 @@ pub fn cursor_pos(app: &App, area: Rect) -> Option<(u16, u16)> {
     let name = app.cur_ws().map(|w| w.name.clone()).unwrap_or_default();
     let (lines, chips) = input_rows(app, &name, running, cw);
     let input_h = (lines.len() + usize::from(chips.is_some())) as u16;
-    let y0 = area.y + area.height - input_h;
+    let y0 = (area.y + area.height).saturating_sub(input_h);
     let before = wrap(&app.input[..app.cursor.min(app.input.len())], cw);
-    let row = before.len().saturating_sub(1).min(lines.len().saturating_sub(1));
+    // Same scroll as `input_rows` when the input is taller than 8 rows.
+    let total = if app.input.is_empty() { 1 } else { wrap(&app.input, cw).len() };
+    let start = if total > 8 { before.len().saturating_sub(8).min(total - 8) } else { 0 };
+    let row = before.len().saturating_sub(1).saturating_sub(start).min(lines.len().saturating_sub(1));
     let col = before.last().map(|l| width(l)).unwrap_or(0);
     Some((area.x + 2 + col.min(cw) as u16, y0 + row as u16))
 }

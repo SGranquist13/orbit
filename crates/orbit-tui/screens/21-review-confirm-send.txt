@@ -2,7 +2,7 @@
 
   M login.test.ts             +2  │ @@ -1,6 +1,7 @@
   M session.ts             +4 −1  │    1  import { describe, it, expect } from "bun:test";
-  M cookie.ts                +15  │    2  import { page, user } from "./fixtures";
+  A cookie.ts                +15  │    2  import { page, user } from "./fixtures";
                                   │    3  import { session } from "./session";
   commits                         │    4 +import { cookie } from "./cookie";
   a1f3c9e wip: wait for the ses…  │    5
