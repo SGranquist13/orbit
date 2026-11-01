@@ -4,7 +4,7 @@
 
 Drive your agents from the terminal.
 
-- Preview: `orb`, a terminal UI for Orbit. A fleet rail beside the chat (left or right), a full-screen Inbox grouped by needs you / running / done, `/` skills, Ship (Ctrl+S) from checks to a merged PR, and a built-in diff review that sends your line comments to the agent. It talks to the running desktop app over a local, token-protected connection; `orb --demo` tries it with built-in sample data.
+- Preview: `orb`, a terminal UI for Orbit. A fleet rail beside the chat (left or right), a full-screen Inbox grouped by needs you / running / done, `/` skills, Ship (Ctrl+S) from checks to a merged PR, and a built-in diff review that sends your line comments to the agent. It talks to the running desktop app over a local, token-protected connection; `orb ls` lists your workspaces, `orb doctor` checks the connection, and `orb --demo` tries it all with built-in sample data.
 
 ## 0.4.0 - 2026-10-26
 

@@ -18,6 +18,9 @@ pub mod push;
 pub mod review;
 pub mod server;
 
+#[cfg(test)]
+mod orb_interop;
+
 use crate::db::Workspace;
 use crate::{AppState, CmdResult};
 use crypto::{b64u, random_bytes, Keypair};

@@ -273,3 +273,40 @@ async fn too_small() {
     let h = H::new(50, 12, Side::Left).await;
     assert!(h.text().contains("Orbit needs at least 60×16"));
 }
+
+/// Every screen also renders in Paper, ANSI-16 and NO_COLOR; only truecolor may emit RGB.
+#[tokio::test(start_paused = true)]
+async fn themes_and_depths() {
+    use ratatui::style::Color;
+    for (variant, depth) in [
+        (Variant::Paper, Depth::TrueColor),
+        (Variant::Void, Depth::Ansi16),
+        (Variant::Paper, Depth::Ansi16),
+        (Variant::Void, Depth::NoColor),
+    ] {
+        let mut h = H::new(120, 36, Side::Right).await;
+        h.app.theme = Theme::new(variant, depth);
+        let mut screens = Vec::new();
+        let mut grab = |h: &H| {
+            let area = Rect::new(0, 0, 120, 36);
+            let mut buf = Buffer::empty(area);
+            view::render(&mut buf, area, &h.app);
+            screens.push(buf);
+        };
+        grab(&h);
+        h.open("fix-login").await;
+        grab(&h);
+        h.ch('/').await;
+        grab(&h);
+        h.key(KeyCode::Esc, KeyModifiers::NONE).await;
+        h.alt('3').await;
+        grab(&h);
+        for buf in &screens {
+            let rgb = buf.content.iter().any(|c| matches!(c.fg, Color::Rgb(..)) || matches!(c.bg, Color::Rgb(..)));
+            assert_eq!(rgb, depth == Depth::TrueColor, "{variant:?} {depth:?}");
+            if depth == Depth::NoColor {
+                assert!(buf.content.iter().all(|c| c.fg == Color::Reset && c.bg == Color::Reset));
+            }
+        }
+    }
+}

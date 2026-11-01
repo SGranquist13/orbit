@@ -1,0 +1,71 @@
+name: orb
+
+# The terminal UI (crates/) on Windows and Linux, its client against the app's real bridge
+# server, and a downloadable orb.exe (Actions > orb > the run > Artifacts > orb-windows).
+on:
+  push:
+    paths:
+      - "crates/**"
+      - "src-tauri/src/remote/**"
+      - "scripts/orb-interop.sh"
+      - ".github/workflows/orb.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "src-tauri/src/remote/**"
+  workflow_dispatch:
+
+concurrency:
+  group: orb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  crates:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release
+      - run: ./target/release/orb doctor --demo
+      - if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: orb-windows
+          path: crates/target/release/orb.exe
+          retention-days: 30
+
+  interop:
+    # orb's client against the app's real local bridge server (src-tauri), on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            crates
+      # tauri::generate_context! expects the frontend dist folder to exist at compile time.
+      - name: Create empty frontend dist
+        run: New-Item -ItemType Directory -Force -Path dist | Out-Null
+        shell: pwsh
+      - name: Run the interop pair
+        shell: bash
+        env:
+          ORB_PLAIN_CARGO: "1"
+        run: scripts/orb-interop.sh

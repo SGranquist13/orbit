@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 pub struct Args {
     pub demo: bool,
     pub ls: bool,
+    pub doctor: bool,
     pub json: bool,
     pub help: bool,
     pub version: bool,
@@ -26,6 +27,7 @@ usage:
   orb                    Inbox when something needs you, else your latest workspace
   orb <workspace>        open a workspace (name, or a unique prefix of its name or id)
   orb ls [--json]        list workspaces and exit
+  orb doctor             check the connection to Orbit and every read-only request, then exit
   orb --demo             try it with built-in fake data (no desktop app needed)
 
 flags:
@@ -52,9 +54,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--theme" => a.theme = Some(val("--theme")?),
             "--color" => a.color = Some(val("--color")?),
             "--rail" => a.rail = Some(val("--rail")?),
-            "ls" if a.workspace.is_none() && !a.ls => a.ls = true,
+            "ls" if a.workspace.is_none() && !a.ls && !a.doctor => a.ls = true,
+            "doctor" if a.workspace.is_none() && !a.ls && !a.doctor => a.doctor = true,
             f if f.starts_with('-') => return Err(format!("unknown flag {f}")),
-            w if a.workspace.is_none() && !a.ls => a.workspace = Some(w.to_string()),
+            w if a.workspace.is_none() && !a.ls && !a.doctor => a.workspace = Some(w.to_string()),
             other => return Err(format!("unexpected argument {other}")),
         }
     }
@@ -168,6 +171,138 @@ pub async fn ls(backend: &dyn Backend, json_out: bool, now: i64) -> Result<Strin
     Ok(out)
 }
 
+/// Event types the app sends today; anything else means the app is newer than this `orb`.
+const KNOWN_EVENTS: &[&str] = &[
+    "sessionStarted",
+    "userMessage",
+    "turnStarted",
+    "plan",
+    "textDelta",
+    "message",
+    "toolCall",
+    "toolDraft",
+    "toolResult",
+    "turnCompleted",
+    "usage",
+    "sessionReset",
+    "error",
+    "exited",
+    "rateLimits",
+];
+
+/// One `orb doctor` line.
+pub fn check_line(ok: bool, what: &str, detail: &str) -> String {
+    format!("{} {:<11} {detail}", if ok { "✓" } else { "✗" }, what)
+}
+
+async fn typed<T: serde::de::DeserializeOwned>(b: &dyn Backend, method: &str, params: Value) -> Result<T, String> {
+    let v = b.rpc(method, params).await?;
+    serde_json::from_value(v)
+        .map_err(|e| format!("reply doesn't match what orb expects ({e}); update orb and the app together"))
+}
+
+/// `orb doctor` after the connection is up: every read-only request the UI makes, decoded the same
+/// way. Returns the report and whether everything passed. Never sends, ships or merges.
+pub async fn doctor(b: &dyn Backend) -> (String, bool) {
+    use orbit_proto::{FileAt, Hello, PrStatus, Review, Scope, Skill, Snapshot, StoredEvent};
+    let mut out = Vec::new();
+    let mut all = true;
+    let mut line = |ok: bool, what: &str, detail: String| {
+        all &= ok;
+        out.push(check_line(ok, what, &detail));
+    };
+    match typed::<Hello>(b, "hello", json!({})).await {
+        Ok(h) => line(
+            true,
+            "hello",
+            format!(
+                "Orbit {} · stale after {} days or {} behind · save points {}",
+                if h.version.is_empty() { "?" } else { &h.version },
+                h.settings.stale_days,
+                h.settings.stale_behind,
+                if h.settings.save_commits { "on" } else { "off" }
+            ),
+        ),
+        Err(e) => line(false, "hello", e),
+    }
+    let snap = match typed::<Snapshot>(b, "snapshot", json!({})).await {
+        Ok(s) => {
+            line(true, "snapshot", format!("{} workspaces in {} repos", s.workspaces.len(), s.repos.len()));
+            s
+        }
+        Err(e) => {
+            line(false, "snapshot", e);
+            return (out.join("\n"), false);
+        }
+    };
+    match typed::<Vec<Skill>>(b, "listSkills", json!({})).await {
+        Ok(s) => {
+            let first = s.first().map(|s| s.id.clone()).unwrap_or_else(|| "none".into());
+            line(!s.is_empty(), "listSkills", format!("{} skills, first {first}", s.len()))
+        }
+        Err(e) => line(false, "listSkills", e),
+    }
+    let ts = |w: &orbit_proto::Workspace| {
+        snap.summaries.iter().find(|s| s.workspace_id == w.id).map(|s| s.last_activity_ts).unwrap_or(w.updated_at)
+    };
+    let Some(ws) = snap.workspaces.iter().max_by_key(|w| ts(w)) else {
+        line(true, "events", "no workspaces yet: create one in Orbit to check the rest".into());
+        return (out.join("\n"), all);
+    };
+    let id = json!({ "workspaceId": ws.id });
+    match b.rpc("events", id.clone()).await {
+        Ok(raw) => {
+            let unknown: Vec<String> = raw
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.pointer("/event/type").and_then(Value::as_str))
+                        .filter(|t| !KNOWN_EVENTS.contains(t))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match serde_json::from_value::<Vec<StoredEvent>>(raw) {
+                Ok(evs) if unknown.is_empty() => {
+                    line(true, "events", format!("{}: {} events, all understood", ws.name, evs.len()))
+                }
+                Ok(evs) => line(
+                    true,
+                    "events",
+                    format!("{}: {} events; ignoring newer kinds {:?}", ws.name, evs.len(), unknown),
+                ),
+                Err(e) => line(false, "events", format!("{}: {e}", ws.name)),
+            }
+        }
+        Err(e) => line(false, "events", e),
+    }
+    match typed::<Option<PrStatus>>(b, "prStatus", id.clone()).await {
+        Ok(Some(p)) => line(true, "prStatus", format!("{}: #{} {}", ws.name, p.number, p.state.to_lowercase())),
+        Ok(None) => line(true, "prStatus", format!("{}: no pull request", ws.name)),
+        Err(e) => line(false, "prStatus", e),
+    }
+    match typed::<Review>(b, "review", json!({ "workspaceId": ws.id, "scope": Scope::Base })).await {
+        Ok(r) => {
+            line(true, "review", format!("{}: {} files, {} commits vs base", ws.name, r.files.len(), r.commits.len()));
+            if let Some(f) = r.files.first() {
+                let mut ok = true;
+                let mut why = String::new();
+                for rf in [&r.old_ref, &r.new_ref] {
+                    if let Err(e) =
+                        typed::<FileAt>(b, "fileAt", json!({ "workspaceId": ws.id, "path": f.path, "ref": rf })).await
+                    {
+                        ok = false;
+                        why = e;
+                    }
+                }
+                line(ok, "fileAt", if ok { format!("{} (both sides)", f.path) } else { why });
+            }
+        }
+        Err(e) => line(false, "review", e),
+    }
+    (out.join("\n"), all)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +320,7 @@ mod tests {
         assert!(p("--rail up").is_err());
         assert!(p("--bogus").is_err());
         assert!(p("a b").is_err());
+        assert!(p("doctor").unwrap().doctor);
     }
 
     #[test]
@@ -198,5 +334,17 @@ mod tests {
         let (c, t) = config(&p("--rail off --theme void").unwrap(), &file);
         assert!(!c.rail_on);
         assert_eq!(t.variant, Variant::Void);
+    }
+}
+
+#[cfg(test)]
+mod doctor_tests {
+    #[tokio::test]
+    async fn demo_passes() {
+        let demo = crate::demo::DemoBackend::new(1_793_455_200_000, false);
+        let (report, ok) = super::doctor(&demo).await;
+        assert!(ok, "{report}");
+        assert!(report.contains("✓ snapshot    8 workspaces in 2 repos"), "{report}");
+        assert!(report.contains("✓ fileAt"), "{report}");
     }
 }

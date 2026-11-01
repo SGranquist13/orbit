@@ -197,6 +197,16 @@ What Orbit does today and where it's heading. For how features were designed, an
 | **VS Code keybindings everywhere**, rebindable in Settings > Keyboard shortcuts (record keys and chords, conflicts, reset) | 🧪 | |
 | Black-hole brand mark and animated start page | ✅ | |
 
+## Terminal UI (`orb`)
+
+| Feature | Status | Notes |
+|---|---|---|
+| `orb`: drive Orbit from a terminal. Fleet rail beside the chat (left, right or hidden), streaming transcript, send and stop | 🧪 | Talks to the running app over a local, token-protected connection |
+| Full-screen Inbox grouped by needs you / running / done, with one key per fix and the suggested replies | 🧪 | Alt+2 |
+| `/` skills popup, Ship (checks → agent → PR → merge), fix CI and address comments | 🧪 | Ctrl+S |
+| Built-in diff review: vs base, since the last turn or one commit; line comments sent to the agent | 🧪 | Alt+3 |
+| `orb ls`, `orb doctor` (connection check) and `orb --demo` (try it with sample data) | 🧪 | |
+
 ## Phone companion
 
 | Feature | Status | Notes |
