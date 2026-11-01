@@ -28,6 +28,11 @@ Eight workspaces covering every Inbox state, two of which keep working in the ba
 
 | Do | Keys |
 |---|---|
+| **Every action, searchable** (new workspace, ship, profile, theme, archive, skills, workspaces…) | `Ctrl+P` |
+| Keys for the screen you're on | `?` (or `F1`) |
+| Create a workspace: repo, task, agent, model, profile | `Ctrl+N`, type the task, `Tab` / `←→`, `Ctrl+S` |
+| Switch profile (Builder → Debugger → Planner…) | `Ctrl+O`, or `Ctrl+P` → "profile" |
+| Archive (asks again if there are uncommitted changes) | `x` in the Inbox or rail |
 | Move in the Inbox, open a workspace | `j` / `k`, `Enter` |
 | Send a message and watch it stream | type, `Enter` (`Esc` stops the agent) |
 | Skills | `/`, type to filter, `Tab` completes, `Enter` runs |
@@ -81,8 +86,10 @@ Use a throwaway workspace for the ones that change things.
 6. `Esc` while it runs: the turn stops (`● stopped`).
 7. `/` → pick a skill → `Enter`: it runs (shows as `/shipkit:… args` in the transcript).
 8. `Ctrl+S` on a workspace with changes: checks → squash → agent ships → PR with check counts → `m` merges (only on a sandbox repo).
-9. `Alt+3`: files and commits match the desktop Review; `v` switches scope; `c` comment, `Enter` sends it to the agent.
-10. Quit Orbit while `orb` is open: `reconnecting…`; start Orbit again: `orb` recovers.
+9. `Ctrl+N`: create a workspace with a one-line task; it opens and starts. `x` archives it again.
+10. `Ctrl+P` → "profile": switch to Planner; the chips row shows it.
+11. `Alt+3`: files and commits match the desktop Review; `v` switches scope; `c` comment, `Enter` sends it to the agent.
+12. Quit Orbit while `orb` is open: `reconnecting…`; start Orbit again: `orb` recovers.
 
 ## 4. For developers
 
@@ -91,4 +98,4 @@ Use a throwaway workspace for the ones that change things.
 
 ## Not in this MVP
 
-New-workspace dialog, `@` file picker, palette (`Ctrl+P`), profile switching (`Ctrl+O`), copy (`Ctrl+Y`), `$EDITOR` (`Ctrl+E`), key help (`F1`), archive, notifications, ASCII glyphs, 256-colour tier, range comments (`V`), editing or deleting comments, markdown tables, `orb send`, auto-detecting a light terminal (use `--theme paper`). See `docs/tui/spec/mvp.md`.
+`@` file picker, copy (`Ctrl+Y`), `$EDITOR` (`Ctrl+E`), notifications, mouse clicks, ASCII glyphs, 256-colour tier, range comments (`V`), editing or deleting comments, markdown tables, `orb send`, auto-detecting a light terminal (use `--theme paper`). See `docs/tui/spec/mvp.md`.
